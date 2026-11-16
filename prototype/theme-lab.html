@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<!--
+  Folio · 配色提案 02 · 五套新主题 + 六枚日夜双档强调色
+  独立设计稿：不修改现有 prototype.html / source，仅用于评审与挑色。
+  文件：prototype/theme-lab.html
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Folio · 配色提案 02 — 五种阅读光</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap');
+
+:root{
+  --paper:#EFEBE2; --paper-2:#F7F4ED; --paper-3:#E7E1D5;
+  --ink:#191711; --ink-2:#4D483E; --muted:#736B5D;
+  --line:#D8D0C1; --line-2:#C6BDAC;
+  --signal:#B53825;
+  --font-ui:"Inter","Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;
+  --font-serif:"Source Serif 4","Noto Serif SC","Source Han Serif SC",Georgia,serif;
+  --font-mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+  --r:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  min-height:100vh;color:var(--ink);font-family:var(--font-ui);font-size:14px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  background:
+    radial-gradient(1100px 620px at 88% -8%,#FBF8F1 0%,rgba(251,248,241,0) 64%),
+    radial-gradient(900px 500px at 0% 42%,rgba(255,255,255,.45) 0%,rgba(255,255,255,0) 70%),
+    var(--paper);
+}
+::selection{background:rgba(181,56,37,.18)}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+button:focus-visible,a:focus-visible{outline:2px solid var(--signal);outline-offset:3px;border-radius:4px}
+a{color:var(--signal);text-underline-offset:3px}
+code,pre{font-family:var(--font-mono)}
+.page{max-width:1520px;margin:0 auto;padding:46px 48px 86px}
+
+/* ---------- masthead ---------- */
+.masthead{display:grid;grid-template-columns:minmax(0,1.38fr) minmax(340px,.62fr);gap:64px;align-items:end;padding-bottom:42px;border-bottom:1px solid var(--line)}
+.brandline{display:flex;align-items:center;gap:11px;margin-bottom:44px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--ink);color:#F7F3E9;display:grid;place-items:center;font-family:var(--font-serif);font-size:15px;font-weight:700;letter-spacing:-.04em;box-shadow:0 5px 16px rgba(25,23,17,.18)}
+.brandline b{font-size:13px;letter-spacing:.02em}
+.brandline span{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);padding-left:10px;border-left:1px solid var(--line-2)}
+.eyebrow{font-size:10.5px;letter-spacing:.19em;text-transform:uppercase;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:10px}
+.eyebrow::before{content:"";width:28px;height:1px;background:var(--signal);display:block}
+h1{font-family:var(--font-serif);font-weight:600;font-size:clamp(46px,5.2vw,78px);line-height:1.03;letter-spacing:-.045em;margin:18px 0 20px}
+h1 em{font-style:normal;color:var(--signal)}
+.lede{max-width:650px;font-size:15px;line-height:1.85;color:var(--ink-2)}
+.lede b{font-weight:600;color:var(--ink)}
+.stats{display:flex;gap:28px;margin-top:30px;flex-wrap:wrap}
+.stat{display:flex;flex-direction:column;gap:2px;min-width:84px}
+.stat b{font-family:var(--font-serif);font-size:27px;font-weight:600;line-height:1;letter-spacing:-.03em}
+.stat span{font-size:10.5px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+
+.palette-stack{border-top:1px solid var(--line-2);padding-top:8px}
+.stack-row{display:grid;grid-template-columns:58px 1fr 34px;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.stack-row:last-child{border-bottom:0}
+.stack-row b{font-size:11.5px;font-weight:600}
+.stack-row small{font-size:9px;color:var(--muted);letter-spacing:.06em;text-align:right}
+.strip{display:flex;height:16px;border-radius:5px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06)}
+.strip i{flex:1}
+.stack-note{margin-top:12px;font-size:10.5px;color:var(--muted);display:flex;justify-content:space-between;gap:12px}
+.stack-note code{font-size:9.5px;color:var(--ink-2)}
+
+/* ---------- sections ---------- */
+.section{margin-top:62px}
+.section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:32px;padding-top:18px;border-top:1px solid var(--line-2)}
+.section-head .kicker{display:flex;align-items:baseline;gap:12px}
+.section-head .num{font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;color:var(--signal)}
+h2{font-family:var(--font-serif);font-size:30px;line-height:1.15;font-weight:600;letter-spacing:-.025em}
+.section-head p{max-width:520px;text-align:right;font-size:12px;line-height:1.7;color:var(--muted)}
+.subhead{display:flex;align-items:center;gap:12px;margin:26px 0 12px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.subhead::after{content:"";height:1px;flex:1;background:var(--line)}
+
+/* ---------- theme tabs ---------- */
+.theme-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+.ttab{display:flex;align-items:center;gap:8px;padding:8px 14px 8px 11px;border:1px solid var(--line-2);border-radius:999px;background:rgba(255,255,255,.28);font-size:12px;color:var(--ink-2);transition:background .18s,border-color .18s,color .18s,transform .18s}
+.ttab:hover{background:rgba(255,255,255,.65);border-color:var(--ink-2);transform:translateY(-1px)}
+.ttab[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#F8F4EA;box-shadow:0 5px 14px rgba(25,23,17,.16)}
+.ttab i{width:11px;height:11px;border-radius:50%;flex:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.28)}
+.ttab small{font-size:9px;opacity:.62;letter-spacing:.04em}
+
+/* ---------- lab ---------- */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) 326px;gap:24px;align-items:start}
+.preview-wrap{position:relative;padding:24px;border-radius:20px;border:1px solid #CDC5B6;background:linear-gradient(145deg,#E4DED2,#D8D1C3);box-shadow:inset 0 1px 0 rgba(255,255,255,.62),0 22px 45px rgba(70,60,44,.13);overflow:auto}
+.preview-wrap::before{content:"LIVE PREVIEW / 1440 × 900";position:absolute;left:26px;top:8px;font-family:var(--font-mono);font-size:8px;letter-spacing:.12em;color:rgba(25,23,17,.42)}
+.folio{
+  --font-prose:"Source Serif 4","Noto Serif SC","Source Han Serif SC",Georgia,serif;--font-mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+  width:100%;min-width:760px;height:618px;display:flex;flex-direction:column;overflow:hidden;
+  background:var(--bg-edit);color:var(--text);border:1px solid var(--line-hi);border-radius:12px;
+  box-shadow:var(--shadow-win);font-family:var(--font-ui);font-size:12px;line-height:1.45;text-align:left;
+  transition:background .28s,color .28s,border-color .28s;
+}
+.folio button,.folio span,.folio i,.folio b{color:inherit}
+.f-tbar{height:42px;flex:none;display:flex;align-items:center;gap:7px;padding-left:12px;background:var(--bg-chrome);border-bottom:1px solid var(--line)}
+.f-mark{width:23px;height:23px;border-radius:6px;background:var(--accent);color:var(--accent-ink)!important;display:grid;place-items:center;font-weight:800;font-size:11.5px;letter-spacing:-.04em;flex:none}
+.f-brand{font-size:12.5px;font-weight:650;margin-right:9px;white-space:nowrap}
+.f-menu{display:flex;gap:1px}
+.f-menu span{font-size:11px;color:var(--text-2);padding:4px 7px;border-radius:4px;white-space:nowrap}
+.f-menu span:first-child{background:var(--bg-hover);color:var(--text)}
+.f-doc-title{flex:1;text-align:center;font-size:10.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 12px}
+.f-win{display:flex;height:42px;flex:none}
+.f-win i{width:41px;height:42px;display:grid;place-items:center;color:var(--text-3)!important;font-style:normal;font-size:9px}
+.f-win i:last-child{color:var(--text-2)!important}
+.f-body{flex:1;display:flex;min-height:0}
+.f-rail{width:44px;flex:none;background:var(--bg-chrome);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:5px;padding-top:11px}
+.f-rail b{width:29px;height:29px;border-radius:7px;display:grid;place-items:center;color:var(--text-3)!important;font-weight:400}
+.f-rail b.on{background:var(--accent-bg);color:var(--accent)!important}
+.f-rail svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.f-side{width:222px;flex:none;background:var(--bg-side);border-right:1px solid var(--line);padding:14px 10px;overflow:hidden}
+.f-side-head{display:flex;align-items:center;justify-content:space-between;padding:0 6px 8px}
+.f-side-head b{font-size:10.5px;font-weight:650;letter-spacing:.02em}
+.f-side-head span{color:var(--text-3)!important;font-size:13px}
+.f-search{display:flex;align-items:center;gap:6px;height:26px;padding:0 7px;margin:2px 2px 13px;border:1px solid var(--line);border-radius:6px;background:var(--bg-edit);color:var(--text-3)!important;font-size:10px}
+.f-search svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:1.7}
+.f-search kbd{margin-left:auto;font-family:var(--font-mono);font-size:8px;padding:1px 4px;border-radius:3px;background:var(--bg-side);color:var(--text-3)!important}
+.f-side h5{font-size:8.5px;font-weight:650;letter-spacing:.13em;text-transform:uppercase;color:var(--text-3)!important;margin:11px 6px 5px}
+.f-lib{display:flex;align-items:center;gap:7px;padding:6px 7px;border-radius:5px;font-size:10.5px;color:var(--text-2)!important;margin-bottom:1px;white-space:nowrap;overflow:hidden}
+.f-lib.on{background:var(--accent-bg);color:var(--accent)!important;font-weight:600}
+.f-lib svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:1.6;flex:none}
+.f-lib em{font-style:normal;margin-left:auto;font-family:var(--font-mono);font-size:8px;color:var(--text-3)!important}
+.f-main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg-view)}
+.f-tabs{height:33px;flex:none;display:flex;align-items:stretch;background:var(--bg-chrome);border-bottom:1px solid var(--line);overflow:hidden}
+.f-tab{display:flex;align-items:center;gap:6px;padding:0 14px;border-right:1px solid var(--line);border-bottom:2px solid transparent;color:var(--text-3)!important;font-size:10px;white-space:nowrap}
+.f-tab.on{background:var(--bg-view);color:var(--text)!important;border-bottom-color:var(--accent)}
+.f-tab i{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:none}
+.f-crumb{margin-left:auto;display:flex;align-items:center;padding-right:12px;color:var(--text-3)!important;font-size:8.5px;font-family:var(--font-mono)}
+.f-doc{flex:1;overflow:hidden;padding:28px 43px 20px;position:relative}
+.f-doc::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(520px 280px at 72% 0%,var(--accent-bg),transparent 68%);opacity:.75}
+.f-doc-inner{position:relative;max-width:610px}
+.f-kicker{font-size:8px;letter-spacing:.17em;text-transform:uppercase;color:var(--accent)!important;font-weight:700}
+.f-title{font-family:var(--font-prose);font-size:30px;line-height:1.22;letter-spacing:-.02em;color:var(--text)!important;margin:7px 0 7px;font-weight:600}
+.f-meta{display:flex;align-items:center;gap:11px;font-size:9px;color:var(--text-3)!important;font-family:var(--font-mono);letter-spacing:.02em}
+.f-meta span{display:flex;align-items:center;gap:4px}
+.f-meta i{width:3px;height:3px;border-radius:50%;background:var(--text-3);display:block}
+.f-p{font-family:var(--font-prose);font-size:12.1px;line-height:1.95;color:var(--text-2)!important;margin-top:14px;letter-spacing:.005em}
+.f-h{font-family:var(--font-prose);font-size:16px;line-height:1.35;color:var(--text)!important;font-weight:600;margin:17px 0 7px}
+.f-quote{margin-top:12px;padding:8px 12px 8px 13px;border-left:3px solid var(--accent);background:var(--accent-bg);border-radius:0 4px 4px 0;font-family:var(--font-prose);font-size:11.3px;line-height:1.8;color:var(--text-2)!important}
+.f-quote b{color:var(--accent)!important;font-weight:600}
+.f-code{margin-top:12px;border:1px solid var(--line);border-radius:6px;background:color-mix(in srgb,var(--bg-frame) 40%,var(--bg-view));padding:9px 11px;font-family:var(--font-mono);font-size:9.7px;line-height:1.7;color:var(--text-2)!important;overflow:hidden}
+.f-code .kw{color:var(--accent)!important;font-weight:500}
+.f-code .cm{color:var(--text-3)!important}
+.f-tasks{margin-top:11px;display:grid;gap:5px}
+.f-task{display:flex;align-items:center;gap:7px;font-size:10.2px;color:var(--text-2)!important}
+.f-tick{width:12px;height:12px;border:1px solid var(--line-hi);border-radius:3px;display:grid;place-items:center;font-size:8px;color:transparent!important;flex:none}
+.f-task.done .f-tick{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)!important}
+.f-task.done span{text-decoration:line-through;color:var(--text-3)!important}
+.f-status{height:27px;flex:none;display:flex;align-items:center;gap:14px;padding:0 12px;background:var(--bg-chrome);border-top:1px solid var(--line);font-size:9px;color:var(--text-3)!important;font-family:var(--font-mono)}
+.f-status .sp{flex:1}
+.f-status .prog{width:74px;height:3px;border-radius:3px;background:var(--bg-active);overflow:hidden}
+.f-status .prog i{display:block;width:63%;height:100%;background:var(--accent)}
+
+/* ---------- inspector ---------- */
+.inspector{position:sticky;top:24px;padding:6px 0 0}
+.insp-eyebrow{font-family:var(--font-mono);font-size:8.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:8px}
+.insp-eyebrow i{width:6px;height:6px;border-radius:50%;background:var(--signal);display:block}
+.inspector h3{font-family:var(--font-serif);font-size:35px;line-height:1.1;font-weight:600;letter-spacing:-.035em;margin:10px 0 1px}
+.inspector .en{font-family:var(--font-mono);font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+.insp-desc{font-size:12.5px;line-height:1.78;color:var(--ink-2);margin-top:14px;min-height:68px}
+.sig{display:flex;align-items:center;gap:11px;margin-top:18px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.38)}
+.sig-dot{width:34px;height:34px;border-radius:50%;flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),0 3px 8px rgba(0,0,0,.08)}
+.sig b{font-size:11.5px;display:block;line-height:1.2}
+.sig code{font-size:9px;color:var(--muted);letter-spacing:.02em}
+.sig .restore{margin-left:auto;font-size:9px;color:var(--signal);border-bottom:1px solid rgba(181,56,37,.35);padding-bottom:1px;white-space:nowrap}
+.tokens{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:14px}
+.tok{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:5px;background:rgba(255,255,255,.32);border:1px solid rgba(198,189,172,.65);font-size:9px;color:var(--ink-2)}
+.tok i{width:14px;height:14px;border-radius:3px;flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.09)}
+.tok span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.contrast{margin-top:15px;border-top:1px solid var(--line);padding-top:9px;display:grid;gap:5px}
+.crow{display:flex;align-items:center;font-size:9.5px;color:var(--ink-2)}
+.crow .nm{flex:1;white-space:nowrap}
+.crow b{font-family:var(--font-mono);font-size:9px;font-weight:500;margin-right:6px;color:var(--ink)}
+.pass{font-size:8px;letter-spacing:.05em;padding:1px 5px;border-radius:3px;background:rgba(47,125,90,.12);color:#266948;font-weight:600;min-width:27px;text-align:center}
+.acc-title{display:flex;justify-content:space-between;align-items:center;margin-top:18px;margin-bottom:7px;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.acc-title span{font-family:var(--font-mono);font-size:8px;letter-spacing:0;text-transform:none}
+.acc-picker{display:flex;gap:7px;flex-wrap:wrap}
+.acc-pick{width:30px;height:30px;border-radius:50%;background:var(--sw);border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12);transition:transform .16s,border-color .16s}
+.acc-pick:hover{transform:scale(1.09)}
+.acc-pick[aria-pressed="true"]{border-color:var(--ink);box-shadow:0 0 0 2px rgba(247,244,237,.9),inset 0 0 0 1px rgba(0,0,0,.15)}
+.insp-actions{display:flex;gap:8px;margin-top:18px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 13px;border-radius:7px;border:1px solid var(--line-2);background:rgba(255,255,255,.42);font-size:10.5px;font-weight:550;color:var(--ink-2);transition:background .16s,border-color .16s,transform .16s}
+.btn:hover{background:#fff;border-color:var(--ink-2);transform:translateY(-1px)}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:#F8F4EA}
+.btn.primary:hover{background:#2B2720;border-color:#2B2720}
+.btn svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+/* ---------- theme cards ---------- */
+.theme-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+.theme-card{display:flex;flex-direction:column;text-align:left;padding:11px 11px 14px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.34);transition:transform .18s,border-color .18s,background .18s,box-shadow .18s}
+.theme-card:hover{transform:translateY(-3px);background:rgba(255,255,255,.68);border-color:var(--line-2);box-shadow:0 14px 30px rgba(70,60,44,.10)}
+.theme-card[aria-pressed="true"]{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink),0 14px 30px rgba(70,60,44,.10)}
+.mini-window{height:116px;border-radius:8px;overflow:hidden;border:1px solid rgba(0,0,0,.10);display:flex;flex-direction:column;box-shadow:0 7px 16px rgba(30,24,16,.13)}
+.mini-bar{height:13px;display:flex;align-items:center;gap:3px;padding-left:5px}
+.mini-bar i{width:3px;height:3px;border-radius:50%}
+.mini-bar b{height:3px;border-radius:2px;margin-left:3px}
+.mini-body{flex:1;display:flex;min-height:0}
+.mini-side{width:27%;padding:7px 5px;display:flex;flex-direction:column;gap:4px}
+.mini-side i{height:3px;border-radius:2px;display:block}
+.mini-main{flex:1;padding:8px 8px;display:flex;flex-direction:column;gap:4px}
+.mini-main i{height:4px;border-radius:2px;display:block}
+.mini-main .mt{height:6px;width:64%;margin-bottom:2px}
+.mini-main .mq{height:17px;border-left:2px solid;margin:2px 0}
+.theme-card .tname{display:flex;align-items:baseline;gap:7px;margin-top:11px}
+.theme-card .tname b{font-family:var(--font-serif);font-size:17px;font-weight:600;letter-spacing:-.02em}
+.theme-card .tname code{font-size:8.5px;color:var(--muted);letter-spacing:.05em}
+.theme-card .tdesc{font-size:10.5px;line-height:1.65;color:var(--muted);margin-top:5px;min-height:52px}
+.theme-card .tcolors{display:flex;gap:4px;margin-top:9px}
+.theme-card .tcolors i{width:14px;height:14px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10)}
+.theme-card .tsig{display:flex;align-items:center;gap:5px;margin-top:9px;font-size:9px;color:var(--ink-2)}
+.theme-card .tsig i{width:7px;height:7px;border-radius:50%}
+
+/* ---------- accents ---------- */
+.accent-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.accent-card{text-align:left;padding:16px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.34);transition:transform .18s,border-color .18s,box-shadow .18s}
+.accent-card:hover{transform:translateY(-3px);border-color:var(--line-2);box-shadow:0 14px 30px rgba(70,60,44,.10)}
+.accent-card[aria-pressed="true"]{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.accent-head{display:flex;align-items:baseline;gap:8px}
+.accent-head b{font-family:var(--font-serif);font-size:18px;font-weight:600;letter-spacing:-.02em}
+.accent-head code{font-size:8.5px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
+.accent-head .a-note{margin-left:auto;font-size:9px;color:var(--muted)}
+.accent-panes{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:12px}
+.pane{padding:14px 12px 12px;min-height:146px;display:flex;flex-direction:column;gap:10px}
+.pane.light{background:#F6F2E9;color:#1B1812}
+.pane.dark{background:#14151B;color:#EFEDF3}
+.pane-top{display:flex;align-items:center;gap:8px}
+.sw-big{width:32px;height:32px;border-radius:50%;background:var(--a);box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.pane-top code{font-size:8.5px;letter-spacing:.03em;opacity:.75}
+.pane .sample{font-family:var(--font-serif);font-size:13px;color:var(--a);font-weight:600;text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--a) 45%,transparent);text-underline-offset:3px}
+.pane .mini-btn{display:inline-flex;align-items:center;justify-content:center;height:23px;padding:0 9px;border-radius:5px;background:var(--a);color:var(--ai)!important;font-size:9px;font-weight:650;align-self:flex-start;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
+.pane .ratio{margin-top:auto;font-family:var(--font-mono);font-size:8px;opacity:.66}
+.accent-foot{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:9px;color:var(--muted)}
+.accent-foot b{font-family:var(--font-mono);font-weight:500;color:var(--ink-2);font-size:8.5px}
+.accent-foot .dot{width:4px;height:4px;border-radius:50%;background:var(--line-2)}
+
+/* ---------- matrix ---------- */
+.matrix-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.32)}
+.matrix{width:100%;border-collapse:collapse;min-width:760px}
+.matrix th{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600;text-align:left;padding:13px 16px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.24)}
+.matrix td{padding:13px 16px;border-bottom:1px solid var(--line);font-size:11px;vertical-align:middle}
+.matrix tr:last-child td{border-bottom:0}
+.matrix td.theme-cell{display:flex;align-items:center;gap:10px;font-weight:600}
+.matrix td.theme-cell i{width:18px;height:18px;border-radius:5px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)}
+.matrix .chips{display:flex;gap:5px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;border:1px solid var(--line);font-size:9px;color:var(--ink-2);background:rgba(255,255,255,.5)}
+.chip i{width:6px;height:6px;border-radius:50%}
+.matrix .use{color:var(--muted);font-size:10px;line-height:1.5}
+
+/* ---------- implementation ---------- */
+.impl-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr);gap:24px;align-items:start}
+.code-card{position:relative;border-radius:15px;overflow:hidden;background:#17150F;box-shadow:0 18px 40px rgba(25,23,17,.18)}
+.code-head{height:36px;display:flex;align-items:center;gap:7px;padding:0 14px;border-bottom:1px solid rgba(255,255,255,.08);color:#A9A091;font-family:var(--font-mono);font-size:9px;letter-spacing:.06em}
+.code-head i{width:7px;height:7px;border-radius:50%;background:#4C463B;display:block}
+.code-head i:nth-child(2){background:#665C4B}
+.code-head i:nth-child(3){background:#83745B}
+.code-head .copy{margin-left:auto;color:#D9D0C1;font-family:var(--font-ui);font-size:9.5px;padding:3px 7px;border:1px solid rgba(255,255,255,.12);border-radius:4px}
+.code-card pre{padding:17px 18px 20px;color:#E9E2D4;font-size:10.3px;line-height:1.75;overflow:auto;max-height:440px}
+.code-card pre .c{color:#8F8676}
+.code-card pre .k{color:#E7B878}
+.code-card pre .v{color:#9CCFB5}
+.notes{display:flex;flex-direction:column;gap:13px}
+.note-card{padding:16px 17px;border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.34)}
+.note-card h3{font-family:var(--font-serif);font-size:17px;font-weight:600;letter-spacing:-.02em;margin-bottom:6px}
+.note-card p{font-size:11px;line-height:1.75;color:var(--muted)}
+.note-card code{font-size:9.5px;background:rgba(25,23,17,.06);padding:1px 4px;border-radius:3px;color:var(--ink-2)}
+.note-card ul{list-style:none;display:grid;gap:8px;margin-top:4px}
+.note-card li{display:flex;gap:8px;font-size:10.5px;line-height:1.65;color:var(--ink-2)}
+.note-card li::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--signal);margin-top:7px;flex:none}
+
+/* ---------- footer ---------- */
+.footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line-2);display:flex;justify-content:space-between;gap:24px;align-items:center;font-size:10px;color:var(--muted)}
+.footer b{font-weight:600;color:var(--ink-2)}
+.footer .fmeta{display:flex;gap:18px;flex-wrap:wrap}
+.footer code{font-size:9px;color:var(--ink-2)}
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,18px);background:var(--ink);color:#F8F4EA;padding:9px 16px;border-radius:999px;font-size:11px;box-shadow:0 10px 30px rgba(0,0,0,.22);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:50}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+@media(max-width:1260px){
+  .stage{grid-template-columns:minmax(0,1fr) 300px}
+  .theme-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .theme-card .tdesc{min-height:0}
+}
+@media(max-width:1040px){
+  .masthead{grid-template-columns:1fr;gap:34px}
+  .palette-stack{max-width:680px}
+  .stage{grid-template-columns:1fr}
+  .inspector{position:static;display:grid;grid-template-columns:1fr 1fr;gap:0 26px}
+  .inspector .insp-eyebrow,.inspector h3,.inspector .en,.inspector .insp-desc{grid-column:1/-1}
+  .sig{grid-column:1/-1}
+  .tokens{grid-column:1}
+  .contrast{grid-column:2;grid-row:span 2;margin-top:14px;border-top:0;padding-top:0}
+  .acc-title,.acc-picker,.insp-actions{grid-column:1/-1}
+  .accent-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .impl-grid{grid-template-columns:1fr}
+}
+@media(max-width:720px){
+  .page{padding:28px 20px 60px}
+  .brandline span{display:none}
+  h1{font-size:44px}
+  .section{margin-top:46px}
+  .section-head{display:block}
+  .section-head p{text-align:left;margin-top:8px}
+  .theme-grid,.accent-grid{grid-template-columns:1fr}
+  .inspector{display:block}
+  .contrast{margin-top:15px;border-top:1px solid var(--line);padding-top:9px}
+  .preview-wrap{padding:18px 12px 14px}
+  .folio{min-width:720px}
+  .footer{display:block}
+  .footer .fmeta{margin-top:10px}
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="masthead">
+    <div>
+      <div class="brandline"><span class="logo">F</span><b>Folio</b><span>Markdown Reader · Color System</span></div>
+      <div class="eyebrow">Palette Proposal 02 · 2026-11-16</div>
+      <h1>为长时间阅读，<br><em>再调五种光。</em></h1>
+      <p class="lede">在现有<b>深色 / 浅色 / 护眼米色</b>之外，Folio 再增加五套阅读氛围主题，并把强调色扩展为六枚<b>「日夜双档」</b>色板。所有正文与交互色以 WCAG AA 为底线；本页可直接切换组合，实时预演。</p>
+      <div class="stats">
+        <div class="stat"><b>5</b><span>New themes</span></div>
+        <div class="stat"><b>6</b><span>New accents</span></div>
+        <div class="stat"><b>30</b><span>Combinations</span></div>
+        <div class="stat"><b>AA+</b><span>Contrast floor</span></div>
+      </div>
+    </div>
+    <aside class="palette-stack" aria-label="五套新主题色带预览">
+      <div class="stack-row"><b>曜石</b><div class="strip"><i style="background:#070709"></i><i style="background:#101116"></i><i style="background:#14151B"></i><i style="background:#17181F"></i><i style="background:#24252E"></i><i style="background:#3A3C49"></i><i style="background:#FF826D"></i><i style="background:#B3B1BD"></i><i style="background:#EFEDF3"></i></div><small>DARK</small></div><div class="stack-row"><b>松烟</b><div class="strip"><i style="background:#090E0B"></i><i style="background:#111713"></i><i style="background:#141B16"></i><i style="background:#161D18"></i><i style="background:#222C25"></i><i style="background:#3A4A3E"></i><i style="background:#E3B25E"></i><i style="background:#B0BBB1"></i><i style="background:#E9EEE7"></i></div><small>DARK</small></div><div class="stack-row"><b>青瓷</b><div class="strip"><i style="background:#C6D2C9"></i><i style="background:#E6EDE7"></i><i style="background:#DDE7DF"></i><i style="background:#F3F8F3"></i><i style="background:#FFFFFF"></i><i style="background:#AABCAE"></i><i style="background:#1F6749"></i><i style="background:#425348"></i><i style="background:#1C2A21"></i></div><small>LIGHT</small></div><div class="stack-row"><b>雾蓝</b><div class="strip"><i style="background:#C7D2DE"></i><i style="background:#E8EEF5"></i><i style="background:#DEE7F0"></i><i style="background:#F2F7FB"></i><i style="background:#FFFFFF"></i><i style="background:#AEBFD1"></i><i style="background:#3456B5"></i><i style="background:#3F5062"></i><i style="background:#17242F"></i></div><small>LIGHT</small></div><div class="stack-row"><b>暮紫</b><div class="strip"><i style="background:#0C0910"></i><i style="background:#15111B"></i><i style="background:#191421"></i><i style="background:#1C1622"></i><i style="background:#2A2231"></i><i style="background:#473A54"></i><i style="background:#E5A3D5"></i><i style="background:#BCAFCA"></i><i style="background:#EFE8F3"></i></div><small>DARK</small></div>
+      <div class="stack-note"><span>界面底 → 层级 → 强调 → 正文</span><code>30 combos · 6 accents</code></div>
+    </aside>
+  </header>
+
+  <section class="section" id="lab">
+    <div class="section-head">
+      <div class="kicker"><span class="num">01</span><h2>实时配色台</h2></div>
+      <p>不只看色卡：把它放回标题栏、侧栏、引用、任务与代码块里，确认层级仍然成立。切换主题会带出该主题的签名强调色。</p>
+    </div>
+
+    <div class="theme-tabs" role="group" aria-label="选择新主题">
+      <button class="ttab" data-theme="obsidian" aria-pressed="true"><i style="background:#FF826D"></i>曜石<small>Obsidian</small></button><button class="ttab" data-theme="pine" aria-pressed="false"><i style="background:#E3B25E"></i>松烟<small>Pine Soot</small></button><button class="ttab" data-theme="celadon" aria-pressed="false"><i style="background:#1F6749"></i>青瓷<small>Celadon</small></button><button class="ttab" data-theme="mist" aria-pressed="false"><i style="background:#3456B5"></i>雾蓝<small>Mist</small></button><button class="ttab" data-theme="dusk" aria-pressed="false"><i style="background:#E5A3D5"></i>暮紫<small>Dusk</small></button>
+    </div>
+
+    <div class="stage">
+      <div class="preview-wrap">
+        <div class="folio" id="folio" style="--bg-frame:#070709;--bg-chrome:#101116;--bg-side:#14151B;--bg-edit:#1B1C23;--bg-view:#17181F;--bg-raise:#24252E;--bg-hover:#282932;--bg-active:#30313C;--line:#2A2B35;--line-hi:#3A3C49;--text:#EFEDF3;--text-2:#B3B1BD;--text-3:#8F8D9C;--warn:#F2A65A;--ok:#63C9A8;--scroll:#343541;--scroll-hi:#464858;--mark-hl:rgba(255,122,99,.28);--shadow-win:0 30px 80px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.45);--accent:#FF826D;--accent-bg:rgba(255,130,109,0.14);--accent-dim:rgb(209,107,89);--accent-ink:#0A1020">
+          <div class="f-tbar">
+            <span class="f-mark">F</span><span class="f-brand">Folio</span>
+            <div class="f-menu"><span>文件</span><span>编辑</span><span>视图</span><span>帮助</span></div>
+            <div class="f-doc-title">深读 · 希望本是无所谓有，无所谓无的</div>
+            <div class="f-win" aria-hidden="true"><i>—</i><i>□</i><i>×</i></div>
+          </div>
+          <div class="f-body">
+            <nav class="f-rail" aria-label="主导航">
+              <b class="on" title="文档库"><svg viewBox="0 0 16 16"><rect x="2.2" y="3" width="11.6" height="10" rx="1.6"/><path d="M4.6 5.5h6.8M4.6 8h6.8M4.6 10.5h4.4"/></svg></b>
+              <b title="搜索"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 13.5 13.5"/></svg></b>
+              <b title="最近打开"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.4"/><path d="M8 4.9v3.4l2.3 1.4"/></svg></b>
+              <b title="设置"><svg viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h10"/><circle cx="6" cy="4.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="10" cy="8" r="1.3" fill="currentColor" stroke="none"/><circle cx="5" cy="11.5" r="1.3" fill="currentColor" stroke="none"/></svg></b>
+            </nav>
+            <aside class="f-side">
+              <div class="f-side-head"><b>文档库</b><span>＋</span></div>
+              <div class="f-search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 13.5 13.5"/></svg><span>筛选文档</span><kbd>Ctrl K</kbd></div>
+              <h5>最近打开</h5>
+              <div class="f-lib on"><svg viewBox="0 0 16 16"><path d="M4 2.5h5l3 3v8H4z"/><path d="M9 2.5v3h3M6 8.2h4M6 10.2h4"/></svg><span>野草</span><em>1924</em></div>
+              <div class="f-lib"><svg viewBox="0 0 16 16"><path d="M4 2.5h5l3 3v8H4z"/><path d="M9 2.5v3h3M6 8.2h4M6 10.2h4"/></svg><span>Rust 学习笔记</span></div>
+              <div class="f-lib"><svg viewBox="0 0 16 16"><path d="M4 2.5h5l3 3v8H4z"/><path d="M9 2.5v3h3M6 8.2h4M6 10.2h4"/></svg><span>设计系统备忘</span></div>
+              <h5>文档库 · 2</h5>
+              <div class="f-lib"><svg viewBox="0 0 16 16"><path d="M2.2 5.1c0-.8.6-1.4 1.4-1.4h2.6l1.2 1.4h4.9c.8 0 1.4.6 1.4 1.4v4.5c0 .8-.6 1.4-1.4 1.4H3.6c-.8 0-1.4-.6-1.4-1.4z"/></svg><span>阅读方法</span><em>12</em></div>
+              <div class="f-lib"><svg viewBox="0 0 16 16"><path d="M2.2 5.1c0-.8.6-1.4 1.4-1.4h2.6l1.2 1.4h4.9c.8 0 1.4.6 1.4 1.4v4.5c0 .8-.6 1.4-1.4 1.4H3.6c-.8 0-1.4-.6-1.4-1.4z"/></svg><span>产品随笔</span><em>08</em></div>
+              <div class="f-lib"><svg viewBox="0 0 16 16"><path d="M2.7 3.4c1.8-.7 3.5-.6 5.3.4v9c-1.8-1-3.5-1.1-5.3-.4z"/><path d="M13.3 3.4c-1.8-.7-3.5-.6-5.3.4v9c1.8-1 3.5-1.1 5.3-.4z"/></svg><span>全部文档</span><em>44</em></div>
+            </aside>
+            <main class="f-main">
+              <div class="f-tabs">
+                <div class="f-tab on"><i></i>野草.md</div>
+                <div class="f-tab">Rust 学习笔记.md</div>
+                <div class="f-crumb">~/notes/野草.md</div>
+              </div>
+              <article class="f-doc">
+                <div class="f-doc-inner">
+                  <div class="f-kicker">Essay · 1924 · 秋夜</div>
+                  <h1 class="f-title">希望本是无所谓有，<br>无所谓无的。</h1>
+                  <div class="f-meta"><span>鲁迅 · 野草</span><i></i><span>约 8 分钟</span><i></i><span>位置已保存</span></div>
+                  <p class="f-p">我独自远行，不但没有你，并且再没有别的影在黑暗里。只有我被黑暗沉没，那世界全属于我自己。</p>
+                  <h2 class="f-h">一 · 秋夜</h2>
+                  <p class="f-p">在我的后园，可以看见墙外有两株树，一株是枣树，还有一株也是枣树。这上面的夜的天空，奇怪而高，我生平没有见过这样奇怪而高的天空。</p>
+                  <blockquote class="f-quote"><b>“</b> 枣树，他们简直落尽了叶子。先前，还有一两个孩子来打他们别人打剩的枣子，现在是一个也不剩了。<b>”</b></blockquote>
+                  <div class="f-code"><span class="cm">// 阅读位置已保存 · 深链 folio://open</span><br><span class="kw">const</span> anchor = { section: <span class="kw">"秋夜"</span>, offset: 0.42 };</div>
+                  <div class="f-tasks">
+                    <div class="f-task done"><span class="f-tick">✓</span><span>重读〈秋夜〉并做批注</span></div>
+                    <div class="f-task"><span class="f-tick"></span><span>整理本周读书摘录</span></div>
+                  </div>
+                </div>
+              </article>
+              <div class="f-status"><span>12,480 字</span><span>当前 · 秋夜</span><span class="sp"></span><span>阅读 63%</span><span class="prog"><i></i></span><span>Aa 16.5</span></div>
+            </main>
+          </div>
+        </div>
+      </div>
+
+      <aside class="inspector">
+        <div class="insp-eyebrow"><i></i>当前组合 · <span id="inspCombo">曜石 × 朱砂</span></div>
+        <h3 id="infoName">曜石</h3>
+        <div class="en" id="infoEn">OBSIDIAN</div>
+        <p class="insp-desc" id="infoDesc">黑曜石般的近黑中性底，暖白正文。把界面退到最暗，让句子自己发光。</p>
+        <div class="sig">
+          <span class="sig-dot" id="sigDot" style="background:#FF826D"></span>
+          <div><b><span id="sigName">朱砂</span> · <span id="sigMode">暗色档</span></b><code id="sigHex">#FF826D</code></div>
+          <button class="restore" id="restoreSig" type="button">用签名色</button>
+        </div>
+        <div class="tokens" id="tokenGrid"><div class="tok"><i style="background:#070709"></i><span>框体</span></div><div class="tok"><i style="background:#101116"></i><span>标题栏</span></div><div class="tok"><i style="background:#14151B"></i><span>侧栏</span></div><div class="tok"><i style="background:#17181F"></i><span>阅读底</span></div><div class="tok"><i style="background:#24252E"></i><span>卡片</span></div><div class="tok"><i style="background:#2A2B35"></i><span>分隔线</span></div><div class="tok"><i style="background:#EFEDF3"></i><span>正文</span></div><div class="tok"><i style="background:#B3B1BD"></i><span>次级文字</span></div><div class="tok"><i style="background:#8F8D9C"></i><span>辅助文字</span></div><div class="tok"><i style="background:#FF826D"></i><span>强调</span></div></div>
+        <div class="contrast" id="contrastRows"><div class="crow"><span class="nm">正文 / 阅读底</span><b>15.23</b><span class="pass">AAA</span></div><div class="crow"><span class="nm">次级 / 阅读底</span><b>8.38</b><span class="pass">AAA</span></div><div class="crow"><span class="nm">辅助 / 卡片底</span><b>4.68</b><span class="pass">AA</span></div><div class="crow"><span class="nm">强调 / 阅读底</span><b>7.30</b><span class="pass">AAA</span></div><div class="crow"><span class="nm">按钮墨 / 强调</span><b>7.82</b><span class="pass">AAA</span></div></div>
+        <div class="acc-title">强调色 <span>6 accents · 点击切换</span></div>
+        <div class="acc-picker" id="accentPicker" role="group" aria-label="选择强调色">
+          <button class="acc-pick" type="button" data-accent="vermilion" style="--sw:#FF826D" aria-label="朱砂" aria-pressed="true" title="朱砂 · #B53825 / #FF826D"></button><button class="acc-pick" type="button" data-accent="pine" style="--sw:#71D3A4" aria-label="松针" aria-pressed="false" title="松针 · #1F6749 / #71D3A4"></button><button class="acc-pick" type="button" data-accent="indigo" style="--sw:#86A7FF" aria-label="黛蓝" aria-pressed="false" title="黛蓝 · #3456B5 / #86A7FF"></button><button class="acc-pick" type="button" data-accent="mauve" style="--sw:#E5A3D5" aria-label="藕荷" aria-pressed="false" title="藕荷 · #8F417B / #E5A3D5"></button><button class="acc-pick" type="button" data-accent="brass" style="--sw:#E3B25E" aria-label="茶金" aria-pressed="false" title="茶金 · #7E5A18 / #E3B25E"></button><button class="acc-pick" type="button" data-accent="slate" style="--sw:#6CC8D6" aria-label="石青" aria-pressed="false" title="石青 · #1B6372 / #6CC8D6"></button>
+        </div>
+        <div class="insp-actions">
+          <button class="btn primary" id="copyCss" type="button"><svg viewBox="0 0 16 16"><rect x="5" y="5" width="7.2" height="7.2" rx="1.2"/><path d="M10.5 5V3.8c0-.7-.5-1.2-1.2-1.2H3.8c-.7 0-1.2.5-1.2 1.2v5.5c0 .7.5 1.2 1.2 1.2H5"/></svg>复制 CSS</button>
+          <button class="btn" id="copyJson" type="button">复制 JSON</button>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section class="section" id="themes">
+    <div class="section-head">
+      <div class="kicker"><span class="num">02</span><h2>五套阅读光</h2></div>
+      <p>从近黑中性、苔绿炭黑，到灰绿釉色、冷雾蓝与夜幕紫。它们不是换色皮肤，而是五种不同的阅读时间。</p>
+    </div>
+    <div class="subhead">THEME BOARD · 点击任意卡片，回到上方实时预览</div>
+    <div class="theme-grid">
+      <button class="theme-card" data-theme="obsidian" aria-pressed="false" aria-label="预览 曜石 主题"><div class="mini-window" style="background:#17181F;color:#EFEDF3"><div class="mini-bar" style="background:#101116;border-bottom:1px solid #2A2B35"><i style="background:#FF826D"></i><b style="width:20px;background:#B3B1BD;opacity:.45"></b><b style="width:12px;background:#8F8D9C;opacity:.4"></b></div><div class="mini-body"><div class="mini-side" style="background:#14151B;border-right:1px solid #2A2B35"><i style="background:#FF826D;width:72%"></i><i style="background:#8F8D9C;width:55%;opacity:.45"></i><i style="background:#8F8D9C;width:64%;opacity:.34"></i><i style="background:#8F8D9C;width:48%;opacity:.34"></i></div><div class="mini-main"><i class="mt" style="background:#EFEDF3;opacity:.72"></i><i style="background:#B3B1BD;opacity:.4;width:92%"></i><i style="background:#B3B1BD;opacity:.3;width:84%"></i><i class="mq" style="border-left-color:#FF826D;background:rgba(255,130,109,0.11)"></i><i style="background:#B3B1BD;opacity:.28;width:66%"></i></div></div></div><div class="tname"><b>曜石</b><code>Obsidian</code></div><div class="tdesc">黑曜石般的近黑中性底，暖白正文。把界面退到最暗，让句子自己发光。</div><div class="tcolors"><i style="background:#070709"></i><i style="background:#101116"></i><i style="background:#14151B"></i><i style="background:#17181F"></i><i style="background:#24252E"></i><i style="background:#FF826D"></i></div><div class="tsig"><i style="background:#FF826D"></i>签名色 · 朱砂 #FF826D</div></button><button class="theme-card" data-theme="pine" aria-pressed="false" aria-label="预览 松烟 主题"><div class="mini-window" style="background:#161D18;color:#E9EEE7"><div class="mini-bar" style="background:#111713;border-bottom:1px solid #29352C"><i style="background:#E3B25E"></i><b style="width:20px;background:#B0BBB1;opacity:.45"></b><b style="width:12px;background:#88968A;opacity:.4"></b></div><div class="mini-body"><div class="mini-side" style="background:#141B16;border-right:1px solid #29352C"><i style="background:#E3B25E;width:72%"></i><i style="background:#88968A;width:55%;opacity:.45"></i><i style="background:#88968A;width:64%;opacity:.34"></i><i style="background:#88968A;width:48%;opacity:.34"></i></div><div class="mini-main"><i class="mt" style="background:#E9EEE7;opacity:.72"></i><i style="background:#B0BBB1;opacity:.4;width:92%"></i><i style="background:#B0BBB1;opacity:.3;width:84%"></i><i class="mq" style="border-left-color:#E3B25E;background:rgba(227,178,94,0.11)"></i><i style="background:#B0BBB1;opacity:.28;width:66%"></i></div></div></div><div class="tname"><b>松烟</b><code>Pine Soot</code></div><div class="tdesc">带一点苔绿的黑，像松烟墨与旧铜。适合夜间长读，暖金强调不刺眼。</div><div class="tcolors"><i style="background:#090E0B"></i><i style="background:#111713"></i><i style="background:#141B16"></i><i style="background:#161D18"></i><i style="background:#222C25"></i><i style="background:#E3B25E"></i></div><div class="tsig"><i style="background:#E3B25E"></i>签名色 · 茶金 #E3B25E</div></button><button class="theme-card" data-theme="celadon" aria-pressed="false" aria-label="预览 青瓷 主题"><div class="mini-window" style="background:#F3F8F3;color:#1C2A21"><div class="mini-bar" style="background:#E6EDE7;border-bottom:1px solid #C3D1C6"><i style="background:#1F6749"></i><b style="width:20px;background:#425348;opacity:.45"></b><b style="width:12px;background:#53665A;opacity:.4"></b></div><div class="mini-body"><div class="mini-side" style="background:#DDE7DF;border-right:1px solid #C3D1C6"><i style="background:#1F6749;width:72%"></i><i style="background:#53665A;width:55%;opacity:.45"></i><i style="background:#53665A;width:64%;opacity:.34"></i><i style="background:#53665A;width:48%;opacity:.34"></i></div><div class="mini-main"><i class="mt" style="background:#1C2A21;opacity:.72"></i><i style="background:#425348;opacity:.4;width:92%"></i><i style="background:#425348;opacity:.3;width:84%"></i><i class="mq" style="border-left-color:#1F6749;background:rgba(31,103,73,0.11)"></i><i style="background:#425348;opacity:.28;width:66%"></i></div></div></div><div class="tname"><b>青瓷</b><code>Celadon</code></div><div class="tdesc">灰绿釉色与纸白阅读区，明度柔和。白天中文长文最耐看的一套。</div><div class="tcolors"><i style="background:#C6D2C9"></i><i style="background:#E6EDE7"></i><i style="background:#DDE7DF"></i><i style="background:#F3F8F3"></i><i style="background:#FFFFFF"></i><i style="background:#1F6749"></i></div><div class="tsig"><i style="background:#1F6749"></i>签名色 · 松针 #1F6749</div></button><button class="theme-card" data-theme="mist" aria-pressed="false" aria-label="预览 雾蓝 主题"><div class="mini-window" style="background:#F2F7FB;color:#17242F"><div class="mini-bar" style="background:#E8EEF5;border-bottom:1px solid #C4D1DF"><i style="background:#3456B5"></i><b style="width:20px;background:#3F5062;opacity:.45"></b><b style="width:12px;background:#536578;opacity:.4"></b></div><div class="mini-body"><div class="mini-side" style="background:#DEE7F0;border-right:1px solid #C4D1DF"><i style="background:#3456B5;width:72%"></i><i style="background:#536578;width:55%;opacity:.45"></i><i style="background:#536578;width:64%;opacity:.34"></i><i style="background:#536578;width:48%;opacity:.34"></i></div><div class="mini-main"><i class="mt" style="background:#17242F;opacity:.72"></i><i style="background:#3F5062;opacity:.4;width:92%"></i><i style="background:#3F5062;opacity:.3;width:84%"></i><i class="mq" style="border-left-color:#3456B5;background:rgba(52,86,181,0.11)"></i><i style="background:#3F5062;opacity:.28;width:66%"></i></div></div></div><div class="tname"><b>雾蓝</b><code>Mist</code></div><div class="tdesc">冷雾蓝灰的浅色体系，层次比现有浅色更清透，技术文档与代码更利落。</div><div class="tcolors"><i style="background:#C7D2DE"></i><i style="background:#E8EEF5"></i><i style="background:#DEE7F0"></i><i style="background:#F2F7FB"></i><i style="background:#FFFFFF"></i><i style="background:#3456B5"></i></div><div class="tsig"><i style="background:#3456B5"></i>签名色 · 黛蓝 #3456B5</div></button><button class="theme-card" data-theme="dusk" aria-pressed="false" aria-label="预览 暮紫 主题"><div class="mini-window" style="background:#1C1622;color:#EFE8F3"><div class="mini-bar" style="background:#15111B;border-bottom:1px solid #332A3C"><i style="background:#E5A3D5"></i><b style="width:20px;background:#BCAFCA;opacity:.45"></b><b style="width:12px;background:#9989A9;opacity:.4"></b></div><div class="mini-body"><div class="mini-side" style="background:#191421;border-right:1px solid #332A3C"><i style="background:#E5A3D5;width:72%"></i><i style="background:#9989A9;width:55%;opacity:.45"></i><i style="background:#9989A9;width:64%;opacity:.34"></i><i style="background:#9989A9;width:48%;opacity:.34"></i></div><div class="mini-main"><i class="mt" style="background:#EFE8F3;opacity:.72"></i><i style="background:#BCAFCA;opacity:.4;width:92%"></i><i style="background:#BCAFCA;opacity:.3;width:84%"></i><i class="mq" style="border-left-color:#E5A3D5;background:rgba(229,163,213,0.11)"></i><i style="background:#BCAFCA;opacity:.28;width:66%"></i></div></div></div><div class="tname"><b>暮紫</b><code>Dusk</code></div><div class="tdesc">夜幕紫灰，低饱和而有温度。给小说、随笔与夜读留一盏偏暖的灯。</div><div class="tcolors"><i style="background:#0C0910"></i><i style="background:#15111B"></i><i style="background:#191421"></i><i style="background:#1C1622"></i><i style="background:#2A2231"></i><i style="background:#E5A3D5"></i></div><div class="tsig"><i style="background:#E5A3D5"></i>签名色 · 藕荷 #E5A3D5</div></button>
+    </div>
+  </section>
+
+  <section class="section" id="accents">
+    <div class="section-head">
+      <div class="kicker"><span class="num">03</span><h2>六枚新强调色</h2></div>
+      <p>同一色相，日夜两档：浅底用更深的墨色，暗底用更亮的粉彩。两档共享同一个色名与语义，切换主题时自动取用对应档位。</p>
+    </div>
+    <div class="subhead">ACCENT BOARD · 上排浅色档 / 下排暗色档</div>
+    <div class="accent-grid">
+      <button class="accent-card" data-accent="vermilion" aria-pressed="false" aria-label="应用强调色 朱砂"><div class="accent-head"><b>朱砂</b><code>Vermilion</code><span class="a-note">印章与句读的红，暖而不焰。</span></div><div class="accent-panes"><div class="pane light" style="--a:#B53825;--ai:#FFFFFF"><div class="pane-top"><span class="sw-big" style="--a:#B53825"></span><code>#B53825</code></div><span class="sample" style="--a:#B53825">链接文字 Link</span><span class="mini-btn" style="--a:#B53825;--ai:#FFFFFF">主要按钮</span><span class="ratio">ON LIGHT 5.28:1</span></div><div class="pane dark" style="--a:#FF826D;--ai:#0A1020"><div class="pane-top"><span class="sw-big" style="--a:#FF826D"></span><code>#FF826D</code></div><span class="sample" style="--a:#FF826D">链接文字 Link</span><span class="mini-btn" style="--a:#FF826D;--ai:#0A1020">主要按钮</span><span class="ratio">ON DARK 7.52:1</span></div></div><div class="accent-foot"><span>浅色档 #B53825</span><span class="dot"></span><span>暗色档 #FF826D</span><span class="dot"></span><b>AA 双档通过</b></div></button><button class="accent-card" data-accent="pine" aria-pressed="false" aria-label="应用强调色 松针"><div class="accent-head"><b>松针</b><code>Pine Needle</code><span class="a-note">偏青的深绿，像松针落在纸上。</span></div><div class="accent-panes"><div class="pane light" style="--a:#1F6749;--ai:#FFFFFF"><div class="pane-top"><span class="sw-big" style="--a:#1F6749"></span><code>#1F6749</code></div><span class="sample" style="--a:#1F6749">链接文字 Link</span><span class="mini-btn" style="--a:#1F6749;--ai:#FFFFFF">主要按钮</span><span class="ratio">ON LIGHT 6.07:1</span></div><div class="pane dark" style="--a:#71D3A4;--ai:#0A1020"><div class="pane-top"><span class="sw-big" style="--a:#71D3A4"></span><code>#71D3A4</code></div><span class="sample" style="--a:#71D3A4">链接文字 Link</span><span class="mini-btn" style="--a:#71D3A4;--ai:#0A1020">主要按钮</span><span class="ratio">ON DARK 10.02:1</span></div></div><div class="accent-foot"><span>浅色档 #1F6749</span><span class="dot"></span><span>暗色档 #71D3A4</span><span class="dot"></span><b>AA 双档通过</b></div></button><button class="accent-card" data-accent="indigo" aria-pressed="false" aria-label="应用强调色 黛蓝"><div class="accent-head"><b>黛蓝</b><code>Indigo</code><span class="a-note">远山黛色，冷静、清晰。</span></div><div class="accent-panes"><div class="pane light" style="--a:#3456B5;--ai:#FFFFFF"><div class="pane-top"><span class="sw-big" style="--a:#3456B5"></span><code>#3456B5</code></div><span class="sample" style="--a:#3456B5">链接文字 Link</span><span class="mini-btn" style="--a:#3456B5;--ai:#FFFFFF">主要按钮</span><span class="ratio">ON LIGHT 5.98:1</span></div><div class="pane dark" style="--a:#86A7FF;--ai:#0A1020"><div class="pane-top"><span class="sw-big" style="--a:#86A7FF"></span><code>#86A7FF</code></div><span class="sample" style="--a:#86A7FF">链接文字 Link</span><span class="mini-btn" style="--a:#86A7FF;--ai:#0A1020">主要按钮</span><span class="ratio">ON DARK 7.79:1</span></div></div><div class="accent-foot"><span>浅色档 #3456B5</span><span class="dot"></span><span>暗色档 #86A7FF</span><span class="dot"></span><b>AA 双档通过</b></div></button><button class="accent-card" data-accent="mauve" aria-pressed="false" aria-label="应用强调色 藕荷"><div class="accent-head"><b>藕荷</b><code>Mauve</code><span class="a-note">灰紫带一点粉，柔和但不甜。</span></div><div class="accent-panes"><div class="pane light" style="--a:#8F417B;--ai:#FFFFFF"><div class="pane-top"><span class="sw-big" style="--a:#8F417B"></span><code>#8F417B</code></div><span class="sample" style="--a:#8F417B">链接文字 Link</span><span class="mini-btn" style="--a:#8F417B;--ai:#FFFFFF">主要按钮</span><span class="ratio">ON LIGHT 5.86:1</span></div><div class="pane dark" style="--a:#E5A3D5;--ai:#0A1020"><div class="pane-top"><span class="sw-big" style="--a:#E5A3D5"></span><code>#E5A3D5</code></div><span class="sample" style="--a:#E5A3D5">链接文字 Link</span><span class="mini-btn" style="--a:#E5A3D5;--ai:#0A1020">主要按钮</span><span class="ratio">ON DARK 9.14:1</span></div></div><div class="accent-foot"><span>浅色档 #8F417B</span><span class="dot"></span><span>暗色档 #E5A3D5</span><span class="dot"></span><b>AA 双档通过</b></div></button><button class="accent-card" data-accent="brass" aria-pressed="false" aria-label="应用强调色 茶金"><div class="accent-head"><b>茶金</b><code>Brass</code><span class="a-note">旧铜与茶汤，适合暖暗底。</span></div><div class="accent-panes"><div class="pane light" style="--a:#7E5A18;--ai:#FFFFFF"><div class="pane-top"><span class="sw-big" style="--a:#7E5A18"></span><code>#7E5A18</code></div><span class="sample" style="--a:#7E5A18">链接文字 Link</span><span class="mini-btn" style="--a:#7E5A18;--ai:#FFFFFF">主要按钮</span><span class="ratio">ON LIGHT 5.59:1</span></div><div class="pane dark" style="--a:#E3B25E;--ai:#0A1020"><div class="pane-top"><span class="sw-big" style="--a:#E3B25E"></span><code>#E3B25E</code></div><span class="sample" style="--a:#E3B25E">链接文字 Link</span><span class="mini-btn" style="--a:#E3B25E;--ai:#0A1020">主要按钮</span><span class="ratio">ON DARK 9.36:1</span></div></div><div class="accent-foot"><span>浅色档 #7E5A18</span><span class="dot"></span><span>暗色档 #E3B25E</span><span class="dot"></span><b>AA 双档通过</b></div></button><button class="accent-card" data-accent="slate" aria-pressed="false" aria-label="应用强调色 石青"><div class="accent-head"><b>石青</b><code>Slate</code><span class="a-note">矿物青蓝，清醒、技术感。</span></div><div class="accent-panes"><div class="pane light" style="--a:#1B6372;--ai:#FFFFFF"><div class="pane-top"><span class="sw-big" style="--a:#1B6372"></span><code>#1B6372</code></div><span class="sample" style="--a:#1B6372">链接文字 Link</span><span class="mini-btn" style="--a:#1B6372;--ai:#FFFFFF">主要按钮</span><span class="ratio">ON LIGHT 6.11:1</span></div><div class="pane dark" style="--a:#6CC8D6;--ai:#0A1020"><div class="pane-top"><span class="sw-big" style="--a:#6CC8D6"></span><code>#6CC8D6</code></div><span class="sample" style="--a:#6CC8D6">链接文字 Link</span><span class="mini-btn" style="--a:#6CC8D6;--ai:#0A1020">主要按钮</span><span class="ratio">ON DARK 9.43:1</span></div></div><div class="accent-foot"><span>浅色档 #1B6372</span><span class="dot"></span><span>暗色档 #6CC8D6</span><span class="dot"></span><b>AA 双档通过</b></div></button>
+    </div>
+  </section>
+
+  <section class="section" id="pairs">
+    <div class="section-head">
+      <div class="kicker"><span class="num">04</span><h2>搭配建议</h2></div>
+      <p>每套主题保留一个签名色，同时给出两枚可替换的辅色。强调色不是越多越好，一次只让一个颜色负责“看这里”。</p>
+    </div>
+    <div class="subhead">PAIRING MATRIX · 推荐组合</div>
+    <div class="matrix-wrap">
+      <table class="matrix">
+        <thead><tr><th>主题</th><th>主 / 辅 / 点睛</th><th>适合场景</th></tr></thead>
+        <tbody><tr><td><div class="theme-cell"><i style="background:#FF826D"></i>曜石 <span style="font-weight:400;color:var(--muted);font-size:9px">Obsidian</span></div></td><td><div class="chips"><span class="chip"><i style="background:#FF826D"></i>朱砂</span><span class="chip"><i style="background:#6CC8D6"></i>石青</span><span class="chip"><i style="background:#71D3A4"></i>松针</span></div></td><td class="use">深夜 / 影音 / 低光环境</td></tr><tr><td><div class="theme-cell"><i style="background:#E3B25E"></i>松烟 <span style="font-weight:400;color:var(--muted);font-size:9px">Pine Soot</span></div></td><td><div class="chips"><span class="chip"><i style="background:#E3B25E"></i>茶金</span><span class="chip"><i style="background:#71D3A4"></i>松针</span><span class="chip"><i style="background:#FF826D"></i>朱砂</span></div></td><td class="use">夜间长文 / 随笔 / 旧书气</td></tr><tr><td><div class="theme-cell"><i style="background:#1F6749"></i>青瓷 <span style="font-weight:400;color:var(--muted);font-size:9px">Celadon</span></div></td><td><div class="chips"><span class="chip"><i style="background:#1F6749"></i>松针</span><span class="chip"><i style="background:#7E5A18"></i>茶金</span><span class="chip"><i style="background:#1B6372"></i>石青</span></div></td><td class="use">白天中文长文 / 护眼</td></tr><tr><td><div class="theme-cell"><i style="background:#3456B5"></i>雾蓝 <span style="font-weight:400;color:var(--muted);font-size:9px">Mist</span></div></td><td><div class="chips"><span class="chip"><i style="background:#3456B5"></i>黛蓝</span><span class="chip"><i style="background:#1B6372"></i>石青</span><span class="chip"><i style="background:#8F417B"></i>藕荷</span></div></td><td class="use">技术文档 / 代码 / 白天</td></tr><tr><td><div class="theme-cell"><i style="background:#E5A3D5"></i>暮紫 <span style="font-weight:400;color:var(--muted);font-size:9px">Dusk</span></div></td><td><div class="chips"><span class="chip"><i style="background:#E5A3D5"></i>藕荷</span><span class="chip"><i style="background:#E3B25E"></i>茶金</span><span class="chip"><i style="background:#86A7FF"></i>黛蓝</span></div></td><td class="use">小说 / 夜读 / 情绪化文本</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section" id="implementation">
+    <div class="section-head">
+      <div class="kicker"><span class="num">05</span><h2>落地方式</h2></div>
+      <p>主题令牌沿用现有 <code>data-theme</code> 结构；强调色仍以一枚 hex 持久化，渲染时按当前主题取浅色档或暗色档，不破坏现有设置 schema。</p>
+    </div>
+    <div class="subhead">IMPLEMENTATION NOTES · 可直接并入 source/src/styles</div>
+    <div class="impl-grid">
+      <div class="code-card">
+        <div class="code-head"><i></i><i></i><i></i><span>theme · 当前组合</span><button class="copy" id="copyCss2" type="button">COPY</button></div>
+        <pre id="cssOut"></pre>
+      </div>
+      <div class="notes">
+        <div class="note-card">
+          <h3>01 · 日夜双档映射</h3>
+          <p>新增主题声明 <code>mode: "light" | "dark"</code>；强调色保存色名或基准 hex，渲染时取 <code>accent.light</code> 或 <code>accent.dark</code>。主题签名色作为默认值。</p>
+        </div>
+        <div class="note-card">
+          <h3>02 · 墨色按对比度择优</h3>
+          <p>现有 <code>accentVars()</code> 用亮度阈值决定 <code>--accent-ink</code>，在珊瑚红、茶金上会误判。建议改为分别计算与 <code>#FFF</code>、<code>#0A1020</code> 的对比度，取较高者。</p>
+        </div>
+        <div class="note-card">
+          <h3>03 · 与现有三套并存</h3>
+          <p>深色、浅色、护眼米色保持不动；五套新主题作为追加项进入设置页。原有六个强调色继续可用，新六枚以「朱砂、松针、黛蓝、藕荷、茶金、石青」命名。</p>
+        </div>
+        <div class="note-card">
+          <h3>04 · 对比度底线</h3>
+          <ul>
+            <li>正文与阅读底：全部 ≥ 13:1</li>
+            <li>辅助文字与卡片底：全部 ≥ 4.5:1</li>
+            <li>强调色与阅读底：全部 ≥ 4.5:1</li>
+            <li>按钮文字与强调底：按最大对比度自动择优</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div><b>Folio · 配色提案 02</b> · 2026-11-16 · 与现有 3 主题 / 6 强调色并行</div>
+    <div class="fmeta"><span>5 themes</span><span>6 accents</span><span>30 pairings</span><code>prototype/theme-lab.html</code></div>
+  </footer>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function(){
+  'use strict';
+  var THEMES = {"obsidian":{"name":"曜石","en":"Obsidian","mode":"dark","sig":"vermilion","tagline":"近黑中性 · 暖白正文 · 朱砂点睛","desc":"黑曜石般的近黑中性底，暖白正文。把界面退到最暗，让句子自己发光。","tokens":{"frame":"#070709","chrome":"#101116","side":"#14151B","edit":"#1B1C23","view":"#17181F","raise":"#24252E","hover":"#282932","active":"#30313C","line":"#2A2B35","lineHi":"#3A3C49","text":"#EFEDF3","text2":"#B3B1BD","text3":"#8F8D9C","warn":"#F2A65A","ok":"#63C9A8","scroll":"#343541","scrollHi":"#464858","backdrop":"rgba(0,0,0,.64)","mark":"rgba(255,122,99,.28)","shadow":"0 30px 80px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.45)"}},"pine":{"name":"松烟","en":"Pine Soot","mode":"dark","sig":"brass","tagline":"苔绿炭黑 · 旧铜强调 · 夜读低刺激","desc":"带一点苔绿的黑，像松烟墨与旧铜。适合夜间长读，暖金强调不刺眼。","tokens":{"frame":"#090E0B","chrome":"#111713","side":"#141B16","edit":"#19211B","view":"#161D18","raise":"#222C25","hover":"#27332B","active":"#304036","line":"#29352C","lineHi":"#3A4A3E","text":"#E9EEE7","text2":"#B0BBB1","text3":"#88968A","warn":"#E99A55","ok":"#72C79B","scroll":"#334239","scrollHi":"#46594C","backdrop":"rgba(3,8,5,.65)","mark":"rgba(217,168,94,.26)","shadow":"0 30px 80px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.45)"}},"celadon":{"name":"青瓷","en":"Celadon","mode":"light","sig":"pine","tagline":"灰绿釉色 · 纸白阅读区 · 松针强调","desc":"灰绿釉色与纸白阅读区，明度柔和。白天中文长文最耐看的一套。","tokens":{"frame":"#C6D2C9","chrome":"#E6EDE7","side":"#DDE7DF","edit":"#F8FBF7","view":"#F3F8F3","raise":"#FFFFFF","hover":"#DDE8DF","active":"#D0DDD2","line":"#C3D1C6","lineHi":"#AABCAE","text":"#1C2A21","text2":"#425348","text3":"#53665A","warn":"#B45309","ok":"#2F7D5A","scroll":"#BAC9BE","scrollHi":"#A3B6A8","backdrop":"rgba(214,226,217,.66)","mark":"rgba(190,137,40,.35)","shadow":"0 26px 60px rgba(38,56,44,.20),0 2px 6px rgba(38,56,44,.10)"}},"mist":{"name":"雾蓝","en":"Mist","mode":"light","sig":"indigo","tagline":"冷雾蓝灰 · 清透层次 · 黛蓝强调","desc":"冷雾蓝灰的浅色体系，层次比现有浅色更清透，技术文档与代码更利落。","tokens":{"frame":"#C7D2DE","chrome":"#E8EEF5","side":"#DEE7F0","edit":"#F8FBFD","view":"#F2F7FB","raise":"#FFFFFF","hover":"#DFE8F2","active":"#D2DFEC","line":"#C4D1DF","lineHi":"#AEBFD1","text":"#17242F","text2":"#3F5062","text3":"#536578","warn":"#B45309","ok":"#2F7D5A","scroll":"#B9C8D7","scrollHi":"#A2B5C8","backdrop":"rgba(216,227,238,.66)","mark":"rgba(196,139,35,.35)","shadow":"0 26px 60px rgba(30,48,66,.20),0 2px 6px rgba(30,48,66,.10)"}},"dusk":{"name":"暮紫","en":"Dusk","mode":"dark","sig":"mauve","tagline":"夜幕紫灰 · 柔和暖调 · 藕荷点缀","desc":"夜幕紫灰，低饱和而有温度。给小说、随笔与夜读留一盏偏暖的灯。","tokens":{"frame":"#0C0910","chrome":"#15111B","side":"#191421","edit":"#201926","view":"#1C1622","raise":"#2A2231","hover":"#302739","active":"#3A3045","line":"#332A3C","lineHi":"#473A54","text":"#EFE8F3","text2":"#BCAFCA","text3":"#9989A9","warn":"#F0A35C","ok":"#63C9A0","scroll":"#3B3147","scrollHi":"#4F4160","backdrop":"rgba(5,2,7,.66)","mark":"rgba(240,166,208,.28)","shadow":"0 30px 80px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.45)"}}};
+  var ACCENTS = {"vermilion":{"name":"朱砂","en":"Vermilion","light":"#B53825","dark":"#FF826D","note":"印章与句读的红，暖而不焰。"},"pine":{"name":"松针","en":"Pine Needle","light":"#1F6749","dark":"#71D3A4","note":"偏青的深绿，像松针落在纸上。"},"indigo":{"name":"黛蓝","en":"Indigo","light":"#3456B5","dark":"#86A7FF","note":"远山黛色，冷静、清晰。"},"mauve":{"name":"藕荷","en":"Mauve","light":"#8F417B","dark":"#E5A3D5","note":"灰紫带一点粉，柔和但不甜。"},"brass":{"name":"茶金","en":"Brass","light":"#7E5A18","dark":"#E3B25E","note":"旧铜与茶汤，适合暖暗底。"},"slate":{"name":"石青","en":"Slate","light":"#1B6372","dark":"#6CC8D6","note":"矿物青蓝，清醒、技术感。"}};
+  var THEME_ORDER = ["obsidian","pine","celadon","mist","dusk"];
+  var ACCENT_ORDER = ["vermilion","pine","indigo","mauve","brass","slate"];
+  var state = { theme: 'obsidian', accent: 'vermilion' };
+  var toastTimer = null;
+
+  function $(s){ return document.querySelector(s); }
+  function all(s){ return Array.prototype.slice.call(document.querySelectorAll(s)); }
+  function hexRgb(hex){ hex = hex.replace('#',''); return [0,2,4].map(function(i){ return parseInt(hex.slice(i,i+2),16); }); }
+  function relLum(hex){
+    var c = hexRgb(hex).map(function(v){ v = v/255; return v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055,2.4); });
+    return 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2];
+  }
+  function ratio(a,b){ var x=relLum(a), y=relLum(b); return Math.round(((Math.max(x,y)+0.05)/(Math.min(x,y)+0.05))*100)/100; }
+  function bestInk(hex){ return ratio(hex,'#FFFFFF') >= ratio(hex,'#0A1020') ? '#FFFFFF' : '#0A1020'; }
+  function rgba(hex,a){ var c=hexRgb(hex); return 'rgba('+c[0]+','+c[1]+','+c[2]+','+a+')'; }
+  function dim(hex){ var c=hexRgb(hex); return 'rgb('+Math.round(c[0]*0.82)+','+Math.round(c[1]*0.82)+','+Math.round(c[2]*0.82)+')'; }
+  function grade(x){ return x>=7 ? 'AAA' : x>=4.5 ? 'AA' : x>=3 ? 'AA 大字' : '未达 AA'; }
+  function accentHex(themeKey, accentKey){
+    var t=THEMES[themeKey], a=ACCENTS[accentKey || t.sig];
+    return t.mode === 'dark' ? a.dark : a.light;
+  }
+  function tokenHtml(t, hex){
+    var items = [
+      ['框体',t.tokens.frame],['标题栏',t.tokens.chrome],['侧栏',t.tokens.side],['阅读底',t.tokens.view],
+      ['卡片',t.tokens.raise],['分隔线',t.tokens.line],['正文',t.tokens.text],['次级文字',t.tokens.text2],
+      ['辅助文字',t.tokens.text3],['强调',hex]
+    ];
+    return items.map(function(x){ return '<div class="tok"><i style="background:'+x[1]+'"></i><span>'+x[0]+'</span></div>'; }).join('');
+  }
+  function contrastHtml(t, hex, ink){
+    var rows = [
+      ['正文 / 阅读底',t.tokens.text,t.tokens.view],
+      ['次级 / 阅读底',t.tokens.text2,t.tokens.view],
+      ['辅助 / 卡片底',t.tokens.text3,t.tokens.raise],
+      ['强调 / 阅读底',hex,t.tokens.view],
+      ['按钮墨 / 强调',ink,hex]
+    ];
+    return rows.map(function(r){
+      var v=ratio(r[1],r[2]), g=grade(v), fail=(g==='未达 AA');
+      return '<div class="crow"><span class="nm">'+r[0]+'</span><b>'+v.toFixed(2)+'</b><span class="pass'+(fail?' fail':'')+'"'+(fail?' style="background:rgba(181,56,37,.12);color:#A52F1E"':'')+'>'+g+'</span></div>';
+    }).join('');
+  }
+  function cssText(){
+    var t=THEMES[state.theme], a=ACCENTS[state.accent];
+    var hex=accentHex(state.theme,state.accent), ink=bestInk(hex);
+    var lines=[];
+    lines.push('/* Folio · '+t.name+' / '+a.name+' · '+t.en+' */');
+    lines.push('[data-theme="'+state.theme+'"] {');
+    lines.push('  --bg-frame:'+t.tokens.frame+';');
+    lines.push('  --bg-chrome:'+t.tokens.chrome+';');
+    lines.push('  --bg-side:'+t.tokens.side+';');
+    lines.push('  --bg-edit:'+t.tokens.edit+';');
+    lines.push('  --bg-view:'+t.tokens.view+';');
+    lines.push('  --bg-raise:'+t.tokens.raise+';');
+    lines.push('  --bg-hover:'+t.tokens.hover+';');
+    lines.push('  --bg-active:'+t.tokens.active+';');
+    lines.push('  --line:'+t.tokens.line+';');
+    lines.push('  --line-hi:'+t.tokens.lineHi+';');
+    lines.push('  --text:'+t.tokens.text+';');
+    lines.push('  --text-2:'+t.tokens.text2+';');
+    lines.push('  --text-3:'+t.tokens.text3+';');
+    lines.push('  --warn:'+t.tokens.warn+';');
+    lines.push('  --ok:'+t.tokens.ok+';');
+    lines.push('  --scroll:'+t.tokens.scroll+';');
+    lines.push('  --scroll-hi:'+t.tokens.scrollHi+';');
+    lines.push('  --backdrop:'+t.tokens.backdrop+';');
+    lines.push('  --mark-hl:'+t.tokens.mark+';');
+    lines.push('  --shadow-win:'+t.tokens.shadow+';');
+    lines.push('  --accent:'+hex+';');
+    lines.push('  --accent-bg:'+rgba(hex,.14)+';');
+    lines.push('  --accent-dim:'+dim(hex)+';');
+    lines.push('  --accent-ink:'+ink+';');
+    lines.push('  --accent-light:'+a.light+';');
+    lines.push('  --accent-dark:'+a.dark+';');
+    lines.push('}');
+    lines.push('');
+    lines.push('/* 另一档：'+(t.mode==='dark'?a.light:a.dark)+'（切到'+(t.mode==='dark'?'浅色':'暗色')+'主题时取用） */');
+    return lines.join('\n');
+  }
+  function cssHtml(){
+    var esc = cssText().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return esc.replace(/(\/\*[^*]*\*\/)/g,'<span class="c">$1</span>').replace(/^([ \t]*--[^:]+:)/gm,'<span class="k">$1</span>').replace(/^([ \t]*[a-z-]+:)/gm,'<span class="v">$1</span>');
+  }
+  function render(){
+    var t=THEMES[state.theme], a=ACCENTS[state.accent];
+    var hex=accentHex(state.theme,state.accent), ink=bestInk(hex);
+    var f=$('#folio');
+    var vars={
+      '--bg-frame':t.tokens.frame,'--bg-chrome':t.tokens.chrome,'--bg-side':t.tokens.side,'--bg-edit':t.tokens.edit,
+      '--bg-view':t.tokens.view,'--bg-raise':t.tokens.raise,'--bg-hover':t.tokens.hover,'--bg-active':t.tokens.active,
+      '--line':t.tokens.line,'--line-hi':t.tokens.lineHi,'--text':t.tokens.text,'--text-2':t.tokens.text2,'--text-3':t.tokens.text3,
+      '--warn':t.tokens.warn,'--ok':t.tokens.ok,'--scroll':t.tokens.scroll,'--scroll-hi':t.tokens.scrollHi,
+      '--mark-hl':t.tokens.mark,'--shadow-win':t.tokens.shadow,
+      '--accent':hex,'--accent-bg':rgba(hex,.14),'--accent-dim':dim(hex),'--accent-ink':ink
+    };
+    Object.keys(vars).forEach(function(k){ f.style.setProperty(k,vars[k]); });
+
+    $('#inspCombo').textContent = t.name+' × '+a.name;
+    $('#infoName').textContent = t.name;
+    $('#infoEn').textContent = t.en.toUpperCase();
+    $('#infoDesc').textContent = t.desc;
+    $('#sigDot').style.background = hex;
+    $('#sigName').textContent = a.name;
+    $('#sigMode').textContent = t.mode==='dark' ? '暗色档' : '浅色档';
+    $('#sigHex').textContent = hex;
+    $('#tokenGrid').innerHTML = tokenHtml(t,hex);
+    $('#contrastRows').innerHTML = contrastHtml(t,hex,ink);
+    $('#cssOut').innerHTML = cssHtml();
+
+    all('.ttab').forEach(function(b){
+      var k=b.getAttribute('data-theme');
+      b.setAttribute('aria-pressed', k===state.theme ? 'true' : 'false');
+    });
+    all('.theme-card').forEach(function(b){
+      b.setAttribute('aria-pressed', b.getAttribute('data-theme')===state.theme ? 'true' : 'false');
+    });
+    all('.accent-card').forEach(function(b){
+      b.setAttribute('aria-pressed', b.getAttribute('data-accent')===state.accent ? 'true' : 'false');
+    });
+    all('.acc-pick').forEach(function(b){
+      var k=b.getAttribute('data-accent');
+      b.style.setProperty('--sw',accentHex(state.theme,k));
+      b.setAttribute('aria-pressed', k===state.accent ? 'true' : 'false');
+    });
+  }
+  function showToast(msg){
+    var el=$('#toast'); el.textContent=msg; el.classList.add('show');
+    if(toastTimer) clearTimeout(toastTimer);
+    toastTimer=setTimeout(function(){ el.classList.remove('show'); },1800);
+  }
+  function fallbackCopy(text){
+    var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.left='-9999px'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); }catch(e){}
+    document.body.removeChild(ta);
+  }
+  function copy(text,msg){
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){ showToast(msg); },function(){ fallbackCopy(text); showToast(msg); });
+    }else{ fallbackCopy(text); showToast(msg); }
+  }
+  function selectTheme(k){
+    state.theme=k; state.accent=THEMES[k].sig; render();
+  }
+  all('.ttab').forEach(function(b){ b.addEventListener('click',function(){ selectTheme(b.getAttribute('data-theme')); }); });
+  all('.theme-card').forEach(function(b){ b.addEventListener('click',function(){ selectTheme(b.getAttribute('data-theme')); document.getElementById('lab').scrollIntoView({behavior:'smooth',block:'start'}); }); });
+  all('.acc-pick').forEach(function(b){ b.addEventListener('click',function(){ state.accent=b.getAttribute('data-accent'); render(); }); });
+  all('.accent-card').forEach(function(b){ b.addEventListener('click',function(){ state.accent=b.getAttribute('data-accent'); render(); document.getElementById('lab').scrollIntoView({behavior:'smooth',block:'start'}); }); });
+  $('#restoreSig').addEventListener('click',function(){ state.accent=THEMES[state.theme].sig; render(); });
+  $('#copyCss').addEventListener('click',function(){ copy(cssText(),'CSS 令牌已复制'); });
+  $('#copyCss2').addEventListener('click',function(){ copy(cssText(),'CSS 令牌已复制'); });
+  $('#copyJson').addEventListener('click',function(){
+    var t=THEMES[state.theme], a=ACCENTS[state.accent], hex=accentHex(state.theme,state.accent);
+    var data={theme:state.theme,themeName:t.name,mode:t.mode,tokens:t.tokens,accent:{id:state.accent,name:a.name,light:a.light,dark:a.dark,active:hex,ink:bestInk(hex)}};
+    copy(JSON.stringify(data,null,2),'配色 JSON 已复制');
+  });
+  render();
+})();
+</script>
+</body>
+</html>

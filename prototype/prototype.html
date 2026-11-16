@@ -1,0 +1,3523 @@
+<!DOCTYPE html>
+<!--
+  Folio · Markdown 桌面阅读器 · HTML 交互原型
+  ---------------------------------------------------------------
+  视觉与布局参考：mdediter 墨页原型（rail + side + center / 菜单栏 / 状态栏）
+  对应正式版技术栈：
+    桌面壳   Tauri 2.11 (WebView2 / 单实例 / folio:// 深度链接)
+    后端     Rust 1.90 (workspace, 10 crates)
+    数据库   SQLite + FTS5 (rusqlite)   —— 原型中用 localStorage 模拟
+    前端     SolidJS 1.9 + TS 5.8        —— 原型中为原生 JS
+    编辑器   CodeMirror 6                —— 原型中为纯文本编辑区
+  零依赖、离线可用（字体走 CDN，离线时回退系统字体）。
+  快捷键：Ctrl+O 打开/拖放 · Ctrl+F 搜索 · Ctrl+E 编辑 · Alt+←/→ 后退/前进 · F3 命中循环
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Folio · Markdown 阅读器 — 交互原型</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Noto+Serif+SC:wght@400;600&display=swap');
+
+/* ============ tokens ============ */
+:root{
+  --font-ui:"Inter","Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;
+  --font-prose:"Source Serif 4","Noto Serif SC","Source Han Serif SC",Georgia,"Microsoft YaHei UI",serif;
+  --font-mono:"JetBrains Mono","Cascadia Mono",Consolas,"Microsoft YaHei UI",monospace;
+  --r-win:12px; --r-3:10px; --r-2:7px; --r-1:5px;
+  --h-title:40px; --h-status:30px; --w-rail:48px; --w-side:266px;
+  --amber:#F59E0B;
+}
+.app[data-theme="dark"]{
+  --bg-frame:#080D18; --bg-chrome:#0B1222; --bg-side:#0E1728;
+  --bg-edit:#101A2C; --bg-view:#0C1424; --bg-raise:#16223A;
+  --bg-hover:#18243D; --bg-active:#1E2E4C;
+  --line:#1C2941; --line-hi:#2A3B58;
+  --text:#E7EEF9; --text-2:#A3B2CB; --text-3:#7A8AA8;  /* ≥4.5:1 on panel bgs (WCAG AA) */
+  --accent:#2DD4BF; --accent-dim:#14B8A6; --accent-ink:#052B26; --accent-bg:rgba(45,212,191,.12);
+  --warn:#FB923C; --ok:#34D399;
+  --s-bullet:#FB923C;
+  --shadow-pop:0 18px 50px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.03);
+  --shadow-win:0 30px 90px rgba(0,0,0,.62),0 2px 8px rgba(0,0,0,.5);
+  --scroll:#233450; --scroll-hi:#2F4468;
+  --backdrop:rgba(4,8,16,.62);
+  --mark-hl:rgba(245,158,11,.32);
+}
+.app[data-theme="light"]{
+  --bg-frame:#DFE4EC; --bg-chrome:#F2F4F8; --bg-side:#E9ECF3;
+  --bg-edit:#FFFFFF; --bg-view:#FCFCFD; --bg-raise:#FFFFFF;
+  --bg-hover:#DFE5F0; --bg-active:#D3DCEB;
+  --line:#C2CBDA; --line-hi:#ACB9CC;
+  --text:#18212F; --text-2:#46536A; --text-3:#5B6881;  /* 浅底小字对比 4.75~5.47:1（原 #8794A9 仅 2.60~2.99:1） */
+  --accent:#0D9488; --accent-dim:#0F766E; --accent-ink:#FFFFFF; --accent-bg:rgba(13,148,136,.10);
+  --warn:#EA580C; --ok:#16A34A;
+  --s-bullet:#EA580C;
+  --shadow-pop:0 16px 40px rgba(19,29,45,.16),0 0 0 1px rgba(19,29,45,.06);
+  --shadow-win:0 24px 60px rgba(19,29,45,.22),0 2px 6px rgba(19,29,45,.10);
+  --scroll:#B9C5D6; --scroll-hi:#A3B1C6;
+  --backdrop:rgba(232,236,242,.66);
+  --mark-hl:rgba(245,158,11,.38);
+}
+.app[data-theme="sepia"]{        /* 护眼米色：暖纸底 + 深墨字 + 琥珀强调；小字对比按 AA 收紧 */
+  --bg-frame:#D9CBA9; --bg-chrome:#EDE4CB; --bg-side:#EAE0C4;
+  --bg-edit:#FBF6E9; --bg-view:#FAF4E6; --bg-raise:#FFFCF3;
+  --bg-hover:#EADFC2; --bg-active:#E1D4B2;
+  --line:#D6C6A0; --line-hi:#C3B186;
+  --text:#3A3220; --text-2:#5A4E33; --text-3:#6E6042;
+  --accent:#A0562A; --accent-dim:#7C3F1E; --accent-ink:#FFF7EA; --accent-bg:rgba(160,86,42,.13);
+  --warn:#B45309; --ok:#3F7D5A;
+  --s-bullet:#B45309;
+  --shadow-pop:0 16px 40px rgba(80,60,30,.18),0 0 0 1px rgba(80,60,30,.06);
+  --shadow-win:0 24px 60px rgba(80,60,30,.24),0 2px 6px rgba(80,60,30,.12);
+  --scroll:#C7B58A; --scroll-hi:#B39C6B;
+  --backdrop:rgba(214,198,160,.66);
+  --mark-hl:rgba(160,86,42,.30);
+}
+
+/* ============ base ============ */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-ui);font-size:13px;line-height:1.45;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  color-scheme:light dark;background:#05080F;
+  display:grid;place-items:center;padding:28px}
+.app[data-theme="light"]{background:#CDD5E1}
+.app[data-theme="sepia"]{background:#D9CBA9}
+button,input,select,textarea{font:inherit;color:inherit;background:none;border:none;outline:none}
+svg{display:block}
+.ico{width:16px;height:16px;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.ico-12{width:12px;height:12px}
+.ico-14{width:14px;height:14px}
+.ico-18{width:18px;height:18px}
+.ico-20{width:20px;height:20px}
+.ellip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+[hidden]{display:none!important}
+/* 全局焦点环（键盘可达性）；纯文本输入框除外，避免大方框 */
+:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+#editor:focus-visible,#search-input:focus-visible,#lib-search:focus-visible,
+#pk-q:focus-visible,#pk-name:focus-visible{outline:none}   /* 纯文本输入框豁免焦点环（§2.6）：靠容器/描边提亮表达聚焦 */
+
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:6px;border:3px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:var(--scroll-hi)}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+
+/* ============ window ============ */
+.win{position:relative;width:100%;height:100%;display:flex;flex-direction:column;
+  background:var(--bg-edit);overflow:hidden;color:var(--text);font-family:var(--font-ui);
+  border-radius:var(--r-win);border:1px solid var(--line-hi);box-shadow:var(--shadow-win)}
+.win::after{content:"";position:absolute;inset:0;border-radius:var(--r-win);pointer-events:none;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+
+/* ---- title bar ---- */
+.tbar{height:var(--h-title);flex:none;display:flex;align-items:center;gap:8px;
+  padding-left:12px;background:var(--bg-chrome);border-bottom:1px solid var(--line);z-index:5}
+.brand{display:flex;align-items:center;gap:8px;padding-right:4px;flex:none}
+.mark{width:22px;height:22px;border-radius:6px;flex:none;display:grid;place-items:center;
+  background:var(--accent);
+  color:var(--accent-ink);font-weight:700;font-size:12px;letter-spacing:-.4px;
+  box-shadow:none}
+.brand-name{font-weight:600;font-size:12.5px}
+.brand-chip{font-size:9.5px;color:var(--text-3);border:1px solid var(--line);border-radius:8px;
+  padding:1px 6px;font-weight:600;letter-spacing:.05em}
+.menu{display:flex;gap:1px;flex:none}
+.menu>b{position:relative;font-weight:450;font-size:12.5px;color:var(--text-2);
+  padding:5px 8px;border-radius:var(--r-1);cursor:pointer;transition:background .15s,color .15s}
+.menu>b:hover{background:var(--bg-hover);color:var(--text)}
+.menu>b.open{background:var(--bg-active);color:var(--text)}
+.tabs{display:flex;align-items:flex-end;gap:3px;height:100%;flex:1 1 auto;min-width:0;overflow:hidden}
+.tab{display:flex;align-items:center;gap:7px;height:29px;padding:0 9px;max-width:240px;
+  border-radius:7px 7px 0 0;color:var(--text-3);font-size:12.5px;cursor:default;
+  border:1px solid transparent;border-bottom:none;position:relative;top:1px}
+.tab.on{background:var(--bg-view);color:var(--text);border-color:var(--line)}
+.tab.on::after{content:"";position:absolute;left:10px;right:10px;top:0;height:2px;
+  border-radius:0 0 3px 3px;background:var(--accent)}
+.tab .tn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab .fi{color:var(--accent);opacity:.85}
+.tbar-right{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none;padding-right:2px}
+.seg{display:flex;background:var(--bg-side);border:1px solid var(--line);border-radius:8px;padding:2px;gap:2px}
+.seg button{display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:6px;
+  font-size:12px;color:var(--text-3);cursor:pointer;transition:background .15s,color .15s}
+.seg button:hover{color:var(--text)}
+.seg button.on{background:var(--bg-raise);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.iconbtn{width:30px;height:30px;border-radius:7px;display:grid;place-items:center;
+  color:var(--text-2);cursor:pointer;transition:background .15s,color .15s}
+.iconbtn:hover{background:var(--bg-hover);color:var(--text)}
+.iconbtn.on{background:var(--accent-bg);color:var(--accent)}
+.wctl{display:flex;margin-left:4px}
+.wctl i{width:44px;height:30px;display:grid;place-items:center;color:var(--text-2);
+  cursor:pointer;border-radius:6px;transition:background .15s,color .15s}
+.wctl i:hover{background:var(--bg-hover);color:var(--text)}
+.wctl i.close:hover{background:#E11D48;color:#fff}
+
+/* ---- menu dropdowns ---- */
+.mdrop{display:none;position:absolute;top:calc(100% + 3px);left:0;min-width:224px;
+  background:var(--bg-raise);border:1px solid var(--line-hi);border-radius:var(--r-3);
+  box-shadow:var(--shadow-pop);padding:5px;z-index:60}
+.menu>b.open .mdrop{display:block}
+.mi{display:flex;align-items:center;gap:10px;height:30px;padding:0 10px;border-radius:6px;
+  font-size:12.5px;color:var(--text-2);cursor:pointer;transition:background .12s,color .12s;white-space:nowrap}
+.mi .ico{color:var(--text-3)}
+.mi:hover{background:var(--bg-hover);color:var(--text)}
+.mi:hover .ico{color:var(--text)}
+.mi.kb{background:var(--bg-hover);color:var(--text)}
+.mi.kb .ico{color:var(--text)}
+.mi .t{flex:1}
+.mi kbd{font-size:10px;padding:1px 5px;border-radius:4px;background:var(--bg-side);
+  border:1px solid var(--line);color:var(--text-3);font-family:var(--font-mono)}
+.mi .ck{width:14px;display:grid;place-items:center;color:var(--accent);flex:none}
+.mi .ck:empty::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:.9}
+/* ---- 子菜单（查看→主题：深色/浅色/米色；hover·点父项·键盘到达均可展开）---- */
+.mi.sub{position:relative}
+.mi.sub .subc{color:var(--text-3);margin-left:4px}
+.mi.sub:hover>.sub-drop,.mi.sub.subopen>.sub-drop{display:block}
+.sub-drop{display:none;position:absolute;left:calc(100% - 10px);top:-6px;min-width:148px;
+  background:var(--bg-raise);border:1px solid var(--line-hi);border-radius:10px;
+  box-shadow:var(--shadow-pop);padding:5px;z-index:61}
+.sub-drop .mi{height:28px}
+/* 旧死样式已删（2026-11-16）：`.mi.sub{padding-left:26px…}` 原为「子项缩进」定义未用；
+   .mi.sub 现指子菜单父项（缩进/置灰会把它压成说明行），由上面新组接管 */
+.msep{height:1px;background:var(--line);margin:5px 8px}
+
+/* ============ body grid ============ */
+.body{flex:1;display:flex;min-height:0;background:var(--bg-side)}
+
+/* ---- activity rail ---- */
+.rail{width:var(--w-rail);flex:none;background:var(--bg-chrome);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:2px}
+.rail button{position:relative;width:36px;height:36px;border-radius:9px;display:grid;
+  place-items:center;color:var(--text-3);cursor:pointer;transition:background .15s,color .15s}
+.rail button:hover{background:var(--bg-hover);color:var(--text)}
+.rail button.on{color:var(--accent);background:var(--accent-bg)}
+.rail button.on::before{content:"";position:absolute;left:-8px;top:9px;bottom:9px;width:3px;
+  border-radius:0 3px 3px 0;background:var(--accent)}
+
+/* ---- side panel ---- */
+.side{width:var(--w-side);flex:none;background:var(--bg-side);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;min-height:0}
+.side-view{display:flex;flex-direction:column;flex:1;min-height:0}
+.side-head{padding:12px 12px 8px;display:flex;flex-direction:column;gap:9px}
+.side-title{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--text-3)}
+.side-title .sp{flex:1}
+.side-title .act{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;flex:none;
+  color:var(--text-3);opacity:.7;cursor:pointer;text-transform:none}
+.side-title .act:hover{opacity:1;color:var(--text);background:var(--bg-hover)}
+.side-title .act:active{transform:translateY(1px)}
+.sec-act{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;cursor:pointer;
+  color:var(--text-3);opacity:.7;transition:opacity .12s,background .12s,color .12s}
+.sec-act:hover{opacity:1;color:var(--text);background:var(--bg-hover)}
+.root-chip{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--r-2);
+  background:var(--bg-raise);border:1px solid var(--line);cursor:pointer}
+.root-chip:hover{border-color:var(--line-hi);background:var(--bg-hover)}
+.root-chip .ri{width:24px;height:24px;border-radius:6px;background:var(--accent-bg);
+  color:var(--accent);display:grid;place-items:center;flex:none}
+.root-chip .rn{font-size:12.5px;font-weight:550}
+.root-chip .rp{font-size:11px;color:var(--text-2);flex:1;min-width:0}
+/* chip 内联动作：刷新 / 关闭（真实程序把这两个按钮放进库里，标题只说「文档库」） */
+.ract{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;flex:none;
+  color:var(--text-3);opacity:.6;cursor:pointer}
+.ract:hover{opacity:1;color:var(--text);background:var(--bg-raise)}
+.ract:active{transform:translateY(1px)}
+.searchf{display:flex;align-items:center;gap:7px;padding:0 9px;height:30px;border-radius:var(--r-2);
+  background:var(--bg-edit);border:1px solid var(--line);color:var(--text-3);cursor:text;
+  transition:border-color .15s}
+.searchf:hover{border-color:var(--line-hi)}
+.searchf:focus-within{border-color:var(--accent)}   /* 纯文本筛选/搜索框：聚焦用描边提亮替代大号焦点环（§2.6 豁免精神） */
+.searchf input{font-size:12.5px;flex:1;min-width:0;background:none;border:0;color:var(--text)}
+.searchf kbd{font-size:10px;padding:2px 5px;border-radius:4px;background:var(--bg-side);
+  border:1px solid var(--line);color:var(--text-3);font-family:var(--font-mono)}
+.side-body{flex:1;overflow:auto;padding:2px 8px 12px}
+.side-foot{flex:none;border-top:1px solid var(--line);padding:8px 12px;display:flex;
+  align-items:center;gap:8px;color:var(--text-3);font-size:11px}
+.side-foot .sp{flex:1}
+.side-foot .dot-ok{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
+
+/* ---- library tree ---- */
+.tree{font-size:12.5px;user-select:none}
+.tf{display:flex;align-items:center;gap:6px;height:27px;padding:0 6px;border-radius:var(--r-1);
+  cursor:pointer;color:var(--text-2);position:relative;transition:background .12s,color .12s}
+.tf:hover{background:var(--bg-hover);color:var(--text)}
+.tf.on{background:var(--accent-bg);color:var(--text)}
+.tf.on::after{content:"";position:absolute;left:-8px;top:5px;bottom:5px;width:2px;border-radius:2px;background:var(--accent)}
+.tf.on .nm{font-weight:600;color:var(--accent)}
+.tf .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tf .mt{font-size:10.5px;color:var(--text-3);font-family:var(--font-mono);flex:none}
+/* v3：目录树行 + 筛选态路径提示 + 历史行移除钮（对齐真实程序 app.css） */
+.tf.dir{color:var(--text-2)}
+.tf.dir .chev{color:var(--text-3);flex:none}
+.tf.dir.root{color:var(--text);font-weight:550}
+.tf.dir:hover .chev{color:var(--accent)}
+.tf .src-dir{font-size:10.5px;color:var(--text-3);flex:0 1 auto;max-width:38%;min-width:0}
+.tf .row-x{width:20px;height:20px;flex:none;opacity:0}
+.tf:hover .row-x,.tf:focus-within .row-x{opacity:.7}
+.tf .row-x:hover{opacity:1;color:var(--text);background:var(--bg-hover)}
+.sec-h{display:flex;align-items:center;gap:6px;height:24px;padding:0 6px;margin-top:10px;
+  font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)}
+.sec-h .sp{flex:1;height:1px;background:var(--line)}
+
+/* ---- outline ---- */
+.out-head{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 14px;
+  border-bottom:1px solid var(--line);font-size:11px;font-weight:600;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--text-3);background:var(--bg-side)}
+.out-head .sp{flex:1}
+.out-body{flex:1;overflow:auto;padding:10px 8px}
+.ol{width:100%;text-align:left;display:flex;align-items:center;gap:8px;height:27px;
+  padding:0 8px;border-radius:var(--r-1);font-size:12.5px;color:var(--text-2);cursor:pointer;
+  position:relative;transition:background .13s,color .13s}
+.ol:hover{background:var(--bg-hover);color:var(--text)}
+.ol.on{background:var(--accent-bg);color:var(--accent);font-weight:550}
+.ol.on::before{content:"";position:absolute;left:-8px;top:6px;bottom:6px;width:2px;border-radius:2px;background:var(--accent)}
+.ol .ot{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.ol.l2{padding-left:20px}
+.ol.l3{padding-left:34px;font-size:12px;color:var(--text-3)}
+.ol.l4,.ol.l5,.ol.l6{padding-left:44px;font-size:11.5px;color:var(--text-3)}
+.ol-empty{color:var(--text-3);font-size:12.5px;padding:18px 10px;text-align:center;line-height:2}
+/* ============ center ============ */
+.center{flex:1;display:flex;min-width:0;min-height:0;flex-direction:column;background:var(--bg-view)}
+.pane-bar{flex:none;height:36px;display:flex;align-items:center;gap:6px;padding:0 10px;
+  border-bottom:1px solid var(--line);background:var(--bg-chrome);color:var(--text-3);font-size:11.5px}
+.pane-bar .sp{flex:1}
+.pane-bar .divv{width:1px;height:15px;background:var(--line);margin:0 3px;flex:none}
+.crumb-bar{flex:none;height:26px;display:flex;align-items:center;padding:0 14px;
+  background:var(--bg-chrome);border-bottom:1px solid var(--line)}
+.crumb-bar .path{flex:1;min-width:0}
+.tbtn{height:25px;min-width:25px;padding:0 6px;border-radius:5px;display:inline-flex;
+  align-items:center;gap:5px;color:var(--text-3);cursor:pointer;transition:background .14s,color .14s;flex:none}
+.tbtn:hover{background:var(--bg-hover);color:var(--text)}
+.tbtn:disabled{opacity:.3;pointer-events:none}
+.tbtn.on{background:var(--accent-bg);color:var(--accent)}
+.path{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-3);
+  flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.path i{font-style:normal;opacity:.55}
+.path b{font-weight:500;color:var(--text-2)}
+.path .ico{width:13px;height:13px}
+
+/* ---- reading view ---- */
+.view{flex:1;min-width:0;overflow-y:auto;position:relative;background:var(--bg-view)}
+.prose{max-width:var(--prose-w,900px);margin:0 auto;padding:34px 44px 100px;font-family:var(--font-prose);
+  font-size:var(--prose-fs,15.5px);line-height:var(--prose-lh,1.85);color:var(--text);
+  letter-spacing:var(--prose-ls,0em);text-align:var(--prose-align,left)}
+.prose.sans{font-family:var(--font-ui)}
+.prose h1{font-size:30px;line-height:1.3;font-weight:700;letter-spacing:-.4px;margin:6px 0 6px;scroll-margin-top:60px}
+.prose .sub{font-family:var(--font-ui);font-size:12.5px;color:var(--text-3);margin:0 0 24px;
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.prose .sub .ico{width:13px;height:13px}
+.prose h2{font-size:22px;font-weight:650;letter-spacing:-.2px;margin:34px 0 12px;
+  padding-bottom:8px;border-bottom:1px solid var(--line);scroll-margin-top:60px}
+.prose h3{font-size:17.5px;font-weight:650;margin:26px 0 8px;scroll-margin-top:60px}
+.prose h4{font-family:var(--font-ui);font-size:13.5px;font-weight:650;letter-spacing:.02em;
+  margin:20px 0 6px;color:var(--text-2);scroll-margin-top:60px}
+.prose h5,.prose h6{font-family:var(--font-ui);font-size:12.5px;font-weight:650;
+  margin:16px 0 6px;color:var(--text-2);scroll-margin-top:60px}
+.prose p{margin:0 0 var(--prose-para,15px)}
+.prose img{max-width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:10px;
+  margin:8px 0 6px;cursor:zoom-in}
+.prose a{color:var(--accent);text-decoration:underline;
+  text-decoration-color:color-mix(in srgb,var(--accent) 40%,transparent);text-underline-offset:3px}
+.prose strong{font-weight:700}
+.prose em{font-style:italic}
+.prose ul,.prose ol{margin:0 0 15px;padding-left:26px}
+.prose li{margin:0 0 6px}
+.prose ul li::marker{color:var(--s-bullet)}
+.prose ol li::marker{color:var(--accent);font-family:var(--font-ui);font-size:.85em}
+.prose li:has(>.cbx){list-style:none;display:flex;gap:10px;align-items:flex-start;padding:3px 0;margin-left:-26px}
+.prose li.done{color:var(--text-3)}
+.prose li.done .tline{text-decoration:line-through}
+.cbx{width:17px;height:17px;flex:none;margin-top:4px;border-radius:5px;border:1.5px solid var(--line-hi);
+  display:grid;place-items:center;color:transparent;background:var(--bg-raise);cursor:pointer;transition:border-color .13s}
+.cbx:hover{border-color:var(--accent)}
+.cbx.done{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.cbx svg{width:12px;height:12px;stroke-width:2.6}
+/* 中文伪斜体难看，引用块改用色阶 + 左线区分（双主题一致） */
+.prose blockquote{margin:0 0 16px;padding:2px 0 2px 18px;border-left:3px solid var(--accent);
+  color:var(--text-2)}
+.prose blockquote p:last-child{margin-bottom:0}
+.prose code{font-family:var(--font-mono);font-size:.83em;padding:2px 6px;border-radius:5px;
+  background:color-mix(in srgb,var(--accent) 10%,var(--bg-raise));color:var(--accent-dim);
+  border:1px solid var(--line)}
+.app[data-theme="light"] .prose code{color:#0B6156}
+.prose .tw-tbl{overflow:auto;margin:0 0 20px;border:1px solid var(--line);border-radius:var(--r-3)}
+.prose table{border-collapse:collapse;width:100%;font-family:var(--font-ui);font-size:13px}
+.prose thead th{background:var(--bg-raise);text-align:left;font-weight:600;font-size:11.5px;
+  letter-spacing:.03em;text-transform:uppercase;color:var(--text-3);padding:9px 14px;
+  border-bottom:1px solid var(--line);white-space:nowrap}
+.prose tbody td{padding:9px 14px;border-bottom:1px solid var(--line);color:var(--text-2);vertical-align:top}
+.prose tbody tr:last-child td{border-bottom:none}
+.prose tbody tr:hover td{background:var(--bg-hover);color:var(--text)}
+.prose td code{white-space:nowrap}
+.prose hr{border:none;height:1px;background:var(--line);margin:28px 0}
+.codeblock{margin:0 0 20px;border:1px solid var(--line);border-radius:var(--r-3);overflow:hidden;
+  background:color-mix(in srgb,var(--bg-frame) 45%,var(--bg-view))}
+.codeblock .cbh{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;
+  border-bottom:1px solid var(--line);background:var(--bg-chrome);font-family:var(--font-ui);
+  font-size:11.5px;color:var(--text-3)}
+.codeblock .cbh .lang{font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2)}
+.codeblock .cbh .sp{flex:1}
+.codeblock .cbh button{display:flex;align-items:center;gap:5px;height:22px;padding:0 7px;
+  border-radius:5px;cursor:pointer;color:var(--text-3);font-size:11px;transition:background .14s,color .14s}
+.codeblock .cbh button:hover{background:var(--bg-hover);color:var(--text)}
+.codeblock pre{margin:0;padding:14px 16px;overflow:auto;font-family:var(--font-mono);
+  font-size:var(--code-fs,12.5px);line-height:21px;color:var(--text);white-space:pre}
+.prose mark.hit{background:var(--mark-hl);color:inherit;border-radius:3px;padding:0 2px}
+.flash{animation:flashBg 1.5s ease 1;border-radius:5px}
+@keyframes flashBg{0%{background:var(--accent-bg);box-shadow:0 0 0 8px var(--accent-bg)}
+  100%{background:transparent;box-shadow:none}}
+.prose mark.hit.cur{box-shadow:0 0 0 2px var(--accent)}
+.ol:focus-visible,.tf:focus-visible,.radio:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* ---- reading progress bar（读区顶部 2px，进度记忆可见化） ---- */
+.pgbar{position:sticky;top:0;height:2px;z-index:4;margin-bottom:-2px;background:transparent;pointer-events:none}
+.pgbar i{display:block;height:100%;width:0;background:var(--accent);opacity:.8;border-radius:0 2px 2px 0}
+
+/* ---- 搜索命中浮动条（跳转后保留，可循环） ---- */
+.hitnav{position:absolute;left:50%;transform:translateX(-50%);bottom:42px;z-index:150;display:flex;
+  align-items:center;gap:10px;height:32px;padding:0 12px;border-radius:16px;background:var(--bg-raise);
+  border:1px solid var(--line-hi);box-shadow:var(--shadow-pop);font-size:11.5px;color:var(--text-2);white-space:nowrap}
+.hitnav b{color:var(--accent);font-family:var(--font-mono);font-weight:600}
+.hitnav button{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;cursor:pointer;color:var(--text-2)}
+.hitnav button:hover{background:var(--bg-hover);color:var(--text)}
+.hitnav kbd{font-family:var(--font-mono);font-size:10px;padding:1px 5px;border-radius:4px;
+  background:var(--bg-side);border:1px solid var(--line);color:var(--text-3)}
+
+/* ---- dirty 指示（未保存修改） ---- */
+.dirtydot{width:7px;height:7px;border-radius:50%;background:var(--amber);flex:none}
+.status .si.dirty,.status .si.dirty b{color:var(--amber)}
+/* 阅读百分比定宽槽（数字用 tabular-nums）：9%→100% 不来回抖动，位数差在左侧留白（2026-11-16）
+   5ch 实测容得下「100%」（28.8px），4.2ch 会被撑开 */
+#stat-pct{display:inline-block;min-width:5ch;font-variant-numeric:tabular-nums;text-align:right}
+
+/* ---- 仅演示的库条目 ---- */
+.tf.demo{opacity:.6}
+.badge{font-size:9.5px;color:var(--text-3);border:1px solid var(--line);border-radius:7px;
+  padding:0 5px;flex:none;font-family:var(--font-ui)}
+
+/* ---- empty state ---- */
+.empty-state{max-width:540px;margin:16vh auto 0;text-align:center;color:var(--text-2);
+  padding:0 24px;font-family:var(--font-ui)}
+.empty-state svg{color:var(--text-3);opacity:.5;margin:0 auto}
+.empty-state h3{margin:20px 0 12px;font-weight:600;font-size:15px;color:var(--text)}
+.empty-state p{line-height:2;font-size:13px}
+
+/* ---- editor ---- */
+.editor-wrap{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg-edit)}
+.editor-wrap[hidden]{display:none}
+.editor-bar{flex:none;display:flex;align-items:center;gap:12px;padding:0 12px;height:36px;
+  border-bottom:1px solid var(--line);background:var(--bg-chrome);font-size:11.5px;color:var(--text-3)}
+.editor-bar .sp{flex:1}
+.editor-bar .hint b{color:var(--text-2);font-weight:550}
+.btn{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 12px;
+  border-radius:var(--r-2);font-size:12px;font-weight:550;cursor:pointer;
+  border:1px solid var(--line);background:var(--bg-raise);color:var(--text);
+  transition:background .15s,border-color .15s}
+.btn:hover{border-color:var(--line-hi);background:var(--bg-hover)}
+.btn.primary{background:var(--accent);border-color:transparent;color:var(--accent-ink);
+  box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.btn.primary:hover{background:var(--accent-dim)}
+#editor{flex:1;min-width:0;border:none;outline:none;resize:none;background:transparent;color:var(--text);
+  font-family:var(--font-mono);font-size:13px;line-height:22px;padding:16px 24px 40px;
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;tab-size:2}
+
+/* ---- 行号槽（软换行按逻辑行拉伸对齐，对齐正式版 CodeMirror 观感） ---- */
+.editor-main{flex:1;display:flex;min-height:0;min-width:0}
+.lnum{width:46px;flex:none;overflow:hidden;background:var(--bg-chrome);border-right:1px solid var(--line);
+  padding:16px 0 40px;font-family:var(--font-mono);font-size:11.5px;text-align:right;color:var(--text-3);
+  user-select:none;-webkit-user-select:none}
+.lnum i{display:block;padding-right:10px;line-height:22px;font-style:normal;overflow:hidden}
+.lnum i.cur{color:var(--accent);font-weight:600;background:var(--accent-bg)}
+/* 测量镜像：自身裁剪为 0 高，行格子照常布局可测 offsetHeight，
+   但不参与外层滚动容器的 scrollHeight（否则与 textarea 各出一条滚动条） */
+.lnum-mirror{position:absolute;top:0;left:0;width:200px;visibility:hidden;
+  max-height:0;overflow:hidden;pointer-events:none;
+  font-family:var(--font-mono);font-size:13px;line-height:22px;
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;tab-size:2}
+
+/* ---- 编辑区 Markdown 语法着色：着色层在下，透明文字的 textarea 在上 ---- */
+.editor-hl-wrap{flex:1;position:relative;min-width:0;overflow-y:auto;overflow-x:hidden}
+#hl-layer{position:absolute;top:0;left:0;right:0;pointer-events:none}
+#hl-pre{margin:0;padding:16px 24px 40px;color:var(--text);
+  font-family:var(--font-mono);font-size:13px;line-height:22px;
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;tab-size:2}
+/* textarea 高度由 JS 按行高总量自适应、自身不出滚动条：
+   规避 Chromium「textarea 滚动不计入 padding-bottom」导致末行贴底的老问题，
+   底部留白由着色层的 padding-bottom 撑起，滚动容器是 .editor-hl-wrap */
+#editor{position:absolute;top:0;left:0;width:100%;height:0;overflow:hidden;color:transparent;
+  caret-color:var(--text);background:transparent;z-index:1}
+#hl-pre .hl-hash{color:var(--text-3)}
+#hl-pre .hl-head{color:var(--accent);font-weight:650}
+#hl-pre .hl-strong{color:var(--text);font-weight:700}
+#hl-pre .hl-em{color:var(--text-2);font-style:italic}
+#hl-pre .hl-del{color:var(--text-3);text-decoration:line-through}
+#hl-pre .hl-code{color:var(--accent-dim);background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:3px}
+#hl-pre .hl-quote{color:var(--text-2);background:color-mix(in srgb,var(--accent) 6%,transparent)}
+#hl-pre .hl-bullet{color:var(--s-bullet);font-weight:700}
+#hl-pre .hl-task{color:var(--accent);font-weight:700}
+#hl-pre .hl-hr{color:var(--text-3)}
+#hl-pre .hl-fence{color:var(--text-2);background:color-mix(in srgb,var(--bg-frame) 26%,transparent)}
+#hl-pre .hl-lkb{color:var(--text-3)}
+#hl-pre .hl-lkt{color:var(--accent)}
+#hl-pre .hl-url{color:var(--text-3);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--accent) 35%,transparent)}
+#hl-pre .hl-pipe{color:var(--text-3)}
+#editor::selection{background:color-mix(in srgb,var(--accent) 30%,transparent)}
+
+/* ---- status bar ---- */
+.status{flex:none;height:var(--h-status);display:flex;align-items:center;gap:2px;padding:0 8px;
+  background:var(--bg-chrome);border-top:1px solid var(--line);font-size:11.5px;color:var(--text-3)}
+.status .si{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;min-width:0;
+  border-radius:5px;cursor:default;transition:background .14s,color .14s;white-space:nowrap}
+/* hover 反馈只给真正可点的项，去掉「看起来能点实际不能点」的暗示 */
+#stat-link-btn:hover,#stat-enc:hover{background:var(--bg-hover);color:var(--text)}
+#stat-enc{cursor:pointer}
+.status .sp{flex:1}
+.status b{font-weight:500;color:var(--text-2)}
+.status .acc{color:var(--accent)}
+.status .ok{color:var(--ok)}
+.status .si code{font-family:var(--font-mono);font-size:10.5px}
+.status .dot-ok{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+#stat-sec{max-width:260px}
+#stat-sec .ellip{min-width:0}
+#stat-link-btn{cursor:pointer}
+/* 专注模式：隐藏全部 chrome，只留阅读区（Esc 退出） */
+.win.focus .rail,.win.focus .side{display:none}
+.win.focus .pane-bar,.win.focus .crumb-bar,.win.focus .status{display:none}
+.win.focus .hitnav{bottom:12px}
+/* N8：命中浮动条可见时，toast 上移避让 */
+#toast{bottom:58px}
+.win.hnv #toast{bottom:86px}
+
+/* ---- 拖放导入遮罩 ---- */
+#dropveil{position:absolute;inset:10px;z-index:180;display:none;place-items:center;text-align:center;
+  border:2px dashed var(--accent);border-radius:var(--r-win);pointer-events:none;
+  background:color-mix(in srgb,var(--accent) 7%,transparent);color:var(--accent);font-size:15px;line-height:2}
+#dropveil.on{display:grid}
+#dropveil small{display:block;font-size:11.5px;color:var(--text-3)}
+
+/* ---- 窄窗口降级（N13 重排）：窗口三键是桌面隐喻的底线，任何断点都不收；
+   依次收起 chip → 页签 → 四个菜单合并为「菜单…」溢出项 ---- */
+@media (max-width:1180px){.brand-chip{display:none}}
+@media (max-width:1060px){.tabs{display:none}}
+@media (max-width:980px){.menu>b:not(#menu-ovf){display:none}}
+@media (min-width:981px){#menu-ovf{display:none}}
+@media (max-width:900px){.brand{padding-right:0}.brand .mark{display:none}}
+.mgrp{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-3);padding:7px 10px 2px}
+
+/* ============ overlays ============ */
+.overlay{position:absolute;inset:0;background:var(--backdrop);backdrop-filter:blur(7px);
+  -webkit-backdrop-filter:blur(7px);z-index:100;display:none;align-items:flex-start;
+  justify-content:center;padding:96px 40px 40px}
+.overlay.mid{align-items:center;padding:40px}
+.overlay.open{display:flex}
+/* 对话框一律为普通悬浮窗：不压暗、不毛玻璃；透明层仍捕获「点外部关闭」
+   （例外：图片放大 #imgbox 保留暗遮罩，看图场景惯例） */
+#search-overlay.overlay,#about-overlay.overlay,#keys-overlay.overlay,#info-overlay.overlay,
+#pick-overlay.overlay,#rootq-overlay.overlay{
+  background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}
+#search-overlay .pal,#about-overlay .modal,#keys-overlay .modal,#info-overlay .modal,
+#pick-overlay .modal,#rootq-overlay .modal{box-shadow:var(--shadow-win)}
+.pal{width:760px;max-width:92vw;background:var(--bg-raise);border:1px solid var(--line-hi);
+  border-radius:14px;box-shadow:var(--shadow-pop);overflow:hidden}
+.pal-in{display:flex;align-items:center;gap:11px;height:52px;padding:0 16px;border-bottom:1px solid var(--line)}
+.pal-in .ico{color:var(--text-3);width:18px;height:18px}
+.pal-in input{flex:1;font-size:15px;color:var(--text);min-width:0}
+.pal-in input::placeholder{color:var(--text-3)}
+.pal-list{max-height:46vh;overflow:auto;padding:4px 0 10px}
+.sr-empty{padding:26px 16px;color:var(--text-3);font-size:12.5px;text-align:center;line-height:2}
+.hit{padding:9px 18px;cursor:pointer;border-left:2px solid transparent;transition:background .12s}
+.hit:hover,.hit.sel{background:var(--bg-hover);border-left-color:var(--accent)}
+.hit .hf{font-size:11px;color:var(--text-3);display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.hit .hf .hn{font-size:10.5px;color:var(--accent);font-weight:600}
+.hit .hf .hcount{font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);margin-left:auto}
+/* 结果按「§ 章节」分组；命中在标题本身时，分组头即结果行（避免标题+片段逐字重复） */
+.hgrp{display:flex;align-items:center;gap:7px;padding:8px 18px 3px;margin-top:5px;
+  font-size:11px;font-weight:600;color:var(--accent);border-top:1px solid var(--line)}
+.hgrp:first-child{border-top:none;margin-top:0}
+.hgrp .ico{width:12px;height:12px;opacity:.8}
+.hgrp em{font-style:normal;background:var(--mark-hl);color:var(--text);border-radius:3px;padding:0 2px}
+.hgrp .hcount{font-family:var(--font-mono);font-size:10.5px;font-weight:400;color:var(--text-3);margin-left:8px}
+.hgrp.hit{cursor:pointer;border-left:2px solid transparent;transition:background .12s}
+.hgrp.hit:hover,.hgrp.hit.sel{background:var(--bg-hover);border-left-color:var(--accent)}
+.hit .hx{font-family:var(--font-ui);font-size:12.5px;color:var(--text-2);line-height:1.65}
+.hit .hx em{font-style:normal;background:var(--mark-hl);color:var(--text);border-radius:3px;padding:0 2px}
+.pal-foot{display:flex;align-items:center;gap:14px;height:38px;padding:0 16px;
+  border-top:1px solid var(--line);background:var(--bg-chrome);font-size:11.5px;color:var(--text-3)}
+.pal-foot .sp{flex:1}
+.pal-foot kbd{font-family:var(--font-mono);font-size:10px;font-weight:500;padding:1px 5px;
+  border-radius:5px;background:var(--bg-raise);border:1px solid var(--line);
+  border-bottom-width:2px;color:var(--text-2)}
+
+/* ---- modal (帮助 / 关于) ---- */
+.modal{width:520px;max-width:92vw;background:var(--bg-raise);border:1px solid var(--line-hi);
+  border-radius:14px;box-shadow:var(--shadow-pop);overflow:hidden}
+.modal-h{display:flex;align-items:center;gap:10px;padding:16px 18px 14px;border-bottom:1px solid var(--line)}
+.modal-h .mi2{width:32px;height:32px;border-radius:9px;background:var(--accent-bg);
+  color:var(--accent);display:grid;place-items:center;flex:none}
+.modal-h .mt{font-size:15px;font-weight:650;color:var(--text)}
+.modal-h .md2{font-size:11.5px;color:var(--text-3);margin-top:1px}
+.modal-h .sp{flex:1}
+.modal-h .x{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;
+  color:var(--text-3);cursor:pointer}
+.modal-h .x:hover{background:var(--bg-hover);color:var(--text)}
+.modal-b{padding:18px;max-height:60vh;overflow:auto}
+.modal-f{display:flex;align-items:center;gap:10px;padding:14px 18px;border-top:1px solid var(--line);background:var(--bg-chrome)}
+.modal-f .sp{flex:1}
+.krow{display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--text-2)}
+.krow:last-child{border-bottom:none}
+.krow .sp{flex:1}
+.krow kbd{font-family:var(--font-mono);font-size:11px;font-weight:500;padding:2px 7px;
+  border-radius:5px;background:var(--bg-side);border:1px solid var(--line);
+  border-bottom-width:2px;color:var(--text-2)}
+.about-stack{display:flex;flex-wrap:wrap;gap:6px}
+.about-stack .tag{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;
+  border-radius:11px;font-size:11.5px;background:var(--accent-bg);color:var(--accent);font-weight:550}
+.about-stack .tag.plain{background:var(--bg-side);color:var(--text-2);border:1px solid var(--line)}
+
+/* ---- 文件/目录选择对话框（仿 Windows 通用对话框版式 · .modal 家族派生 · 不调起系统原生窗口）---- */
+.pk-b{display:flex;flex-direction:column;gap:8px}
+#pick-overlay .modal-b.pk-b{height:min(430px,58vh);max-height:none;overflow:hidden}
+.pk-bar{display:flex;align-items:center;gap:6px;padding:2px 2px 8px;border-bottom:1px solid var(--line)}
+.pk-nav{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;flex:none;
+  color:var(--text-3);cursor:pointer;border:1px solid var(--line);background:var(--bg-raise);transition:background .12s,color .12s}
+.pk-nav:hover{color:var(--text);border-color:var(--line-hi);background:var(--bg-hover)}
+.pk-nav.off{opacity:.35;pointer-events:none}
+.pk-path{flex:1;min-width:0;display:flex;align-items:center;gap:2px;font-size:11.5px;color:var(--text-3);overflow:hidden;white-space:nowrap}
+.pk-path b{font-weight:400;color:var(--text-2);cursor:pointer;padding:2px 5px;border-radius:4px}
+.pk-path b:hover{background:var(--bg-hover);color:var(--text)}
+.pk-path i{font-style:normal;opacity:.55}
+.pk-search{width:150px;flex:none;height:24px;border-radius:6px}
+.pk-search input{font-size:11.5px !important}
+.pk-grid{display:flex;gap:8px;flex:1;min-height:0}
+.pk-side{width:176px;flex:none;border-right:1px solid var(--line);padding-right:7px;min-height:0;overflow:auto}
+.pk-split{width:7px;flex:none;cursor:col-resize;position:relative;border-radius:4px}
+.pk-split::before{content:"";position:absolute;left:3px;top:2px;bottom:2px;width:1px;background:var(--line)}
+.pk-split:hover::before{background:var(--accent)}
+.pk-side .tf{height:24px}
+.pk-grp{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);padding:7px 6px 2px}
+.pk-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.pk-th{display:flex;gap:6px;padding:1px 6px 4px;font-size:10.5px;font-weight:600;letter-spacing:.03em;
+  text-transform:uppercase;color:var(--text-3);border-bottom:1px solid var(--line);margin-bottom:3px}
+.pk-th .c1{flex:1;min-width:0}
+.pk-th .c2{width:70px;flex:none;text-align:right}
+.pk-list{flex:1;min-height:0;overflow:auto;padding:2px 0}
+.pk-list .tf{height:26px}
+.pk-list .mt{width:70px;flex:none;text-align:right}
+.pk-off{opacity:.45}
+.pk-f{position:relative;display:grid;grid-template-columns:auto 1fr;gap:9px 8px;align-items:center}
+.pk-f label{font-size:11.5px;color:var(--text-3);cursor:default}
+.pk-f label u{text-decoration:none;border-bottom:1px dotted currentColor}
+.pk-fname{width:100%;min-width:0;height:26px;border-radius:var(--r-2);border:1px solid var(--line);
+  background:var(--bg-edit);padding:0 8px;font-size:12.5px;color:var(--text)}
+.pk-fname:focus{border-color:var(--accent)}
+/* 第二行落进内容列 = 与输入框左缘对齐；类型钮纯文本（无底色无描边），chev 缀右 */
+.pk-r2{grid-column:2;position:relative;display:flex;align-items:center;gap:8px}
+.pk-r2 .sp{flex:1}
+/* 对话框按钮组（Windows 口径）：同组等宽（以最宽者为准），取消/关闭类恒在左 */
+.mfb{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;justify-items:stretch}
+.mfb>.btn,.mfb>.btn.sm{justify-content:center;min-width:88px}
+.pk-fmt{position:relative;height:26px;background:none;border:0;padding:0 22px 0 0;
+  color:var(--text-2);font-size:11.5px;cursor:pointer;max-width:280px;flex:none;
+  display:inline-flex;align-items:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;transition:color .12s}
+.pk-fmt:hover{color:var(--text)}
+.pk-fmt[hidden]{display:none}   /* 选文件夹对话框没有「文件类型」可言——整钮隐藏而非置灰（界面不许说谎） */
+.pk-fmt .ico{position:absolute;right:4px;top:50%;transform:translateY(-50%);color:var(--text-3)}
+.pk-fmtmenu{position:absolute;left:0;bottom:calc(100% + 4px);min-width:266px;background:var(--bg-raise);
+  border:1px solid var(--line-hi);border-radius:10px;box-shadow:var(--shadow-pop);padding:5px;z-index:61;display:none}
+.pk-fmtmenu.open{display:block}
+.pk-fmtmenu .mi{height:26px;font-size:11.5px}
+/* 库关闭态 chip：虚线占位，明说这里能干什么（界面不许说谎） */
+.root-chip.empty{background:transparent;border-style:dashed}
+.root-chip.empty .ri{background:var(--bg-side);color:var(--text-3)}
+.root-chip.empty .rp{color:var(--text-3)}
+
+/* ---- font popover ---- */
+.fpop{position:absolute;width:252px;background:var(--bg-raise);border:1px solid var(--line-hi);
+  border-radius:var(--r-3);box-shadow:var(--shadow-pop);padding:10px 12px;z-index:120;display:none}
+.fpop.open{display:block}
+.fp-row{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;
+  padding:7px 2px;color:var(--text-2)}
+.fp-ctrl{display:flex;align-items:center;gap:8px}
+.fp-ctrl button{width:26px;height:26px;border:1px solid var(--line);background:var(--bg-edit);
+  border-radius:6px;cursor:pointer;color:var(--text-2);font-size:12px}
+.fp-ctrl button:hover{border-color:var(--accent);color:var(--accent)}
+.fp-ctrl .fs-val{font-family:var(--font-mono);font-size:12px;min-width:32px;text-align:center;color:var(--text)}
+.radios{display:flex;gap:6px}
+.radio{display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:var(--r-2);
+  border:1px solid var(--line);background:var(--bg-edit);font-size:12px;color:var(--text-2);cursor:pointer}
+.radio.on{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
+
+/* ---- toast ---- */
+#toast{position:absolute;left:50%;bottom:58px;transform:translateX(-50%) translateY(14px);
+  display:flex;align-items:center;gap:8px;height:30px;padding:0 14px;border-radius:15px;
+  background:var(--bg-raise);border:1px solid var(--line-hi);box-shadow:var(--shadow-pop);
+  font-size:12px;color:var(--text-2);opacity:0;pointer-events:none;transition:.25s;z-index:200;
+  max-width:70vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast .dot-ok{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
+/* ---- 复制成功浮层（2026-11-16：不再占用状态栏下沿，改窗口中央小卡，2 秒自动消失）---- */
+.copypop{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scale(.985);z-index:210;
+  display:flex;align-items:center;gap:9px;padding:13px 18px;border-radius:14px;
+  background:var(--bg-raise);border:1px solid var(--line-hi);box-shadow:var(--shadow-pop);
+  font-size:12.5px;color:var(--text-2);max-width:66%;pointer-events:none;
+  opacity:0;transition:opacity .18s,transform .18s}
+.copypop.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.copypop .ico{color:var(--ok);flex:none}
+.copypop code{font-family:var(--font-mono);font-size:11px;color:var(--accent);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+
+/* ══ 配置界面：结构与样式直接复用 settings-page.html 的 .settings（scoped 到 #settings-view，
+      不污染主原型的全局 .btn/.radio/.slider 等类）。取值逐条对齐 base.css。
+      2026-11-16 形态调整：从「顶替 side/center 的全屏页」改为「居中独立浮窗 + 轻遮罩」——
+      主界面（rail/side/center）保持可见，点遮罩空白处或 Esc 关闭。══ */
+.st-view{display:none;position:fixed;inset:0;z-index:160;align-items:center;justify-content:center;
+  background:rgba(9,14,24,.42);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+body.settings-open .st-view{display:flex}
+#settings-view .settings{width:min(1060px,94vw);height:min(640px,88vh);display:flex;min-width:0;min-height:0;
+  background:var(--bg-edit);border-radius:12px;border:1px solid var(--line-hi);
+  box-shadow:0 24px 64px rgba(9,14,24,.5);overflow:hidden;animation:st-pop .18s ease-out}
+@keyframes st-pop{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+#settings-view .stabs{width:216px;flex:none;background:var(--bg-side);border-right:1px solid var(--line);padding:12px 10px;display:flex;flex-direction:column;gap:2px;overflow:auto}
+#settings-view .stabs-hd{font-size:16px;font-weight:650;color:var(--text);padding:6px 10px 10px;display:flex;align-items:center;gap:8px}
+#settings-view .avatar{width:22px;height:22px;font-size:12px;border-radius:6px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-weight:700}
+#settings-view .stabs .divv{width:auto;height:1px;background:var(--line);margin:10px 4px;flex:none}
+#settings-view .stab{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:var(--r-2);font-size:15px;color:var(--text-2);cursor:pointer;transition:background .14s,color .14s}
+#settings-view .stab:hover{background:var(--bg-hover);color:var(--text)}
+#settings-view .stab.on{background:var(--accent-bg);color:var(--accent);font-weight:550}
+#settings-view .stab .cnt{margin-left:auto;font-size:12px;color:var(--text-3);border:1px solid var(--line);border-radius:8px;padding:0 5px;line-height:15px}
+#settings-view .st-main{flex:1;min-width:0;display:flex;flex-direction:column}
+#settings-view .st-head{flex:none;padding:16px 26px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px}
+#settings-view .st-head .t{font-size:19px;font-weight:650;color:var(--text)}
+#settings-view .st-head .d{font-size:14px;color:var(--text-3);margin-top:2px}
+#settings-view .st-head .sp{flex:1}
+#settings-view .st-body{flex:1;overflow:auto;padding:20px 26px 40px}
+#settings-view .sgroup{margin-bottom:24px;scroll-margin-top:12px}
+#settings-view .sgroup>.gt{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px}
+#settings-view .scard{background:var(--bg-raise);border:1px solid var(--line);border-radius:var(--r-3);overflow:hidden}
+#settings-view .srow{display:flex;align-items:center;gap:16px;padding:13px 15px;border-bottom:1px solid var(--line)}
+#settings-view .srow:last-child{border-bottom:none}
+#settings-view .srow .info{flex:1;min-width:0}
+#settings-view .srow .info .t{font-size:15.5px;color:var(--text);font-weight:550}
+#settings-view .srow .info .d{font-size:13.5px;color:var(--text-3);margin-top:3px;line-height:1.5}
+#settings-view .srow .ctl{flex:none;display:flex;align-items:center;gap:8px}
+#settings-view .radios{display:flex;gap:8px;flex-wrap:wrap}
+#settings-view .radio{display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:var(--r-2);border:1px solid var(--line);background:var(--bg-edit);font-size:14.5px;color:var(--text-2);cursor:pointer}
+#settings-view .radio.on{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
+#settings-view .radio .rd{width:13px;height:13px;border-radius:50%;border:1.5px solid var(--line-hi);display:grid;place-items:center}
+#settings-view .radio.on .rd{border-color:var(--accent)}
+#settings-view .radio.on .rd::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+#settings-view .slider{width:150px;height:4px;border-radius:2px;background:var(--line);position:relative;cursor:pointer}
+#settings-view .slider i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--accent)}
+#settings-view .slider b{position:absolute;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+#settings-view .sv3{font-size:13px;color:var(--text-3);font-family:var(--font-mono);width:46px;text-align:right;flex:none;white-space:nowrap}
+#settings-view .st-foot{display:flex;align-items:center;gap:10px;padding:12px 26px;border-top:1px solid var(--line);font-size:13.5px;color:var(--text-3);margin-top:auto}
+#settings-view .st-foot .sp{flex:1}
+#settings-view .btn.sm{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:var(--r-1);border:1px solid var(--line);background:var(--bg-raise);color:var(--text);font-size:13.5px;font-weight:550;cursor:pointer}
+#settings-view .btn.sm:hover{border-color:var(--line-hi);background:var(--bg-hover)}
+#settings-view .btn.sm.primary{background:var(--accent);border-color:transparent;color:var(--accent-ink)}
+#settings-view .btn.sm.primary:hover{background:var(--accent-dim)}
+#settings-view .st-head .cfg-ib{width:26px;height:26px;border-radius:6px;color:var(--text-2);flex:none}
+#settings-view .st-head .cfg-ib:hover{background:var(--bg-hover);color:var(--text)}
+#settings-view .themeval{display:flex;gap:10px}
+#settings-view .thc{width:104px;border-radius:9px;border:1px solid var(--line);overflow:hidden;cursor:pointer;background:var(--bg-edit)}
+#settings-view .thc:hover{border-color:var(--line-hi)}
+#settings-view .thc.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
+#settings-view .thc .prev{height:58px;position:relative;padding:7px 7px 7px 26px}
+#settings-view .thc .prev .side{position:absolute;left:0;top:0;bottom:0;width:20px}
+#settings-view .thc .prev .l{display:block;height:4px;border-radius:2px;margin-bottom:5px}
+#settings-view .thc .meta{display:flex;align-items:center;gap:6px;padding:7px 8px;border-top:1px solid var(--line);font-size:13.5px;color:var(--text-2)}
+#settings-view .thc.on .meta{color:var(--accent);font-weight:600}
+#settings-view .swatches{display:flex;gap:6px;align-items:center}
+#settings-view .swatches i{width:18px;height:18px;border-radius:6px;display:block;cursor:pointer;border:1px solid var(--line-hi)}
+#settings-view .swatches i.on{outline:2px solid var(--accent);outline-offset:1px}
+#settings-view .stepper{display:flex;align-items:center;gap:6px}
+#settings-view .stp{width:26px;height:26px;border-radius:var(--r-2);border:1px solid var(--line);background:var(--bg-edit);color:var(--text-2);cursor:pointer;font-size:17px;display:inline-flex;align-items:center;justify-content:center}
+#settings-view .stp:hover{border-color:var(--accent);color:var(--accent)}
+#settings-view .stv{font-size:14.5px;color:var(--text);min-width:64px;text-align:center;font-variant-numeric:tabular-nums}
+#settings-view .sw{width:34px;height:20px;border-radius:11px;background:var(--line-hi);position:relative;cursor:pointer;flex:none;transition:background .18s}
+#settings-view .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3);transition:transform .18s}
+#settings-view .sw.on{background:var(--accent)}
+#settings-view .sw.on::after{transform:translateX(14px)}
+#article.density-compact th,#article.density-compact td{padding:5px 11px}
+#article.density-loose th,#article.density-loose td{padding:13px 17px}
+
+</style>
+</head>
+<body class="app" data-theme="dark">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+<symbol id="i-max" viewBox="0 0 24 24"><path d="M6.5 6.5h11v11h-11z"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+<symbol id="i-chev-r" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+<symbol id="i-chev-l" viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></symbol>
+<symbol id="i-chev-d" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></symbol>
+<symbol id="i-chev-u" viewBox="0 0 24 24"><path d="M18 14.5l-6-6-6 6"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20.5 20.5l-4.2-4.2"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 6.5a2 2 0 0 1 2-2h3.8l2.2 2.5h7a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="i-folder-open" viewBox="0 0 24 24"><path d="M3.5 18.5V6.5a2 2 0 0 1 2-2h3.8l2.2 2.5h7a2 2 0 0 1 2 2V11 M3.5 18.5l2.6-6.5h15.2l-2.6 6.5z"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20.2 12a8.2 8.2 0 1 1-2.4-5.8"/><path d="M20.6 4.2v4.4h-4.4"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4"/></symbol>
+<symbol id="i-file-text" viewBox="0 0 24 24"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4"/><path d="M9 12.5h6M9 16.5h4"/></symbol>
+<symbol id="i-md" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M7 15V9.5l2.2 2.4L11.5 9.5V15"/><path d="M15.5 9.5V14"/><path d="M14 12.6l1.5 1.6 1.5-1.6"/></symbol>
+<symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11M4.6 6.5h.01M4.6 12h.01M4.6 17.5h.01"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.6l4.4 4.4L19 7.5"/></symbol>
+<symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15.5V5M8 9l4-4 4 4M4.5 19.5h15"/></symbol>
+<symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3l2.6 2.6 5-5.2"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.8 12S6.4 6.2 12 6.2 21.2 12 21.2 12 17.6 17.8 12 17.8 2.8 12 2.8 12z"/><circle cx="12" cy="12" r="2.9"/></symbol>
+<symbol id="i-type" viewBox="0 0 24 24"><path d="M5 6.5h14M12 6.5V19M9 19h6"/></symbol>
+<symbol id="i-panel-l" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M9 5v14"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 8h9M17.5 8H20M4 16h3.5M12 16h8"/><circle cx="15.2" cy="8" r="2.2"/><circle cx="9.6" cy="16" r="2.2"/></symbol>
+<symbol id="i-save" viewBox="0 0 24 24"><path d="M5.5 5.5h10l3 3v10h-13z"/><path d="M8.5 5.5v4.5h6.5V5.5M8.5 15.5h7"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5.5 15.5h-.8a1.2 1.2 0 0 1-1.2-1.2V5.5a1.2 1.2 0 0 1 1.2-1.2h8.8A1.2 1.2 0 0 1 14.7 5.5v.8"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11.2v5M12 8h.01"/></symbol>
+<symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4.8h5.2v5.2M19.2 4.8L11 13"/><path d="M18.4 14v4.4a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18.4V7.2a1.6 1.6 0 0 1 1.6-1.6H10"/></symbol>
+<symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19.2V4.8M6 10.8l6-6 6 6"/></symbol>
+<symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 4.8v14.4M6 13.2l6 6 6-6"/></symbol>
+<symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19.2 12H4.8M10.8 6l-6 6 6 6"/></symbol>
+<symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M4.8 12h14.4M13.2 6l6 6-6 6"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6.6C10.4 5.2 8.4 4.6 4.5 4.6v14c3.9 0 5.9.6 7.5 2 1.6-1.4 3.6-2 7.5-2v-14c-3.9 0-5.9.6-7.5 2z"/><path d="M12 6.6v14"/></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.4A8.4 8.4 0 0 1 9.6 4a8.4 8.4 0 1 0 10.4 10.4z"/></symbol>
+<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></symbol>
+<symbol id="i-heading" viewBox="0 0 24 24"><path d="M5.5 5.5v13M13.5 5.5v13M5.5 12h8M17.5 9.5h3v9"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.4V12l3.2 2"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+<symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/></symbol>
+<symbol id="i-code" viewBox="0 0 24 24"><path d="M8.6 8L5 12l3.6 4M15.4 8L19 12l-3.6 4"/></symbol>
+<symbol id="i-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z"/></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4.5v10M8 11l4 4 4-4M4.5 19.5h15"/></symbol>
+<symbol id="i-history" viewBox="0 0 24 24"><path d="M3.6 12a8.4 8.4 0 1 0 2.6-6.1M3.4 6.4v4.2h4.2"/><path d="M12 7.8V12l3 1.9"/></symbol>      <!-- ══ 官方工具图标集（2026-11-16，prototype/toolbar-icons.html 需求方提供：新建/打开文件/打开文件夹/最近/大纲）══ -->
+<symbol id="i-new-file" viewBox="0 0 24 24"><path d="M12.8 3.8v4h4"/><path d="M7.6 3.8h5.2l4 4v5.2"/><path d="M7.6 3.8a2.5 2.5 0 0 0-2.5 2.5v10a2.5 2.5 0 0 0 2.5 2.5h4.3"/><path d="M17.5 15.1v5.2M14.9 17.7h5.2"/></symbol>
+<symbol id="i-open-file" viewBox="0 0 24 24"><path d="M12.8 3.8v4h4"/><path d="M7.6 3.8h5.2l4 4v5.2"/><path d="M7.6 3.8a2.5 2.5 0 0 0-2.5 2.5v10a2.5 2.5 0 0 0 2.5 2.5h4.3"/><path d="M15.2 19.2c1.3-1.3 2.7-2.7 4.1-4.2"/><path d="M16.1 14.1h4.1v4.1"/></symbol>
+<symbol id="i-open-folder" viewBox="0 0 24 24"><path d="M3.7 18.5V6.7a2 2 0 0 1 2-2h3.5l2.2 2.4h6.9a2 2 0 0 1 2 2v2.6"/><path d="M3.9 18.5 6.5 12h14.1l-2.6 6.5z"/></symbol>
+<symbol id="i-recent" viewBox="0 0 24 24"><path d="M20.6 12a8.6 8.6 0 1 1-2.5-6.1"/><path d="M20.8 4.3v4.2h-4.2"/><path d="M12 7.8V12l3 1.9"/></symbol>
+<symbol id="i-outline" viewBox="0 0 24 24"><path d="M4.6 6.5h.01M8.4 6.5h10.7M6.9 12h.01M10.7 12h8.1M9.2 17.5h.01M13 17.5h5.8"/></symbol>
+</defs></svg>
+
+<div class="win">
+
+  <!-- ══ 标题栏：品牌 + 菜单 + 文档页签 + 视图控制 + 窗口按钮 ══ -->
+  <header class="tbar">
+    <div class="brand">
+      <span class="mark">F</span>
+      <span class="brand-name">Folio</span>
+    </div>
+
+    <nav class="menu" id="menubar">
+      <b>文件
+        <div class="mdrop">
+          <div class="mi" data-act="new-doc"><svg class="ico ico-14"><use href="#i-new-file"/></svg><span class="t">新建文档</span><kbd>Ctrl N</kbd></div>
+          <div class="mi" data-act="open"><svg class="ico ico-14"><use href="#i-open-file"/></svg><span class="t">打开文档…</span><kbd>Ctrl O</kbd></div>
+          <div class="mi" data-act="open-dir"><svg class="ico ico-14"><use href="#i-open-folder"/></svg><span class="t">打开文件夹…</span></div>
+          <div class="msep"></div>
+          <div class="mi" data-act="doc-guide"><svg class="ico ico-14"><use href="#i-md"/></svg><span class="t">Folio 使用指南</span></div>
+          <div class="mi" data-act="doc-rust"><svg class="ico ico-14"><use href="#i-md"/></svg><span class="t">Rust 学习笔记</span></div>
+          <div class="msep"></div>
+          <div class="mi" data-act="export"><svg class="ico ico-14"><use href="#i-external"/></svg><span class="t">导出为 HTML…</span></div>
+          <div class="msep"></div>
+          <div class="mi" data-act="quit"><svg class="ico ico-14"><use href="#i-x"/></svg><span class="t">退出</span><kbd>Ctrl Q</kbd></div>
+        </div>
+      </b>
+      <b>查看
+        <div class="mdrop">
+          <div class="mi" data-act="focus"><svg class="ico ico-14"><use href="#i-panel-l"/></svg><span class="t">专注模式（隐藏侧栏）</span></div>
+          <div class="mi" data-act="library"><svg class="ico ico-14"><use href="#i-open-folder"/></svg><span class="t">文件夹面板</span></div>
+          <div class="mi" data-act="outline"><svg class="ico ico-14"><use href="#i-list"/></svg><span class="t">大纲面板</span></div>
+          <div class="msep"></div>
+          <div class="mi sub" id="mi-theme" aria-haspopup="true"><svg class="ico ico-14"><use href="#i-contrast"/></svg><span class="t">主题</span><svg class="ico ico-12 subc"><use href="#i-chev-r"/></svg>
+            <div class="sub-drop" id="thsub">
+              <div class="mi" data-act="theme-dark" data-theme="dark"><span class="ck"></span><svg class="ico ico-14"><use href="#i-moon"/></svg><span class="t">深色</span></div>
+              <div class="mi" data-act="theme-light" data-theme="light"><span class="ck"></span><svg class="ico ico-14"><use href="#i-sun"/></svg><span class="t">浅色</span></div>
+              <div class="mi" data-act="theme-sepia" data-theme="sepia"><span class="ck"></span><svg class="ico ico-14"><use href="#i-contrast"/></svg><span class="t">米色</span></div>
+            </div>
+          </div>
+          <div class="mi" data-act="font"><svg class="ico ico-14"><use href="#i-sliders"/></svg><span class="t">排版设置…</span></div>
+          <div class="msep"></div>
+          <div class="mi" data-act="top"><svg class="ico ico-14"><use href="#i-arrow-up"/></svg><span class="t">回到顶部</span><kbd>Home</kbd></div>
+        </div>
+      </b>
+      <b>文档
+        <div class="mdrop">
+          <div class="mi" data-act="prev-sec"><svg class="ico ico-14"><use href="#i-arrow-up"/></svg><span class="t">上一章</span><kbd>Alt ↑</kbd></div>
+          <div class="mi" data-act="next-sec"><svg class="ico ico-14"><use href="#i-arrow-down"/></svg><span class="t">下一章</span><kbd>Alt ↓</kbd></div>
+          <div class="msep"></div>
+          <div class="mi" data-act="search"><svg class="ico ico-14"><use href="#i-search"/></svg><span class="t">全文搜索…</span><kbd>Ctrl F</kbd></div>
+          <div class="msep"></div>
+          <div class="mi" data-act="edit"><svg class="ico ico-14"><use href="#i-type"/></svg><span class="t">切换编辑模式</span><kbd>Ctrl E</kbd></div>
+          <div class="mi" data-act="save"><svg class="ico ico-14"><use href="#i-save"/></svg><span class="t">保存并返回阅读</span><kbd>Ctrl S</kbd></div>
+          <div class="msep"></div>
+          <div class="mi" data-act="props"><svg class="ico ico-14"><use href="#i-info"/></svg><span class="t">文档信息</span></div>
+          <div class="mi" data-act="link"><svg class="ico ico-14"><use href="#i-copy"/></svg><span class="t">复制深度链接</span></div>
+        </div>
+      </b>
+      <b>帮助
+        <div class="mdrop">
+          <div class="mi" data-act="keys"><svg class="ico ico-14"><use href="#i-md"/></svg><span class="t">快捷键一览…</span><kbd>Ctrl /</kbd></div>
+          <div class="msep"></div>
+          <div class="mi" data-act="about"><svg class="ico ico-14"><use href="#i-info"/></svg><span class="t">关于 Folio</span></div>
+        </div>
+      </b>
+    </nav>
+
+    <div class="tabs">
+      <div class="tab on" id="tab-doc" title="当前文档（正式版支持多页签）">
+        <svg class="ico ico-14 fi"><use href="#i-md"/></svg>
+        <span class="tn" id="tab-doc-name">Folio 使用指南.md</span>
+        <span class="dirtydot" id="tab-dirty" hidden title="有未保存修改"></span>
+      </div>
+    </div>
+
+    <div class="tbar-right">
+      <div class="seg" id="view-seg">
+        <button id="seg-read" class="on" title="阅读模式 (Ctrl+E)"><svg class="ico ico-14"><use href="#i-eye"/></svg>阅读</button>
+        <button id="seg-edit" title="编辑模式 (Ctrl+E)"><svg class="ico ico-14"><use href="#i-type"/></svg>编辑</button>
+      </div>
+      <span class="divv" style="width:1px;height:15px;background:var(--line);margin:0 3px"></span>
+      <span class="iconbtn" id="btn-search" title="全文搜索 (Ctrl+F / Ctrl+K)"><svg class="ico ico-18"><use href="#i-search"/></svg></span>
+      <span class="iconbtn" id="btn-focus" title="专注模式"><svg class="ico ico-18"><use href="#i-panel-l"/></svg></span>
+      <span class="iconbtn" id="btn-cfg" title="设置"><svg class="ico ico-18"><use href="#i-sliders"/></svg></span>
+      <div class="wctl">
+        <i id="cap-min" title="最小化"><svg class="ico ico-14"><use href="#i-minus"/></svg></i>
+        <i id="cap-max" title="最大化"><svg class="ico ico-14"><use href="#i-max"/></svg></i>
+        <i class="close" id="cap-close" title="关闭"><svg class="ico ico-14"><use href="#i-x"/></svg></i>
+      </div>
+    </div>
+  </header>
+
+  <div class="body">
+
+    <!-- ══ 图标轨 ══ -->
+    <div class="rail" id="rail">
+      <!-- 打开文档快捷钮（2026-11-16）：放最上、图标与「文件→打开文档…」菜单一致（i-md）；瞬时动作不保持选中 -->
+      <button id="rail-open" title="打开文档… (Ctrl+O)"><svg class="ico ico-20"><use href="#i-open-file"/></svg></button>
+      <button id="rail-lib" title="文件夹" data-side="library"><svg class="ico ico-20"><use href="#i-open-folder"/></svg></button>
+      <button id="rail-history" title="最近打开" data-side="history"><svg class="ico ico-20"><use href="#i-recent"/></svg></button>
+      <button id="rail-outline" title="大纲" data-side="outline" class="on"><svg class="ico ico-20"><use href="#i-outline"/></svg></button>
+      <!-- 全文搜索钮已撤（2026-11-16）：入口统一为标题栏 ⊙ 钮 / Ctrl+F / 菜单 -->
+    </div>
+
+    <!-- ══ 侧栏：大纲（默认）/ 文档库 ══ -->
+    <aside class="side" id="side">
+
+      <div class="side-view" id="side-outline">
+        <div class="out-head">大纲<span class="sp"></span><span id="out-count" style="font-family:var(--font-mono);font-size:10.5px">0</span></div>
+        <div class="out-body" id="out-body"></div>
+      </div>
+
+      <div class="side-view" id="side-library" style="display:none">
+        <div class="side-head">
+          <div class="side-title">文件夹<span class="sp"></span>
+            <span class="act" id="lib-expand" title="全部展开（含更深层目录）"><svg class="ico ico-12"><use href="#i-chev-d"/></svg></span>
+            <span class="act" id="lib-collapse" title="全部收起（只留库根与它的第一层）"><svg class="ico ico-12"><use href="#i-chev-u"/></svg></span>
+          </div>
+          <!-- 单库 chip：只显示当前库根路径；重扫/关闭内联在框内；点框=选目录切换库（真实程序 replace_root 语义） -->
+          <div class="root-chip" id="lib-root-chip" title="E:&#92;docs&#10;当前文件夹 · 点击选择另一个文件夹（同一时间只打开一个）">
+            <span class="ri"><svg class="ico ico-14"><use href="#i-folder-open"/></svg></span>
+            <span class="rp ellip">E:\docs</span>
+            <span class="ract" id="lib-rescan" title="重新扫描这个文件夹（不改变当前文件夹）"><svg class="ico ico-12"><use href="#i-refresh"/></svg></span>
+            <span class="ract" id="lib-close" title="关闭这个文件夹（其下文档转为「仅最近打开」· 磁盘与进度不动）"><svg class="ico ico-12"><use href="#i-x"/></svg></span>
+          </div>
+          <div class="searchf" id="lib-filter">
+            <svg class="ico ico-14"><use href="#i-search"/></svg>
+            <input id="lib-search" placeholder="筛选…" spellcheck="false" style="flex:1;min-width:0;font-size:12.5px;color:var(--text)">
+            <span class="iconbtn" id="lib-clear" hidden style="width:22px;height:22px" title="清除"><svg class="ico ico-12"><use href="#i-x"/></svg></span>
+          </div>
+        </div>
+        <!-- 目录树（真实语义：库根=顶层节点，缩进 6+depth*13px；默认展开库根与当前文档祖先链。
+             JS renderLib() 接管重绘，以下静态结构与默认渲染一致，无 JS 时也能演示） -->
+        <div class="side-body" id="lib-list">
+          <div class="sec-h">置顶<span class="sp"></span></div>
+          <div class="tf on" data-doc="guide" tabindex="0" title="E:\docs\markdown\Folio 使用指南.md">
+            <svg class="ico ico-14" style="color:var(--accent)"><use href="#i-md"/></svg>
+            <span class="nm">Folio 使用指南.md</span><span class="src-dir ellip" style="display:none">markdown</span><span class="mt">今天</span>
+          </div>
+          <div class="tf dir root" data-key="E:\docs" data-open="1" tabindex="0" title="E:\docs" style="padding-left:6px">
+            <svg class="ico ico-14 chev"><use href="#i-folder-open"/></svg><span class="nm">docs</span><span class="mt">5</span>
+          </div>
+          <div class="tf dir" data-key="E:\docs\markdown" data-open="1" tabindex="0" title="E:\docs\markdown" style="padding-left:19px">
+            <svg class="ico ico-14 chev"><use href="#i-folder-open"/></svg><span class="nm">markdown</span><span class="mt">3</span>
+          </div>
+          <div class="tf demo" data-doc="arch" data-depth="2" tabindex="0" style="padding-left:32px" title="E:\docs\markdown\架构设计 v3.md（演示条目：内容未内置）">
+            <svg class="ico ico-14" style="color:var(--text-3)"><use href="#i-file-text"/></svg>
+            <span class="nm">架构设计 v3.md</span><span class="src-dir ellip" style="display:none">markdown</span><span class="badge">演示</span><span class="mt">11-06</span>
+          </div>
+          <div class="tf demo" data-doc="tauri" data-depth="2" tabindex="0" style="padding-left:32px" title="E:\docs\markdown\Tauri 2 迁移清单.md（演示条目：内容未内置）">
+            <svg class="ico ico-14" style="color:var(--text-3)"><use href="#i-file-text"/></svg>
+            <span class="nm">Tauri 2 迁移清单.md</span><span class="src-dir ellip" style="display:none">markdown</span><span class="badge">演示</span><span class="mt">11-02</span>
+          </div>
+          <div class="tf demo" data-doc="er" data-depth="2" tabindex="0" style="padding-left:32px" title="E:\docs\markdown\数据库 ER 图说明.md（演示条目：内容未内置）">
+            <svg class="ico ico-14" style="color:var(--text-3)"><use href="#i-file-text"/></svg>
+            <span class="nm">数据库 ER 图说明.md</span><span class="src-dir ellip" style="display:none">markdown</span><span class="badge">演示</span><span class="mt">10-28</span>
+          </div>
+          <div class="tf dir" data-key="E:\docs\notes" data-open="0" tabindex="0" title="E:\docs\notes" style="padding-left:19px">
+            <svg class="ico ico-14 chev"><use href="#i-folder"/></svg><span class="nm">notes</span><span class="mt">1</span>
+          </div>
+          <div class="tf" data-doc="rust" data-depth="2" tabindex="0" style="padding-left:32px;display:none" title="E:\docs\notes\rust-notes.md">
+            <svg class="ico ico-14" style="color:var(--text-3)"><use href="#i-md"/></svg>
+            <span class="nm">Rust 学习笔记.md</span><span class="src-dir ellip" style="display:none">notes</span><span class="mt">昨天</span>
+          </div>
+          <div class="tf dir" data-key="E:\docs\work" data-open="0" tabindex="0" title="E:\docs\work" style="padding-left:19px">
+            <svg class="ico ico-14 chev"><use href="#i-folder"/></svg><span class="nm">work</span><span class="mt">1</span>
+          </div>
+          <div class="tf demo" data-doc="meet" data-depth="2" tabindex="0" style="padding-left:32px;display:none" title="E:\docs\work\周会纪要 11-06.md（演示条目：内容未内置）">
+            <svg class="ico ico-14" style="color:var(--text-3)"><use href="#i-file-text"/></svg>
+            <span class="nm">周会纪要 11-06.md</span><span class="src-dir ellip" style="display:none">work</span><span class="badge">演示</span><span class="mt">11-06</span>
+          </div>
+        </div>
+        <div class="side-foot">
+          <span class="dot-ok"></span><span>SQLite · FTS5</span><span class="sp"></span>
+          <span id="lib-count" title="原型演示计数；正式版按 documents.in_library 统计">共 6 篇</span>
+        </div>
+      </div>
+
+      <!-- 最近打开 / 历史记录：与「文档库」分列（schema v3 语义：recents 独立、按打开时间倒序、按天分组） -->
+      <div class="side-view" id="side-history" style="display:none">
+        <div class="side-head">
+          <div class="side-title">最近打开<span class="sp"></span>
+            <span class="sec-act" id="hist-clear" title="清空打开历史（不动库 · 不动磁盘）"><svg class="ico ico-12"><use href="#i-trash"/></svg></span>
+            <span id="hist-add" title="打开文档… (Ctrl+O)" style="cursor:pointer;display:inline-grid"><svg class="ico ico-14" style="color:var(--text-3)"><use href="#i-plus"/></svg></span>
+          </div>
+          <div class="searchf" id="rec-filter">
+            <svg class="ico ico-14"><use href="#i-search"/></svg>
+            <input id="rec-search" placeholder="筛选…" spellcheck="false" style="flex:1;min-width:0;font-size:12.5px;color:var(--text)">
+            <span class="iconbtn" id="rec-clear" hidden style="width:22px;height:22px" title="清除"><svg class="ico ico-12"><use href="#i-x"/></svg></span>
+          </div>
+        </div>
+        <!-- 打开历史（真实语义：opened_at 倒序、按天分组=今天/昨天/MM-DD；行尾 × 单条移除；标签=打开时刻） -->
+        <div class="side-body" id="history-list">
+          <div class="sec-h">今天<span class="sp"></span></div>
+          <div class="tf on" data-doc="guide" tabindex="0" title="E:\docs\markdown\Folio 使用指南.md">
+            <svg class="ico ico-14" style="color:var(--accent)"><use href="#i-md"/></svg>
+            <span class="nm">Folio 使用指南.md</span><span class="src-dir ellip">markdown</span><span class="badge">库</span><span class="mt">14:32</span>
+            <span class="iconbtn row-x" title="从最近打开移除"><svg class="ico ico-12"><use href="#i-x"/></svg></span>
+          </div>
+          <div class="sec-h">昨天<span class="sp"></span></div>
+          <div class="tf" data-doc="rust" tabindex="0" title="E:\docs\notes\rust-notes.md">
+            <svg class="ico ico-14" style="color:var(--text-3)"><use href="#i-md"/></svg>
+            <span class="nm">Rust 学习笔记.md</span><span class="src-dir ellip">notes</span><span class="badge">库</span><span class="mt">昨天</span>
+            <span class="iconbtn row-x" title="从最近打开移除"><svg class="ico ico-12"><use href="#i-x"/></svg></span>
+          </div>
+          <div class="sec-h">11-06<span class="sp"></span></div>
+          <div class="tf demo" data-doc="arch" tabindex="0" title="E:\docs\markdown\架构设计 v3.md（演示条目：内容未内置）">
+            <svg class="ico ico-14" style="color:var(--text-3)"><use href="#i-file-text"/></svg>
+            <span class="nm">架构设计 v3.md</span><span class="src-dir ellip">markdown</span><span class="badge">演示</span><span class="mt">11-06</span>
+            <span class="iconbtn row-x" title="从最近打开移除"><svg class="ico ico-12"><use href="#i-x"/></svg></span>
+          </div>
+          <div class="tf demo" data-doc="meet" tabindex="0" title="E:\docs\work\周会纪要 11-06.md（演示条目：内容未内置）">
+            <svg class="ico ico-14" style="color:var(--text-3)"><use href="#i-file-text"/></svg>
+            <span class="nm">周会纪要 11-06.md</span><span class="src-dir ellip">work</span><span class="badge">演示</span><span class="mt">11-06</span>
+            <span class="iconbtn row-x" title="从最近打开移除"><svg class="ico ico-12"><use href="#i-x"/></svg></span>
+          </div>
+          <div class="sec-h">11-02<span class="sp"></span></div>
+          <div class="tf demo" data-doc="tauri" tabindex="0" title="E:\docs\markdown\Tauri 2 迁移清单.md（演示条目：内容未内置）">
+            <svg class="ico ico-14" style="color:var(--text-3)"><use href="#i-file-text"/></svg>
+            <span class="nm">Tauri 2 迁移清单.md</span><span class="src-dir ellip">markdown</span><span class="badge">演示</span><span class="mt">11-02</span>
+            <span class="iconbtn row-x" title="从最近打开移除"><svg class="ico ico-12"><use href="#i-x"/></svg></span>
+          </div>
+        </div>
+        <div class="side-foot">
+          <span>打开历史 · 不限量保留</span><span class="sp"></span>
+          <span id="hist-count" title="原型演示数据；正式版来自 recents 表（opened_at 倒序 · 按天分组）">5 条</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ══ 阅读区 ══ -->
+    <section class="center">
+      <div class="pane-bar">
+        <span class="tbtn" id="btn-back" title="后退 (Alt+←)" disabled><svg class="ico ico-14"><use href="#i-arrow-left"/></svg></span>
+        <span class="tbtn" id="btn-fwd" title="前进 (Alt+→)" disabled><svg class="ico ico-14"><use href="#i-arrow-right"/></svg></span>
+        <span class="divv"></span>
+        <span class="tbtn" id="btn-prev-sec" title="上一章 (Alt+↑)"><svg class="ico ico-14"><use href="#i-chev-u"/></svg></span>
+        <span class="tbtn" id="btn-next-sec" title="下一章 (Alt+↓)"><svg class="ico ico-14"><use href="#i-chev-d"/></svg></span>
+      </div>
+
+      <div class="crumb-bar">
+        <span class="path" id="path-crumb"><svg class="ico"><use href="#i-folder"/></svg> markdown <i>/</i> <b>Folio 使用指南.md</b></span>
+      </div>
+
+      <div class="view" id="scroll-area">
+        <div class="pgbar"><i id="pgfill"></i></div>
+        <article class="prose" id="article"></article>
+        <div class="editor-wrap" id="editor-wrap" hidden>
+          <div class="editor-bar">
+            <span class="hint" title="正式版挂载 CodeMirror 6：增量解析、语法高亮、代码折叠">编辑模式 — <b>行号 / Markdown 着色</b>已启用</span>
+            <span class="sp"></span>
+            <span class="hint" id="dirty-hint" hidden style="color:var(--amber)">● 未保存</span>
+            <span class="mfb"><button class="btn" id="editor-discard" title="不保存本次修改，返回阅读 (Esc)">放弃修改</button>
+            <button class="btn primary" id="editor-save"><svg class="ico ico-14"><use href="#i-save"/></svg>保存并返回阅读</button></span>
+          </div>
+          <div class="editor-main">
+            <div class="lnum" id="lnum" aria-hidden="true"></div>
+            <div class="editor-hl-wrap" id="ed-scroll">
+              <div id="hl-layer" aria-hidden="true"><pre id="hl-pre"></pre></div>
+              <textarea id="editor" spellcheck="false"></textarea>
+            </div>
+          </div>
+          <div class="lnum-mirror" id="lnum-mirror" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <footer class="status">
+        <span class="si"><svg class="ico ico-14"><use href="#i-md"/></svg><b id="stat-file">Folio 使用指南.md</b></span>
+        <span class="si" id="stat-sec"><span class="ellip" id="stat-sec-t">§ —</span></span>
+        <span class="sp"></span>
+        <span class="si"><b id="stat-words">—</b> 字</span>
+        <span class="si"><b id="stat-secs">—</b> 节</span>
+        <span class="si" id="stat-enc" title="查看文档信息">UTF-8</span>
+        <span class="si">阅读 <b id="stat-pct">0%</b></span>
+        <span class="si acc" id="stat-link-btn" title="点击复制当前文档深度链接"><code id="stat-link">folio://open?doc=guide</code></span>
+      </footer>
+    </section>
+
+    <!-- ══ 配置界面（2026-11-16 起为居中独立浮窗：标题栏 ⚙ 打开，Esc / 点遮罩 / 再点 ⚙ 关闭）══ -->
+    <div class="st-view" id="settings-view"><div class="settings"><div class="stabs"><div class="stabs-hd"><span class="avatar">F</span>设置<span class="sp" style="flex:1"></span><svg class="ico ico-14" aria-hidden="true"><use href="#i-search"/></svg></div><div class="stab on" data-target="sg0"><svg class="ico ico-14" aria-hidden="true"><use href="#i-contrast"/></svg>主题</div><div class="stab" data-target="sg1"><svg class="ico ico-14" aria-hidden="true"><use href="#i-type"/></svg>排版</div><div class="stab" data-target="sg2"><svg class="ico ico-14" aria-hidden="true"><use href="#i-list"/></svg>段落</div><div class="stab" data-target="sg3"><svg class="ico ico-14" aria-hidden="true"><use href="#i-code"/></svg>代码与表格</div><div class="stab" data-target="sg4"><svg class="ico ico-14" aria-hidden="true"><use href="#i-file-text"/></svg>编辑区</div></div><div class="st-main"><div class="st-head"><div><div class="t">外观与主题</div><div class="d">窗口配色、字号与排版宽度。所有设置立即生效，并按工作区保存。</div></div><span class="sp"></span><span class="iconbtn cfg-ib" id="cfg-import" title="导入配置（正式版读取 settings.json）"><svg class="ico ico-14" aria-hidden="true"><use href="#i-upload"/></svg></span><span class="iconbtn cfg-ib" id="cfg-export" title="导出配置（正式版写出 settings.json）"><svg class="ico ico-14" aria-hidden="true"><use href="#i-download"/></svg></span><span class="mfb"><div class="btn sm" id="cfg-undo"><svg class="ico ico-14" aria-hidden="true"><use href="#i-history"/></svg>撤销更改</div><div class="btn sm primary" id="cfg-save"><svg class="ico ico-14" aria-hidden="true"><use href="#i-check"/></svg>保存并关闭</div></span></div><div class="st-body"><div class="sgroup" id="sg0""><div class="gt">主题</div><div class="scard"><div class="srow"><div class="info"><div class="t">配色方案</div><div class="d">三套内置主题自动跟随系统时间，也可锁定其中一套。</div></div><div class="ctl"><div class="themeval"><div class="thc on"><div class="prev" style="background:#101A2C"><span class="side" style="background:#0E1728"></span><span class="l" style="background:var(--accent);width:62%"></span><span class="l" style="background:#2A3B58;width:90%"></span><span class="l" style="background:#2A3B58;width:82%"></span><span class="l" style="background:var(--accent);width:55%"></span></div><div class="meta"><svg class="ico ico-14" aria-hidden="true"><use href="#i-check-circle"/></svg>深色</div></div><div class="thc"><div class="prev" style="background:#FFFFFF"><span class="side" style="background:#E9ECF3"></span><span class="l" style="background:var(--accent);width:62%"></span><span class="l" style="background:#DBE0E9;width:90%"></span><span class="l" style="background:#DBE0E9;width:82%"></span><span class="l" style="background:var(--accent);width:55%"></span></div><div class="meta"><svg class="ico ico-14" aria-hidden="true"><use href="#i-circle"/></svg>浅色</div></div><div class="thc"><div class="prev" style="background:#FAF5E9"><span class="side" style="background:#EDE4D2"></span><span class="l" style="background:var(--accent);width:62%"></span><span class="l" style="background:#DED2B9;width:90%"></span><span class="l" style="background:#DED2B9;width:82%"></span><span class="l" style="background:var(--accent);width:55%"></span></div><div class="meta"><svg class="ico ico-14" aria-hidden="true"><use href="#i-circle"/></svg>护眼米色</div></div></div></div></div><div class="srow"><div class="info"><div class="t">强调色</div><div class="d">影响标题栏标记、大纲当前项、选区与链接。</div></div><div class="ctl"><div class="swatches"><i class="on" style="background:#2DD4BF"></i><i style="background:#7FB2FF"></i><i style="background:#A78BFA"></i><i style="background:#F59E0B"></i><i style="background:#FB7185"></i><i style="background:#A0562A"></i><span class="sv3">青绿</span></div></div></div><div class="srow"><div class="info"><div class="t">界面密度</div><div class="d">紧凑模式在 13 寸笔记本上可多显示 4 行内容。</div></div><div class="ctl"><div class="radios"><span class="radio"><span class="rd"></span>紧凑</span><span class="radio on"><span class="rd"></span>标准</span><span class="radio"><span class="rd"></span>宽松</span></div></div></div></div></div><div class="sgroup" id="sg1""><div class="gt">排版</div><div class="scard"><div class="srow"><div class="info"><div class="t">正文字号</div><div class="d">渲染视图阅读档使用的字号；编辑档字号在「编辑器」里设置。</div></div><div class="ctl"><span class="slider"><i style="width:38%"></i><b style="left:38%"></b></span><span class="sv3">16.5 px</span></div></div><div class="srow"><div class="info"><div class="t">正文最大宽度</div><div class="d">约 40 个汉字一屏最省力，超过 80 会明显降低完读率。</div></div><div class="ctl"><div class="radios"><span class="radio"><span class="rd"></span>720 px</span><span class="radio on"><span class="rd"></span>900 px</span><span class="radio"><span class="rd"></span>1280 px</span><span class="radio"><span class="rd"></span>填满</span></div></div></div><div class="srow"><div class="info"><div class="t">字体族</div><div class="d">正文用衬线还是无衬线；两族各自记住字号，切换不丢设置。</div></div><div class="ctl"><div class="radios"><span class="radio on"><span class="rd"></span>衬线</span><span class="radio"><span class="rd"></span>无衬线</span></div></div></div></div></div><div class="sgroup" id="sg2""><div class="gt">段落</div><div class="scard"><div class="srow"><div class="info"><div class="t">行高</div><div class="d">行距 = 字号 × 倍数。中文正文 1.7–2.0 最舒服。</div></div><div class="ctl"><span class="slider"><i style="width:45.0%"></i><b style="left:45.0%"></b></span><span class="sv3">1.85×</span></div></div><div class="srow"><div class="info"><div class="t">字距</div><div class="d">额外字间距 em，0 为不加；中文长文加一点点更透气。</div></div><div class="ctl"><span class="slider"><i style="width:0.0%"></i><b style="left:0.0%"></b></span><span class="sv3">0.000 em</span></div></div><div class="srow"><div class="info"><div class="t">段落间距</div><div class="d">段与段之间的空白，按正文字号倍数换算。</div></div><div class="ctl"><div class="stepper" data-lo="0.6" data-hi="2" data-step="0.05" data-v="1.0" data-unit=" em"><button class="stp" data-d="-1" type="button">−</button><span class="stv">1.00 em</span><button class="stp" data-d="1" type="button">+</button></div></div></div><div class="srow"><div class="info"><div class="t">对齐方式</div><div class="d">两端对齐让中文右缘整齐；左对齐保留自然参差。</div></div><div class="ctl"><div class="radios"><span class="radio on"><span class="rd"></span>左对齐</span><span class="radio"><span class="rd"></span>两端对齐</span></div></div></div></div></div><div class="sgroup" id="sg3""><div class="gt">代码与表格</div><div class="scard"><div class="srow"><div class="info"><div class="t">代码字号</div><div class="d">代码块比正文略小更耐读；只影响代码块，不动正文。</div></div><div class="ctl"><div class="stepper" data-lo="10.5" data-hi="15.5" data-step="0.5" data-v="12.5" data-unit=" px"><button class="stp" data-d="-1" type="button">−</button><span class="stv">12.5 px</span><button class="stp" data-d="1" type="button">+</button></div></div></div><div class="srow"><div class="info"><div class="t">表格密度</div><div class="d">表格单元格的松紧三档。</div></div><div class="ctl"><div class="radios"><span class="radio"><span class="rd"></span>紧凑</span><span class="radio on"><span class="rd"></span>标准</span><span class="radio"><span class="rd"></span>宽松</span></div></div></div></div></div><div class="sgroup" id="sg4""><div class="gt">编辑区</div><div class="scard"><div class="srow"><div class="info"><div class="t">等宽连字</div><div class="d">JetBrains Mono 的 => != >= 连字，符号更接近手写。</div></div><div class="ctl"><div class="sw on"></div></div></div><div class="srow"><div class="info"><div class="t">行号与缩略图</div><div class="d">超过 200 行时自动显示右侧缩略图，拖动即跳转。</div></div><div class="ctl"><div class="sw on"></div></div></div><div class="srow"><div class="info"><div class="t">保存时自动格式化</div><div class="d">对齐表格竖线、统一列表符号、补全代码围栏语言。</div></div><div class="ctl"><div class="sw"></div></div></div></div></div></div></div></div></div>
+  </div>
+
+<!-- ══ 全文搜索（模拟 FTS5） ══ -->
+<div class="overlay" id="search-overlay">
+  <div class="pal">
+    <div class="pal-in">
+      <svg class="ico"><use href="#i-search"/></svg>
+      <input id="search-input" type="text" placeholder="搜索当前文档…" spellcheck="false">
+      <span style="font-size:11px;color:var(--text-3);border:1px solid var(--line);border-radius:6px;padding:3px 7px">FTS5</span>
+    </div>
+    <div class="pal-list" id="search-results"></div>
+    <div class="pal-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
+      <span><kbd>Enter</kbd> 跳转</span>
+      <span><kbd>F3</kbd> 命中循环</span>
+      <span><kbd>Esc</kbd> 关闭</span>
+      <span class="sp"></span>
+      <span id="search-stat">原型：仅当前文档 · 正式版：全库 FTS5</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 快捷键一览 ══ -->
+<div class="overlay mid" id="keys-overlay">
+  <div class="modal">
+    <div class="modal-h">
+      <span class="mi2"><svg class="ico ico-18"><use href="#i-md"/></svg></span>
+      <div><div class="mt">快捷键一览</div><div class="md2">阅读为主 · 编辑态内快捷键已隔离，不会穿透</div></div>
+      <span class="sp"></span>
+      <span class="x" id="keys-close"><svg class="ico ico-14"><use href="#i-x"/></svg></span>
+    </div>
+    <div class="modal-b" id="keys-body"></div>
+    <div class="modal-f"><span style="font-size:11.5px;color:var(--text-3)">原型内已全部可用 · 正式版由 Tauri 全局快捷键注册</span><span class="sp"></span>
+      <button class="btn" id="keys-ok">知道了</button></div>
+  </div>
+</div>
+
+<!-- ══ 关于 ══ -->
+<div class="overlay mid" id="about-overlay">
+  <div class="modal" style="width:440px">
+    <div class="modal-h">
+      <span class="mark" style="width:32px;height:32px;border-radius:9px;font-size:15px">F</span>
+      <div><div class="mt">Folio <span style="font-size:11px;color:var(--text-3);font-weight:400">v0.1 · 交互原型</span></div>
+      <div class="md2">把一堆 .md 当成「书」来读</div></div>
+      <span class="sp"></span>
+      <span class="x" id="about-close"><svg class="ico ico-14"><use href="#i-x"/></svg></span>
+    </div>
+    <div class="modal-b">
+      <div style="font-size:12.5px;color:var(--text-2);line-height:1.8;margin-bottom:14px">
+        Windows 桌面本地 Markdown 阅读器。阅读状态存于本地 SQLite，不联网、不上传。
+      </div>
+      <div class="about-stack">
+        <span class="tag">Tauri 2.11</span><span class="tag plain">Rust 1.90</span>
+        <span class="tag plain">SolidJS 1.9</span><span class="tag plain">TypeScript 5.8</span>
+        <span class="tag plain">CodeMirror 6</span><span class="tag plain">SQLite + FTS5</span>
+        <span class="tag plain">Vitest · Playwright</span>
+      </div>
+      <div style="margin-top:16px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-2);font-family:var(--font-mono);font-size:11px;color:var(--text-3)">
+        深度链接：<span style="color:var(--accent)">folio://open?doc=guide&amp;sec=…</span><br>
+        单实例 · WebView2 · 全文索引 342 篇（演示数据）
+      </div>
+    </div>
+    <div class="modal-f"><span style="font-size:11.5px;color:var(--text-3)">原型为单 HTML 文件，零依赖离线运行</span><span class="sp"></span>
+      <button class="btn primary" id="about-ok">好</button></div>
+  </div>
+</div>
+
+<!-- ══ 文档信息 ══ -->
+<div class="overlay mid" id="info-overlay">
+  <div class="modal" style="width:460px">
+    <div class="modal-h">
+      <span class="mi2"><svg class="ico ico-18"><use href="#i-info"/></svg></span>
+      <div style="min-width:0"><div class="mt">文档信息</div><div class="md2 ellip" id="info-name">—</div></div>
+      <span class="sp"></span>
+      <span class="x" id="info-close"><svg class="ico ico-14"><use href="#i-x"/></svg></span>
+    </div>
+    <div class="modal-b" id="info-body"></div>
+    <div class="modal-f"><span class="sp"></span><span class="mfb">
+      <button class="btn" id="info-ok">关闭</button>
+      <button class="btn primary" id="info-copy"><svg class="ico ico-14"><use href="#i-copy"/></svg>复制深度链接</button></span></div>
+  </div>
+</div>
+
+<!-- ══ 搜索命中浮动条（跳转后保留，可循环） ══ -->
+<div class="hitnav" id="hitnav" hidden>
+  <button id="hn-prev" type="button" title="上一处 (Shift+Enter)"><svg class="ico ico-14"><use href="#i-chev-u"/></svg></button>
+  <span>命中 <b id="hn-count">0 / 0</b></span>
+  <button id="hn-next" type="button" title="下一处 (Enter / F3)"><svg class="ico ico-14"><use href="#i-chev-d"/></svg></button>
+  <span><kbd>Enter</kbd> 下一处 · <kbd>Esc</kbd> 清除</span>
+</div>
+
+<!-- ══ 文件 / 目录选择对话框（仿 Windows 通用对话框版式：左树右表 + 地址栏 + 文件名/类型/按钮行；
+     皮肤全部用 Folio 规范件（.modal/.tf/.searchf/.btn），不调起系统原生窗口。
+     磁盘为 ROOT_LIB 派生仿真树；真实文件仍走拖放；正式版由 Tauri 系统对话框接管，交互契约不变）══ -->
+<div class="overlay mid" id="pick-overlay">
+  <div class="modal" style="width:780px;max-width:94vw">
+    <div class="modal-h">
+      <span class="mi2"><svg class="ico ico-18"><use href="#i-folder-open"/></svg></span>
+      <div style="min-width:0"><div class="mt" id="pick-title">打开</div><div class="md2" id="pick-sub">…</div></div>
+      <span class="sp"></span>
+      <span class="x" id="pick-close"><svg class="ico ico-14"><use href="#i-x"/></svg></span>
+    </div>
+    <div class="modal-b pk-b" style="padding:10px 12px 12px">
+      <div class="pk-bar">
+        <span class="pk-nav" id="pk-back" title="后退"><svg class="ico ico-12"><use href="#i-arrow-left"/></svg></span>
+        <span class="pk-nav" id="pk-fwd" title="前进"><svg class="ico ico-12"><use href="#i-arrow-right"/></svg></span>
+        <span class="pk-nav" id="pk-up" title="上移到…"><svg class="ico ico-12"><use href="#i-arrow-up"/></svg></span>
+        <div class="pk-path" id="pk-path"></div>
+        <div class="searchf pk-search" id="pk-search">
+          <input id="pk-q" placeholder="搜索…" spellcheck="false">
+        </div>
+      </div>
+      <div class="pk-grid">
+        <div class="pk-side" id="pk-tree"></div>
+        <div class="pk-split" id="pk-split" title="拖动调节左右宽度"></div>
+        <div class="pk-main">
+          <div class="pk-th"><span class="c1">名称</span><span class="c2">修改日期</span></div>
+          <div class="pk-list" id="pk-list" tabindex="-1"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-f pk-f">
+      <label for="pk-name">文件名(<u>N</u>)：</label>
+      <input id="pk-name" class="pk-fname" spellcheck="false" autocomplete="off">
+      <div class="pk-r2">
+        <button class="pk-fmt" id="pk-fmt" title="文件类型"><span id="pk-fmt-t"></span><svg class="ico ico-12"><use href="#i-chev-d"/></svg></button>
+        <span class="sp"></span>
+        <span class="mfb"><button class="btn" id="pk-cancel">取消</button><button class="btn primary" id="pk-ok">打开(O)</button></span>
+        <div class="pk-fmtmenu" id="pk-fmtmenu"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 切换 / 关闭文档库确认（通用询问框：确认框在选完目录后才弹，新旧两路径同屏才有比较价值；
+     取消 / ✕ / 点遮罩 / Esc 一律零副作用）══ -->
+<div class="overlay mid" id="rootq-overlay">
+  <div class="modal" style="width:480px">
+    <div class="modal-h">
+      <span class="mi2"><svg class="ico ico-18"><use id="rootq-icon" href="#i-folder"/></svg></span>
+      <div style="min-width:0"><div class="mt" id="rootq-title">切换文件夹</div><div class="md2" id="rootq-sub"></div></div>
+      <span class="sp"></span>
+      <span class="x" id="rootq-close"><svg class="ico ico-14"><use href="#i-x"/></svg></span>
+    </div>
+    <div class="modal-b" id="rootq-body"></div>
+    <div class="modal-f"><span class="sp"></span><span class="mfb">
+      <button class="btn" id="rootq-cancel">取消</button>
+      <button class="btn primary" id="rootq-ok">切换库</button></span></div>
+  </div>
+</div>
+
+<!-- 拖放导入遮罩 -->
+<div id="dropveil">松开鼠标即打开<small>支持 .md / .markdown / .txt · 多文件 · 整个目录</small></div>
+
+<!-- 图片放大查看 -->
+<div class="overlay mid" id="imgbox">
+  <div style="pointer-events:none;text-align:center">
+    <img id="imgbox-img" alt="" style="max-width:90vw;max-height:78vh;border-radius:12px;border:1px solid var(--line-hi);box-shadow:var(--shadow-pop)">
+    <div style="pointer-events:auto;margin-top:10px;font-size:11.5px;color:var(--text-3)">点击任意处关闭 · Esc</div>
+  </div>
+</div>
+
+<div id="toast"><span class="dot-ok"></span><span id="toast-msg"></span></div>
+<div class="copypop" id="copypop"><svg class="ico ico-14"><use href="#i-check-circle"/></svg><span id="copypop-t"></span><code id="copypop-l" hidden></code></div>
+</div>
+
+<!-- ══════════ 示例文档（正式版从磁盘读取 .md） ══════════ -->
+<script type="text/markdown" id="doc-guide">
+# Folio 使用指南
+
+Folio 是一款运行于 Windows 桌面的本地 Markdown 阅读器：打开即读、翻页流畅、大纲清晰。它面向需要长期阅读与反复查阅技术文档的人——把一堆 `.md` 当成"书"来管理。
+
+> 本页面即原型内置的示例文档，可用于体验大纲高亮、进度恢复、全文搜索与编辑模式。
+
+## 1. 核心概念
+
+Folio 的一切围绕三件事：
+
+- **文件夹 / 最近打开**：左栏分两列——「文件夹」按所选文件夹的目录层级列（置顶组浮顶）；「最近打开」独立成列，按打开时间倒序、按天分组（库成员 ≠ 打开历史）
+- **大纲**：从 h1~h6 标题自动生成导航目录，随滚动高亮当前章节
+- **进度记忆**：滚动时静默记录阅读位置，重开文档自动回到原地
+
+阅读状态（进度、排版偏好）存储在本地 SQLite 数据库中，重启后原样恢复。
+
+## 2. 快速上手
+
+### 2.1 打开文档
+
+将 `.md` 文件拖入窗口即可开始阅读；也可以按 `Ctrl+O` 从文件对话框选择（原型中两者均真实可用；正式版经 Tauri 原生对话框与文件系统）。首次打开的文档会被自动索引，供全文搜索使用。
+
+Windows 系统中注册了 `folio://` 深度链接，浏览器或其他应用里的链接可以直接唤起 Folio 并定位到指定章节（`doc` 为文件标识，`sec` 为标题文本）：
+
+`folio://open?doc=guide&sec=4. 全文搜索`
+
+原型内也支持同一形态的 hash 深链演示：把地址栏改为 `#doc=rust&sec=2. 借用与引用` 后刷新，即直接打开该文档并定位到该节。
+
+### 2.2 键盘快捷键
+
+| 快捷键 | 功能 |
+| --- | --- |
+| `Ctrl+O` | 打开文档 |
+| `Ctrl+F` / `Ctrl+K` | 全文搜索 |
+| `Ctrl+E` | 切换阅读 / 编辑模式 |
+| `Ctrl+S` | 保存编辑（编辑模式下） |
+| `Alt+↑` / `Alt+↓` | 上一章 / 下一章 |
+| `Alt+←` / `Alt+→` | 后退 / 前进（回到当时所在行） |
+| `F3` / `Enter` | 搜索命中的下一处（按住 `Shift` 反向） |
+| `Esc` | 关闭弹层 · 清除高亮 · 退出专注 · 编辑中放弃修改 |
+
+熟练之后，全程几乎不需要碰鼠标。编辑模式内按 `Home` 等键只作用于光标，不会被全局快捷键劫持。
+
+### 2.3 排版偏好
+
+工具栏的滑杆按钮（或菜单「查看 → 排版设置」）可以调整正文字号、行宽、行高与衬线 / 无衬线字体；两套字体各自记忆字号基线，偏好会被记住，下次打开时原样生效。
+
+## 3. 导航
+
+### 3.1 大纲
+
+左侧面板就是文档大纲——从 Markdown 的 h1~h6 标题自动生成，无需手工维护：
+
+- h1 到 h6 逐级缩进，一眼看清文档结构
+- 滚动联动：读到哪，对应标题自动高亮
+- 点击任意条目，平滑滚动到该章节；条目可用 `Tab` 聚焦、`Enter` 跳转
+- 配合 `Alt+↑/↓` 上一章下一章，长文档不迷路
+
+文档被编辑保存后，大纲立即重建，始终与内容一致。
+
+### 3.2 阅读进度
+
+Folio 会为**每个文档**分别静默记录进度：锚定最近标题 + 标题内偏移（比例作为兜底），从文件夹列表切走再切回，仍从上次的行继续——就像一本永远记得页码的书。阅读区顶部的细进度条实时显示当前位置。
+
+## 4. 全文搜索
+
+按 `Ctrl+F` 呼出搜索。搜索由 Rust 后端的 **SQLite FTS5** 驱动，毫秒级返回，支持跨文档检索：
+
+```text
+SELECT title, snippet(fts, 0, '[', ']', '…', 12)
+FROM fts WHERE fts MATCH '大纲' ORDER BY rank;
+```
+
+原型中这一步由前端模拟，仅检索当前文档，但交互与正式版一致：点击结果即跳转，命中处整篇高亮；跳转后保留浮动条，可用 `Enter` / `F3` 在多处命中间循环，`Esc` 统一清除高亮。
+
+> 正式版技术提醒：FTS5 默认 `unicode61` 分词不切中文词，中文检索需 trigram 或外接分词（如 jieba-rs），否则「毫秒级中文全文检索」不成立。
+
+## 5. 编辑模式
+
+按 `Ctrl+E` 切换到编辑模式。编辑器基于 **CodeMirror 6**，提供语法高亮、行号与代码折叠；保存（`Ctrl+S`）后立即重新渲染并回到阅读模式，按 `Esc` 或「放弃修改」则不保存返回。存在未保存修改时，页签橙点与编辑栏提示会同步亮起；切换文档时未保存内容将自动保存并明确提示（提示进入通知队列，不会被其它 toast 吞掉），不会静默丢失。
+
+阅读视图中的任务清单复选框**可直接勾选**：点击即在源文本里回写 `[ ]` / `[x]`，编辑态与阅读态共享同一份数据。
+
+> 原型中以纯文本编辑区代替，正式版由 SolidJS 组件挂载 CodeMirror 6 实例。
+
+## 6. 技术架构
+
+| 层 | 技术 |
+| --- | --- |
+| 桌面壳 | Tauri 2.11（WebView2，单实例，深度链接 `folio://`） |
+| 后端 | Rust 1.90（workspace，10 个 crate） |
+| 数据库 | SQLite + FTS5（rusqlite） |
+| 前端 | SolidJS 1.9 + TypeScript 5.8 |
+| 编辑器 | CodeMirror 6 |
+| 构建 | Cargo（LTO fat）+ pnpm 10 |
+| 测试 | Vitest + Playwright |
+
+![Folio architecture sketch](data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='860'%20height='230'%20font-family='Segoe%20UI,%20sans-serif'%3E%3Ctext%20x='20'%20y='26'%20font-size='12'%20fill='%238794A9'%3EFOLIO%20ARCHITECTURE%20SKETCH%20-%20demo%20image,%20click%20to%20enlarge%3C/text%3E%3Crect%20x='20'%20y='52'%20width='190'%20height='72'%20rx='10'%20fill='none'%20stroke='%230D9488'%20stroke-width='1.5'/%3E%3Ctext%20x='115'%20y='82'%20text-anchor='middle'%20font-size='14'%20fill='%230D9488'%3ETauri%202.11%3C/text%3E%3Ctext%20x='115'%20y='104'%20text-anchor='middle'%20font-size='11'%20fill='%238794A9'%3EWebView2%20shell%3C/text%3E%3Crect%20x='250'%20y='52'%20width='190'%20height='72'%20rx='10'%20fill='none'%20stroke='%230D9488'%20stroke-width='1.5'/%3E%3Ctext%20x='345'%20y='82'%20text-anchor='middle'%20font-size='14'%20fill='%230D9488'%3ESolidJS%201.9%3C/text%3E%3Ctext%20x='345'%20y='104'%20text-anchor='middle'%20font-size='11'%20fill='%238794A9'%3EUI%20+%20rendering%3C/text%3E%3Crect%20x='480'%20y='52'%20width='190'%20height='72'%20rx='10'%20fill='none'%20stroke='%230D9488'%20stroke-width='1.5'/%3E%3Ctext%20x='575'%20y='82'%20text-anchor='middle'%20font-size='14'%20fill='%230D9488'%3ERust%201.90%3C/text%3E%3Ctext%20x='575'%20y='104'%20text-anchor='middle'%20font-size='11'%20fill='%238794A9'%3Ebackend,%2010%20crates%3C/text%3E%3Crect%20x='710'%20y='52'%20width='130'%20height='72'%20rx='10'%20fill='none'%20stroke='%230D9488'%20stroke-width='1.5'/%3E%3Ctext%20x='775'%20y='82'%20text-anchor='middle'%20font-size='14'%20fill='%230D9488'%3ESQLite%3C/text%3E%3Ctext%20x='775'%20y='104'%20text-anchor='middle'%20font-size='11'%20fill='%238794A9'%3EFTS5%20index%3C/text%3E%3Crect%20x='480'%20y='166'%20width='190'%20height='44'%20rx='10'%20fill='none'%20stroke='%23EA580C'%20stroke-width='1.5'/%3E%3Ctext%20x='575'%20y='193'%20text-anchor='middle'%20font-size='13'%20fill='%23EA580C'%3E.md%20files%20on%20disk%3C/text%3E%3Cline%20x1='210'%20y1='88'%20x2='244'%20y2='88'%20stroke='%238794A9'%20stroke-width='1.5'/%3E%3Cpolygon%20points='250,88%20242,84%20242,92'%20fill='%238794A9'/%3E%3Cline%20x1='440'%20y1='88'%20x2='474'%20y2='88'%20stroke='%238794A9'%20stroke-width='1.5'/%3E%3Cpolygon%20points='480,88%20472,84%20472,92'%20fill='%238794A9'/%3E%3Cline%20x1='670'%20y1='88'%20x2='704'%20y2='88'%20stroke='%238794A9'%20stroke-width='1.5'/%3E%3Cpolygon%20points='710,88%20702,84%20702,92'%20fill='%238794A9'/%3E%3Cline%20x1='575'%20y1='124'%20x2='575'%20y2='160'%20stroke='%23EA580C'%20stroke-width='1.5'/%3E%3Cpolygon%20points='575,166%20571,158%20579,158'%20fill='%23EA580C'%3E%3C/polygon%3E%3C/svg%3E)
+
+*图：正式版分层示意——原型内置的演示图片，宽图不溢出栏宽，点击可放大。*
+
+## 7. 小结
+
+先把"读"这件事做顺，再谈其它。试着点击左侧大纲，直接跳到你最关心的那一节；或点开「Rust 学习笔记」把任务清单的方框勾上——改动会写回源文本。
+</script>
+
+<script type="text/markdown" id="doc-rust">
+# Rust 学习笔记
+
+对所有权与生命周期的阶段性整理，适合用 Folio 的阅读模式慢慢翻。
+
+## 1. 所有权
+
+**所有权三原则：**
+
+1. Rust 中每个值都有一个所有者
+2. 同一时刻值只有一个所有者
+3. 所有者离开作用域时，值被丢弃
+
+```rust
+fn main() {
+    let s = String::from("hello");
+    takes_ownership(s);   // s 的所有权移入函数
+    let n = 5;
+    makes_copy(n);        // i32 是 Copy 类型，不受影响
+}
+```
+
+## 2. 借用与引用
+
+- `&T` 不可变引用，可以同时存在多个
+- `&mut T` 可变引用，同一时刻只能有一个
+- 引用必须始终有效（生命周期）
+
+> 借用检查器在编译期工作，这是 Rust 无 GC 却内存安全的根基。
+
+## 3. 常用工具链
+
+| 工具 | 用途 |
+| --- | --- |
+| `cargo` | 构建 / 测试 / 发布 |
+| `rustup` | 版本与工具链管理 |
+| `clippy` | 静态检查 lint |
+| `rust-analyzer` | IDE 语言服务 |
+
+## 4. 下一步
+
+- [ ] 读完 *The Rust Programming Language* 第 4 章
+- [x] 给 rusqlite 封装一层连接池
+- [ ] 理解 workspace 的 feature 合并语义
+</script>
+
+<script>
+"use strict";
+/*<md-parser>*/
+// ── 迷你 Markdown 渲染器（正式版由前端渲染管线实现） ──
+function escapeHtml(s){
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function mdInline(s){
+  s = escapeHtml(s);
+  s = s.replace(/`([^`]+)`/g,"<code>$1</code>");
+  s = s.replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>");
+  s = s.replace(/\*([^*]+)\*/g,"<em>$1</em>");
+  s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g,'<img alt="$1" src="$2">');
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return s;
+}
+function splitRow(s){
+  return s.replace(/^\s*\|/,"").replace(/\|\s*$/,"").split("|").map(x=>x.trim());
+}
+function mdToHtml(src){
+  const lines = src.replace(/\r\n/g,"\n").split("\n");
+  const out = [];
+  let i = 0, secN = 0;
+  const listStack = [];
+  let para = [];
+  function closeLists(){
+    while(listStack.length){
+      const l = listStack.pop();
+      out.push(l.type === "ul" ? "</ul>" : "</ol>");
+    }
+  }
+  function flushPara(){
+    if(para.length){
+      out.push("<p>" + mdInline(para.join(" ")) + "</p>");
+      para = [];
+    }
+  }
+  while(i < lines.length){
+    const line = lines[i];
+    const fence = line.match(/^\s*```(\w*)\s*$/);
+    if(fence){
+      flushPara(); closeLists();
+      const lang = fence[1] || "text";
+      i++;
+      const buf = [];
+      while(i < lines.length && !/^\s*```\s*$/.test(lines[i])){ buf.push(lines[i]); i++; }
+      i++;
+      out.push('<div class="codeblock"><div class="cbh"><span class="lang">' + escapeHtml(lang) +
+        '</span><span class="sp"></span><button class="cb-copy" type="button"><svg class="ico ico-14"><use href="#i-copy"/></svg>复制</button></div>' +
+        "<pre><code>" + escapeHtml(buf.join("\n")) + "</code></pre></div>");
+      continue;
+    }
+    if(/^\s*$/.test(line)){ flushPara(); closeLists(); i++; continue; }
+    const h = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if(h){
+      flushPara(); closeLists();
+      secN++;
+      const lv = h[1].length;
+      out.push('<h' + lv + ' id="sec-' + secN + '" data-sec="' + secN + '">' + mdInline(h[2]) + "</h" + lv + ">");
+      i++; continue;
+    }
+    if(/^\s*(---|\*\*\*|___)\s*$/.test(line)){ flushPara(); closeLists(); out.push("<hr>"); i++; continue; }
+    if(/\|/.test(line) && i + 1 < lines.length &&
+       /^\s*\|?[\s:|-]*-[\s|:-]*$/.test(lines[i+1]) && /-/.test(lines[i+1])){
+      flushPara(); closeLists();
+      const header = splitRow(line);
+      i += 2;
+      const rows = [];
+      while(i < lines.length && /\|/.test(lines[i]) && !/^\s*$/.test(lines[i])){
+        rows.push(splitRow(lines[i])); i++;
+      }
+      let t = '<div class="tw-tbl"><table><thead><tr>';
+      header.forEach(c => t += "<th>" + mdInline(c) + "</th>");
+      t += "</tr></thead><tbody>";
+      rows.forEach(r => { t += "<tr>"; r.forEach(c => t += "<td>" + mdInline(c) + "</td>"); t += "</tr>"; });
+      t += "</tbody></table></div>";
+      out.push(t);
+      continue;
+    }
+    if(/^\s*>/.test(line)){
+      flushPara(); closeLists();
+      const buf = [];
+      while(i < lines.length && /^\s*>/.test(lines[i])){
+        buf.push(lines[i].replace(/^\s*>\s?/,"")); i++;
+      }
+      out.push("<blockquote>" + mdToHtml(buf.join("\n")) + "</blockquote>");
+      continue;
+    }
+    const li = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+    if(li){
+      flushPara();
+      const indent = Math.floor(li[1].length / 2);
+      const type = /[-*+]/.test(li[2]) ? "ul" : "ol";
+      let text = li[3], task = null;
+      const tm = text.match(/^\[( |x|X)\]\s+(.*)$/);
+      if(tm){ task = tm[1].toLowerCase() === "x"; text = tm[2]; }
+      while(listStack.length && listStack[listStack.length-1].indent > indent){
+        const l = listStack.pop(); out.push(l.type === "ul" ? "</ul>" : "</ol>");
+      }
+      if(!listStack.length || listStack[listStack.length-1].indent < indent){
+        listStack.push({type, indent});
+        out.push(type === "ul" ? "<ul>" : "<ol>");
+      }else if(listStack[listStack.length-1].type !== type){
+        const l = listStack.pop(); out.push(l.type === "ul" ? "</ul>" : "</ol>");
+        listStack.push({type, indent});
+        out.push(type === "ul" ? "<ul>" : "<ol>");
+      }
+      let liHtml;
+      if(task !== null){
+        liHtml = '<span class="cbx' + (task ? " done" : "") + '" title="点击勾选 / 取消（写回源文本）"><svg class="ico ico-12"><use href="#i-check"/></svg></span>' +
+          '<span class="tline">' + mdInline(text) + "</span>";
+        out.push('<li class="' + (task ? "done" : "task") + '">' + liHtml + "</li>");
+      }else{
+        out.push("<li>" + mdInline(text) + "</li>");
+      }
+      i++; continue;
+    }
+    para.push(line.trim());
+    i++;
+  }
+  flushPara(); closeLists();
+  return out.join("\n");
+}
+/*</md-parser>*/
+
+// ── 本地存储（正式版为 SQLite，经 Tauri command 读写） ──
+const store = (() => {
+  let mem = {}, ok = false;
+  try{ localStorage.setItem("__folio_t","1"); localStorage.removeItem("__folio_t"); ok = true; }catch(e){}
+  return {
+    get(k, d){ try{ const v = ok ? localStorage.getItem(k) : mem[k]; return v == null ? d : JSON.parse(v); }catch(e){ return d; } },
+    set(k, v){ try{ const s = JSON.stringify(v); if(ok) localStorage.setItem(k, s); else mem[k] = s; }catch(e){} }
+  };
+})();
+
+// ── 文档数据 ──
+const DOCS = {
+  guide: { title:"Folio 使用指南", file:"Folio 使用指南.md", dir:"markdown", slug:"guide", src:null },
+  rust:  { title:"Rust 学习笔记", file:"Rust 学习笔记.md", dir:"notes", slug:"rust-notes", src:null }
+};
+const LIB_TITLES = {
+  arch:"架构设计 v3.md", meet:"周会纪要 11-06.md", tauri:"Tauri 2 迁移清单.md", er:"数据库 ER 图说明.md",
+  ddia:"DDIA 精读笔记.md", craft:"凤凰项目（序摘）.md", sre:"SRE 工作手册选译.md",
+  sysd:"系统设计笔记.md", papers:"论文摘录 · 一致性.md", todo:"本周待办.md", clippings:"网页剪藏 11-12.md"
+};
+for(const id of ["guide","rust"]){
+  const el = document.getElementById("doc-" + id);
+  if(el) DOCS[id].src = el.textContent.replace(/^\n+/,"").replace(/\s+$/,"");
+}
+
+// ── 状态 ──
+function normalizePrefs(p){
+  const d = { theme:"dark", serif:true, fs:{ serif:15.5, sans:14 }, width:900, lh:1.85,
+    ls:0, para:1, align:"left", codeFs:12.5, tbl:"standard", accent:"#2DD4BF" };
+  if(!p) return d;
+  if(typeof p.fs === "number") p.fs = { serif:p.fs, sans:Math.max(12.5, p.fs - 1.5) };  // 旧版单值迁移
+  // 旧默认行宽 790 → 迁移到新默认 900（阅读区整体加宽）
+  const width = !p.width || p.width === 790 ? d.width : p.width;
+  return { theme:p.theme || d.theme, serif:p.serif !== false,
+    fs:Object.assign(d.fs, p.fs || {}), width, lh:p.lh || d.lh,
+    ls:(p.ls == null ? d.ls : p.ls), para:(p.para == null ? d.para : p.para), align:p.align || d.align,
+    codeFs:(p.codeFs == null ? d.codeFs : p.codeFs), tbl:p.tbl || d.tbl, accent:p.accent || d.accent };
+}
+const state = {
+  doc:"guide", mode:"read", activeHeading:null, activeSec:null, editRatio:0, dirty:false,
+  prefs: normalizePrefs(store.get("folio-prefs", null))
+};
+
+// ── 元素引用 ──
+const $ = id => document.getElementById(id);
+const article = $("article"), scrollArea = $("scroll-area"), editor = $("editor"),
+  editorWrap = $("editor-wrap"), outBody = $("out-body"), toastEl = $("toast"),
+  searchOverlay = $("search-overlay"), searchInput = $("search-input"), searchResults = $("search-results"),
+  searchStat = $("search-stat"), winEl = document.querySelector(".win");
+
+// ── Toast（N1：队列制——后到的提示不再吞掉「已自动保存」这类关键通知） ──
+let toastTimer = null;
+const toastQueue = [];
+function toast(msg){
+  if(toastEl.classList.contains("show")){
+    if($("toast-msg").textContent === msg) return;                  // 重复提示静默合并
+    if(toastQueue[toastQueue.length - 1] !== msg && toastQueue.length < 3) toastQueue.push(msg);
+    return;
+  }
+  showToast(msg);
+}
+function showToast(msg){
+  $("toast-msg").textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastEl.classList.remove("show");
+    toastTimer = setTimeout(() => { if(toastQueue.length) showToast(toastQueue.shift()); }, 200);
+  }, 2400);
+}
+
+// ── 工具 ──
+function findHeadingByText(text){
+  if(!text) return null;
+  return [...article.querySelectorAll("h1,h2,h3,h4,h5,h6")].find(h => h.textContent === text) || null;
+}
+function flash(el){
+  if(!el) return;
+  el.classList.remove("flash");
+  void el.offsetWidth;
+  el.classList.add("flash");
+  setTimeout(() => el.classList.remove("flash"), 1600);
+}
+
+// ── 搜索索引 ──
+let searchBlocks = [];
+function buildSearchIndex(){
+  clearHighlights();
+  searchBlocks = [];
+  if(!DOCS[state.doc] || !DOCS[state.doc].src) return;
+  let curSec = "文档开头";
+  const walk = node => {
+    for(const el of node.children){
+      const tag = el.tagName;
+      if(/^H[1-6]$/.test(tag)){
+        curSec = el.textContent;
+        searchBlocks.push({ el, text: el.textContent, sec: curSec });
+        continue;
+      }
+      if(tag === "CODE"){
+        if(el.parentElement && el.parentElement.tagName === "PRE") searchBlocks.push({ el, text: el.textContent, sec: curSec });
+        continue;
+      }
+      if(tag === "UL" || tag === "OL"){
+        for(const li of el.children){
+          if(li.tagName === "LI") searchBlocks.push({ el: li, text: li.textContent, sec: curSec });
+        }
+        continue;
+      }
+      if(tag === "P" || tag === "TD" || tag === "TH"){
+        searchBlocks.push({ el, text: el.textContent, sec: curSec });
+        continue;
+      }
+      if(el.children.length) walk(el);
+    }
+  };
+  walk(article);
+}
+
+// ── 大纲 ──
+function buildToc(){
+  outBody.innerHTML = "";
+  if(!(DOCS[state.doc] && DOCS[state.doc].src)){   // 演示条目：不把空态占位文本当成大纲
+    outBody.innerHTML = '<div class="ol-empty">内容未加载<br>无法生成大纲</div>';
+    return;
+  }
+  const hs = [...article.querySelectorAll("h1,h2,h3,h4,h5,h6")];
+  if(!hs.length){
+    outBody.innerHTML = '<div class="ol-empty">该文档没有标题，<br>无法生成大纲</div>';
+    return;
+  }
+  hs.forEach(h => {
+    const item = document.createElement("button");   // button：可 Tab 聚焦、Enter/Space 跳转
+    item.type = "button";
+    const lv = +h.tagName[1];
+    item.className = "ol" + (lv > 1 ? " l" + lv : "");
+    item.dataset.sec = h.dataset.sec;
+    const ot = document.createElement("span");
+    ot.className = "ot";
+    ot.textContent = h.textContent;
+    item.appendChild(ot);
+    item.title = h.textContent;
+    item.addEventListener("click", () => jumpToHeading(h, true));
+    outBody.appendChild(item);
+  });
+}
+
+function docStats(){
+  // 统计口径唯一数据源：正文源文本，排除自动生成的元信息行；未加载的演示条目返回 null
+  // words=正文字数  heads=大纲条目(全部标题)  secs=小节数(h2~h6，与正文「N 个小节」、状态栏「N 节」同口径)
+  if(!(DOCS[state.doc] && DOCS[state.doc].src)) return null;
+  let text = article.textContent || "";
+  const sub = article.querySelector(".sub");
+  if(sub) text = text.split(sub.textContent).join("");
+  const words = text.replace(/\s+/g,"").length;
+  const heads = article.querySelectorAll("h1,h2,h3,h4,h5,h6").length;
+  const secs = article.querySelectorAll("h2,h3,h4,h5,h6").length;
+  return { words, heads, secs };
+}
+function updateStats(){
+  const s = docStats();
+  $("stat-words").textContent = s ? s.words.toLocaleString() : "—";
+  $("stat-secs").textContent = s ? s.secs : "—";
+  $("out-count").textContent = s ? s.heads + " 条" : "—";
+}
+
+const EMPTY_HTML = `
+  <div class="empty-state">
+    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 13h6M9 17h4"/>
+    </svg>
+    <h3>演示条目：此文档内容未内置</h3>
+    <p>原型内置「Folio 使用指南」与「Rust 学习笔记」两份示例文档，<br>
+    可完整体验阅读、大纲、搜索与编辑。<br>
+    按 <code>Ctrl+O</code> 在文档浏览器中选一份 .md，或直接把真实文件拖入窗口——真实解析、真实统计。</p>
+  </div>`;
+
+function renderDoc(id, opts = {}){
+  state.doc = id;
+  state.activeSec = null;
+  clearHighlights();
+  closeSearch();
+  const doc = DOCS[id];
+  const title = doc && doc.title ? doc.title : (LIB_TITLES[id] || id);
+  const file = doc && doc.file ? doc.file : (LIB_TITLES[id] || id + ".md");
+  const hasSrc = !!(doc && doc.src);
+  if(state.mode === "edit") exitEditMode();
+  article.innerHTML = hasSrc ? mdToHtml(doc.src) : EMPTY_HTML;
+  // 标题下的元信息行
+  const h1 = article.querySelector("h1");
+  if(h1 && hasSrc){
+    const s = docStats();   // 与状态栏、大纲头共用同一数据源，三处数字一致
+    const min = Math.max(1, Math.round(s.words / 400));
+    h1.insertAdjacentHTML("afterend",
+      '<div class="sub"><svg class="ico"><use href="#i-file-text"/></svg><span>' + s.words.toLocaleString() +
+      ' 字</span><span>·</span><span>约 ' + min + ' 分钟</span><span>·</span><span>' + s.secs +
+      ' 个小节</span><span>·</span><span>更新于 今天</span></div>');
+  }
+  buildToc();
+  buildSearchIndex();
+  updateStats();
+  $("tab-doc-name").textContent = file;
+  $("path-crumb").innerHTML = '<svg class="ico"><use href="#i-folder"/></svg> ' +
+    (doc && doc.dir ? doc.dir : "markdown") + ' <i>/</i> <b>' + file + "</b>";
+  $("stat-file").textContent = file;
+  $("stat-link").textContent = hasSrc
+    ? (doc && doc.draft ? "—" : deepLink(false)) : "—";   // 未保存的新建文档不产出深链（点了打不开=说谎）
+  document.querySelectorAll("#history-list .tf").forEach(el =>   // 历史列表高亮当前文档；库列表由 renderLib 重绘（含 reveal 当前文档所在目录链）
+    el.classList.toggle("on", el.dataset.doc === id));
+  if(typeof renderLib === "function") renderLib();
+  store.set("folio-last-doc", id);   // N9：恢复上次会话的语义 = 最后在读的那篇，而非 map 键序第一个
+  // 滚动定位
+  scrollArea.style.scrollBehavior = "auto";
+  if(opts.sec || opts.secIdx){
+    // 优先数字锚点（data-sec，标题重名/改名后仍稳定），文本兜底
+    const h = (opts.secIdx && article.querySelector('[data-sec="' + opts.secIdx + '"]')) ||
+              findHeadingByText(opts.sec);
+    if(h){ scrollArea.scrollTop = Math.max(0, h.offsetTop - 70); flash(h); }
+    else scrollArea.scrollTop = 0;
+  }else if(opts.keepRatio && state.editRatio > 0){
+    const max = scrollArea.scrollHeight - scrollArea.clientHeight;
+    scrollArea.scrollTop = state.editRatio * max;
+  }else if(opts.resume){
+    // 每文档独立记忆：优先「锚定最近标题 + 标题内偏移」（内容变化不漂移），比例作兜底
+    const pos = store.get("folio-pos-map", {})[id];
+    let done = false;
+    if(pos){
+      if(pos.sec){
+        const h = findHeadingByText(pos.sec);
+        if(h){ scrollArea.scrollTop = Math.max(0, h.offsetTop - 70 + (pos.secOff || 0)); done = true; }
+      }
+      if(!done && pos.ratio > 0.02 && pos.ratio < 0.98){
+        const max = scrollArea.scrollHeight - scrollArea.clientHeight;
+        scrollArea.scrollTop = pos.ratio * max; done = true;
+      }
+      if(done && pos.ratio > 0.02 && pos.ratio < 0.98)
+        toast("已恢复「" + file + "」上次阅读位置 · " + Math.round(pos.ratio * 100) + "%");
+    }
+    if(!done) scrollArea.scrollTop = 0;
+  }else scrollArea.scrollTop = 0;
+  scrollArea.style.scrollBehavior = "";
+  updateActive();
+}
+
+function openDoc(id, record = true){
+  if(id === state.doc) return;
+  flushPosSave();   // N4：先落盘离开处的位置，再切换
+  if(state.mode === "edit"){
+    if(state.dirty) saveEdit("切换文档：已自动保存「" + (DOCS[state.doc].file || state.doc) + "」的修改");
+    else exitEditMode();
+  }
+  renderDoc(id, { resume: true });   // 切回旧文档也续读，不再归零
+  if(record) pushHist({ doc: id, sec: null });
+}
+
+// ── 滚动监听：进度 / 大纲高亮 / 位置记忆 ──
+let savePosTimer = null;
+function savePosNow(){
+  if(state.mode === "edit") return;
+  const max = scrollArea.scrollHeight - scrollArea.clientHeight;
+  const pct = max > 0 ? Math.min(1, scrollArea.scrollTop / max) : 0;
+  // 按文档存储（正式版写入 SQLite）
+  const map = store.get("folio-pos-map", {});
+  const h = state.activeHeading;
+  map[state.doc] = { ratio: pct, sec: h ? h.textContent : null,
+    secOff: h ? Math.max(0, scrollArea.scrollTop - h.offsetTop) : 0 };
+  store.set("folio-pos-map", map);
+  // 历史条目同步记录当前行位置，后退可回到「当时读的那一行」
+  const cur = hist.stack[hist.idx];
+  if(cur && cur.doc === state.doc){ cur.top = scrollArea.scrollTop; cur.ratio = pct; }
+}
+// N4：防抖只为省写入，不该决定导航正确性——切换/导航前同步冲刷挂起的位置
+function flushPosSave(){
+  if(savePosTimer){ clearTimeout(savePosTimer); savePosTimer = null; }
+  savePosNow();
+}
+window.addEventListener("beforeunload", flushPosSave);
+scrollArea.addEventListener("scroll", () => {
+  const max = scrollArea.scrollHeight - scrollArea.clientHeight;
+  const pct = max > 0 ? Math.min(1, scrollArea.scrollTop / max) : 0;
+  $("stat-pct").textContent = Math.round(pct * 100) + "%";
+  $("pgfill").style.width = (pct * 100) + "%";
+  updateActive();
+  clearTimeout(savePosTimer);
+  savePosTimer = setTimeout(() => { savePosTimer = null; savePosNow(); }, 400);
+});
+
+function updateActive(){
+  if(state.mode === "edit") return;
+  const hs = article.querySelectorAll("h1,h2,h3,h4,h5,h6");
+  if(!hs.length){ $("stat-sec-t").textContent = "§ —"; return; }
+  const st = scrollArea.scrollTop + 80;
+  let active = null;
+  hs.forEach(h => { if(h.offsetTop <= st) active = h; });
+  if(!active) active = hs[0];
+  // 触底判定：最后一屏滚不动时，强制激活最后一个标题，
+  // 否则文档末尾的短章节永远无法成为当前节（状态栏/大纲停在上一节）。
+  // N2：仅在确实可滚动且真的滚到底时生效——一屏装得下的短文档不得误判为「在末章」
+  const max = scrollArea.scrollHeight - scrollArea.clientHeight;
+  if(max > 4 && scrollArea.scrollTop >= max - 4)
+    active = hs[hs.length - 1];
+  state.activeHeading = active;
+  $("stat-sec-t").textContent = "§ " + active.textContent;
+  const sec = active.dataset.sec;
+  if(state.activeSec === sec) return;
+  state.activeSec = sec;
+  outBody.querySelectorAll(".ol").forEach(t => {
+    const on = t.dataset.sec === sec;
+    t.classList.toggle("on", on);
+    if(on && $("side-outline").style.display !== "none"){
+      t.scrollIntoView({ block: "nearest" });
+    }
+  });
+}
+
+// ── 章节跳转 + 导航历史 ──
+const hist = { stack: [], idx: -1 };
+function pushHist(entry){
+  const top = hist.stack[hist.idx];
+  if(top && top.doc === entry.doc && top.sec === entry.sec) return;
+  hist.stack.length = hist.idx + 1;
+  hist.stack.push(entry);
+  if(hist.stack.length > 80) hist.stack.shift();
+  hist.idx = hist.stack.length - 1;
+  updateHistBtns();
+}
+function updateHistBtns(){
+  $("btn-back").disabled = hist.idx <= 0;
+  $("btn-fwd").disabled = hist.idx >= hist.stack.length - 1;
+}
+function applyHistEntry(e){
+  if(e.doc !== state.doc){
+    renderDoc(e.doc, e.ratio != null ? {} : { sec: e.sec, secIdx: e.secIdx });
+    if(e.ratio != null){
+      const max = scrollArea.scrollHeight - scrollArea.clientHeight;
+      scrollArea.style.scrollBehavior = "auto";
+      scrollArea.scrollTop = e.ratio * max;
+      scrollArea.style.scrollBehavior = "";
+    }
+  }else if(e.top != null){
+    scrollArea.scrollTo({ top: e.top, behavior: "smooth" });   // 回到当时所在行，而非章首
+  }else if(e.secIdx || e.sec){
+    const h = (e.secIdx && article.querySelector('[data-sec="' + e.secIdx + '"]')) || findHeadingByText(e.sec);
+    if(h) jumpToHeading(h, false);
+  }
+}
+function goBack(){ if(hist.idx > 0){ flushPosSave(); hist.idx--; applyHistEntry(hist.stack[hist.idx]); updateHistBtns(); } }
+function goForward(){ if(hist.idx < hist.stack.length - 1){ flushPosSave(); hist.idx++; applyHistEntry(hist.stack[hist.idx]); updateHistBtns(); } }
+
+function jumpToHeading(h, record){
+  if(!h) return;
+  h.scrollIntoView({ behavior: "smooth", block: "start" });
+  flash(h);
+  if(record) pushHist({ doc: state.doc, sec: h.textContent, secIdx: h.dataset.sec });
+  state.activeHeading = h;
+  state.activeSec = null;
+  updateActive();
+}
+
+function jumpSection(dir){
+  const hs = [...article.querySelectorAll("h1,h2,h3,h4,h5,h6")];
+  if(!hs.length) return;
+  let idx = hs.indexOf(state.activeHeading);
+  if(idx < 0) idx = 0;
+  if(dir > 0){
+    if(idx >= hs.length - 1){ toast("已是最后一章"); return; }
+    jumpToHeading(hs[idx + 1], true);
+  }else{
+    // 若当前章节已滚过头部，先回到本章开头
+    if(state.activeHeading && scrollArea.scrollTop > state.activeHeading.offsetTop + 40){
+      jumpToHeading(state.activeHeading, true);
+    }else if(idx > 0){
+      jumpToHeading(hs[idx - 1], true);
+    }else{
+      scrollArea.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+}
+
+// ── 菜单栏（对应正式版：Tauri 原生菜单 / 前端菜单组件） ──
+// N13：窄窗溢出菜单——把各菜单的条目克隆聚合为一个「菜单」入口，随后统一绑定行为
+(() => {
+  const ovf = document.createElement("b");
+  ovf.id = "menu-ovf";
+  ovf.appendChild(document.createTextNode("菜单"));
+  const drop = document.createElement("div");
+  drop.className = "mdrop";
+  document.querySelectorAll("#menubar > b").forEach(src => {
+    const label = document.createElement("div");
+    label.className = "mgrp";
+    label.textContent = src.childNodes[0].textContent.trim();
+    drop.appendChild(label);
+    src.querySelectorAll(".mi").forEach(mi => {
+      const c = mi.cloneNode(true);
+      c.removeAttribute("id");
+      c.querySelectorAll("[id]").forEach(x => x.removeAttribute("id"));   // 克隆不得复制 #thsub/#mi-theme 等 id
+      drop.appendChild(c);
+    });
+    const sep = document.createElement("div");
+    sep.className = "msep";
+    drop.appendChild(sep);
+  });
+  drop.lastChild.remove();
+  ovf.appendChild(drop);
+  document.getElementById("menubar").appendChild(ovf);
+})();
+const menuBs = [...document.querySelectorAll("#menubar > b")];
+function closeMenus(){
+  menuBs.forEach(b => b.classList.remove("open"));
+  document.querySelectorAll(".mi.kb").forEach(el => el.classList.remove("kb"));
+  document.querySelectorAll(".mi.sub.subopen").forEach(el => el.classList.remove("subopen"));   // 子菜单一并收起
+  kbMi = -1;   // N5：关闭菜单必须复位键盘光标与高亮，否则下次打开顺手执行/残留旧项高亮
+}
+menuBs.forEach(b => {
+  b.addEventListener("click", ev => {
+    ev.stopPropagation();
+    const was = b.classList.contains("open");
+    closeMenus();
+    if(!was) b.classList.add("open");
+  });
+  b.addEventListener("mouseenter", () => {
+    if(menuBs.some(x => x.classList.contains("open")) && !b.classList.contains("open")){
+      closeMenus();
+      b.classList.add("open");
+    }
+  });
+});
+document.querySelectorAll(".mi").forEach(mi => {
+  mi.addEventListener("click", ev => {
+    if(mi.classList.contains("sub")){        // 父项只展开/收起子菜单，不关整菜单
+      ev.stopPropagation();
+      mi.classList.toggle("subopen");
+      return;
+    }
+    ev.stopPropagation();
+    closeMenus();
+    menuAction(mi.dataset.act);
+  });
+});
+// ── 菜单键盘导航：Tab/Enter 开菜单，←→ 切顶级，↑↓ 选项，Enter 执行，Esc 关闭（全局已管） ──
+document.getElementById("menubar").setAttribute("role", "menubar");
+let kbMi = -1;
+const kbItems = b => [...b.querySelectorAll(".mi")];
+function paintKb(b){
+  kbItems(b).forEach((el, i) => el.classList.toggle("kb", i === kbMi));
+  const it = kbItems(b)[kbMi];
+  if(it){
+    it.scrollIntoView({ block: "nearest" });
+    const sd = it.closest(".sub-drop");
+    if(sd) sd.parentElement.classList.add("subopen");   // 键盘光标进入子项时自动展开子菜单
+  }
+}
+menuBs.forEach(b => {
+  b.tabIndex = 0;
+  b.setAttribute("role", "menuitem");
+  b.setAttribute("aria-haspopup", "true");
+  b.addEventListener("keydown", ev => {
+    if(ev.key === "Enter" || ev.key === " "){ ev.preventDefault(); b.click(); }
+    else if(ev.key === "ArrowDown"){
+      ev.preventDefault();
+      if(!b.classList.contains("open")) b.click();
+      kbMi = 0; paintKb(b);
+    }
+  });
+});
+document.querySelectorAll(".mi").forEach(mi => mi.setAttribute("role", "menuitem"));
+document.addEventListener("keydown", ev => {
+  const openB = menuBs.find(x => x.classList.contains("open"));
+  if(!openB) return;
+  if(ev.ctrlKey || ev.altKey || ev.metaKey) return;   // N12：带修饰键的组合归全局导航管，菜单不抢
+  const items = kbItems(openB);
+  if(ev.key === "ArrowDown" || ev.key === "ArrowUp"){
+    ev.preventDefault();
+    if(!items.length) return;
+    kbMi = (kbMi + (ev.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    paintKb(openB);
+  }else if(ev.key === "Enter"){
+    if(kbMi >= 0 && items[kbMi]){ ev.preventDefault(); items[kbMi].click(); }
+    kbMi = -1;
+  }else if(ev.key === "ArrowRight" || ev.key === "ArrowLeft"){
+    ev.preventDefault();
+    const next = (menuBs.indexOf(openB) + (ev.key === "ArrowRight" ? 1 : -1) + menuBs.length) % menuBs.length;
+    closeMenus(); kbMi = -1;
+    menuBs[next].classList.add("open");
+    menuBs[next].focus();
+  }else if(ev.key === "Escape") kbMi = -1;
+});
+function menuAction(act){
+  const doc = DOCS[state.doc];
+  switch(act){
+    case "new-doc": newDocDemo(); break;
+    case "open": openPicker("files"); break;
+    case "open-dir": openPicker("dir"); break;
+    case "doc-guide": openDoc("guide", true); break;
+    case "doc-rust": openDoc("rust", true); break;
+    case "export": toast("导出 HTML / PDF：正式版由 Rust 侧渲染完成（原型演示）"); break;
+    case "quit": toast("退出与窗口控制由 Tauri window API 接管（原型内仅演示）"); break;
+    case "focus": toggleFocus(); break;
+    case "library": switchSide("library"); break;
+    case "outline": switchSide("outline"); break;
+    case "theme-dark": setTheme("dark"); break;
+    case "theme-light": setTheme("light"); break;
+    case "theme-sepia": setTheme("sepia"); break;
+    case "font": openSettings(); break;
+    case "top": scrollArea.scrollTo({ top: 0, behavior: "smooth" }); break;
+    case "prev-sec": jumpSection(-1); break;
+    case "next-sec": jumpSection(1); break;
+    case "search": openSearch(); break;
+    case "edit": toggleEdit(); break;
+    case "save":
+      if(state.mode === "edit") saveEdit();
+      else toast("当前处于阅读模式，Ctrl+E 进入编辑后可保存");
+      break;
+    case "props": openProps(); break;
+    case "keys": openKeys(); break;
+    case "link": copyDeepLink(); break;
+    case "about": openAbout(); break;
+  }
+}
+
+// ── 侧栏切换 / 专注模式 ──
+function switchSide(view){
+  winEl.classList.remove("focus");
+  $("btn-focus").classList.remove("on");
+  $("side-outline").style.display = view === "outline" ? "" : "none";
+  $("side-library").style.display = view === "library" ? "" : "none";
+  $("side-history").style.display = view === "history" ? "" : "none";
+  $("rail-lib").classList.toggle("on", view === "library");
+  $("rail-history").classList.toggle("on", view === "history");
+  $("rail-outline").classList.toggle("on", view === "outline");
+  if(view === "outline") updateActive();
+}
+function toggleFocus(){
+  const on = winEl.classList.toggle("focus");
+  $("btn-focus").classList.toggle("on", on);
+  toast(on ? "专注模式：侧栏、导航条、面包屑与状态栏已隐藏 · Esc 退出" : "已恢复侧栏");
+}
+$("rail-lib").addEventListener("click", () => switchSide("library"));
+$("rail-history").addEventListener("click", () => switchSide("history"));
+$("rail-outline").addEventListener("click", () => switchSide("outline"));
+$("rail-open").addEventListener("click", () => openPicker("files"));   // 瞬时动作钮：不保持选中态（rail 面板钮互斥逻辑不受影响）
+// rail 搜索钮已撤（2026-11-16）：全文搜索入口=标题栏钮 / Ctrl+F / rail 面板不变
+
+// ── 全文搜索（正式版：SQLite FTS5，Rust 侧执行） ──
+function openSearch(){
+  clearHighlights();
+  searchOverlay.classList.add("open");
+  searchInput.value = "";
+  renderSearchResults([], "");
+  searchStat.textContent = "原型：仅当前文档 · 正式版：全库 FTS5";
+  setTimeout(() => searchInput.focus(), 30);
+}
+function closeSearch(){
+  if(searchOverlay.classList.contains("open")){
+    searchOverlay.classList.remove("open");
+    clearHighlights();
+  }
+}
+function doSearch(q){
+  const ql = q.toLowerCase();
+  return searchBlocks.map(b => {
+    const tl = b.text.toLowerCase();
+    const idx = tl.indexOf(ql);
+    if(idx < 0) return null;
+    let count = 0, p = -1;
+    while((p = tl.indexOf(ql, p + 1)) >= 0) count++;
+    const s = Math.max(0, idx - 22);
+    return { b, count, s: s > 0, snipRaw: b.text.slice(s, idx + q.length + 42) };
+  }).filter(Boolean);
+}
+function hlText(s, q){
+  if(!q) return escapeHtml(s);
+  const out = [], ls = s.toLowerCase(), lq = q.toLowerCase();
+  let pos = 0, i;
+  while((i = ls.indexOf(lq, pos)) >= 0){
+    out.push(escapeHtml(s.slice(pos, i)) + "<em>" + escapeHtml(s.slice(i, i + q.length)) + "</em>");
+    pos = i + q.length;
+  }
+  out.push(escapeHtml(s.slice(pos)));
+  return out.join("");
+}
+function renderSearchResults(results, q){
+  searchResults.innerHTML = "";
+  if(!q){
+    searchResults.innerHTML = '<div class="sr-empty">原型：仅检索当前文档 · 正式版：全库检索<br>输入关键词开始搜索</div>';
+    return;
+  }
+  if(!results.length){
+    searchResults.innerHTML = '<div class="sr-empty">没有找到与 “' + escapeHtml(q) + '” 匹配的内容</div>';
+    return;
+  }
+  // 按「§ 章节」分组呈现——预演正式版跨库检索的「文档 → 章节 → 片段」层级
+  const ql = q.toLowerCase();
+  let lastSec;
+  results.forEach((r, i) => {
+    const isH = /^H[1-6]$/.test(r.b.el.tagName);
+    if(r.b.sec !== lastSec){
+      lastSec = r.b.sec;
+      const g = document.createElement("div");
+      g.className = "hgrp" + (isH ? " hit" : "") + (isH && i === 0 ? " sel" : "");
+      g.innerHTML = '<svg class="ico"><use href="#i-heading"/></svg><span>' + hlText(r.b.sec, q) +
+        (isH && r.count > 1 ? '<span class="hcount">' + r.count + " 处</span>" : "") + "</span>";
+      if(isH) g.addEventListener("click", () => jumpToResult(results, i, q));
+      searchResults.appendChild(g);
+      if(isH) return;   // 命中在标题本身：分组头即结果行，不再重复渲染片段
+    }
+    const div = document.createElement("div");
+    div.className = "hit" + (i === 0 ? " sel" : "");
+    const idx = r.snipRaw.toLowerCase().indexOf(ql);
+    const pre = (r.s ? "…" : "") + r.snipRaw.slice(0, idx);
+    const mid = r.snipRaw.slice(idx, idx + q.length);
+    const post = r.snipRaw.slice(idx + q.length);
+    div.innerHTML = (r.count > 1 ? '<div class="hf"><span class="hcount">' + r.count + " 处</span></div>" : "") +
+      '<div class="hx">' + escapeHtml(pre) + "<em>" + escapeHtml(mid) + "</em>" + escapeHtml(post) + "</div>";
+    div.addEventListener("click", () => jumpToResult(results, i, q));
+    searchResults.appendChild(div);
+  });
+}
+let selIdx = 0;
+function moveSel(di, results){
+  if(!results.length) return;
+  selIdx = (selIdx + di + results.length) % results.length;
+  const items = searchResults.querySelectorAll(".hit");
+  items.forEach((el, i) => el.classList.toggle("sel", i === selIdx));
+  items[selIdx].scrollIntoView({ block: "nearest" });
+}
+// 多处命中循环：跳转后保留浮动条，Enter/F3 下一处 · Shift 反向 · Esc 清除高亮
+let hitMarks = [], hitIdx = 0;
+function jumpToResult(results, i, q){
+  const r = results[i];
+  // 编辑态呼出搜索后跳转：先回阅读态，否则高亮与滚动全打在 display:none 的正文上（假跳转）
+  if(state.mode === "edit"){
+    if(state.dirty) saveEdit("跳转阅读：已自动保存当前编辑");
+    else exitEditMode();
+  }
+  searchOverlay.classList.remove("open");
+  clearHighlights();
+  highlightAll(q);
+  hitMarks = [...article.querySelectorAll("mark.hit")];
+  if(r && r.b.el){
+    const first = hitMarks.findIndex(m => r.b.el === m || r.b.el.contains(m));
+    hitIdx = first >= 0 ? first : 0;
+    scrollToHit(hitIdx);
+    pushHist({ doc: state.doc, sec: r.b.sec });
+  }
+  updateHitNav();
+}
+function scrollToHit(i){
+  const m = hitMarks[i];
+  if(!m) return;
+  hitMarks.forEach(x => x.classList.remove("cur"));
+  m.classList.add("cur");
+  m.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function stepHit(d){
+  if(!hitMarks.length) return;
+  hitIdx = (hitIdx + d + hitMarks.length) % hitMarks.length;
+  scrollToHit(hitIdx);
+  updateHitNav();
+}
+function updateHitNav(){
+  const bar = $("hitnav");
+  if(!hitMarks.length){ bar.hidden = true; winEl.classList.remove("hnv"); return; }
+  bar.hidden = false;
+  winEl.classList.add("hnv");   // N8：toast 抬到浮动条之上，不互相盖
+  $("hn-count").textContent = (hitIdx + 1) + " / " + hitMarks.length;
+}
+function closeHitNav(){
+  $("hitnav").hidden = true; hitMarks = []; hitIdx = 0;
+  winEl.classList.remove("hnv");
+}
+$("hn-prev").addEventListener("click", () => stepHit(-1));
+$("hn-next").addEventListener("click", () => stepHit(1));
+function highlightAll(q){
+  if(!q) return;
+  const ql = q.toLowerCase();
+  const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT, {
+    acceptNode(n){
+      if(!n.parentElement || n.parentElement.tagName === "MARK") return NodeFilter.FILTER_REJECT;
+      return n.data.toLowerCase().includes(ql) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    }
+  });
+  const nodes = [];
+  while(walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(n => {
+    const data = n.data, dl = data.toLowerCase();
+    let idx = dl.indexOf(ql), pos = 0;
+    const frag = document.createDocumentFragment();
+    while(idx >= 0){
+      if(idx > pos) frag.appendChild(document.createTextNode(data.slice(pos, idx)));
+      const m = document.createElement("mark");
+      m.className = "hit";
+      m.textContent = data.slice(idx, idx + q.length);
+      frag.appendChild(m);
+      pos = idx + q.length;
+      idx = dl.indexOf(ql, pos);
+    }
+    if(!frag.childNodes.length) return;
+    frag.appendChild(document.createTextNode(data.slice(pos)));
+    n.replaceWith(frag);
+  });
+}
+function clearHighlights(){
+  article.querySelectorAll("mark.hit").forEach(m => m.replaceWith(...m.childNodes));
+  article.normalize();
+  closeHitNav();
+}
+searchInput.addEventListener("input", () => {
+  const q = searchInput.value.trim();
+  if(!q){ renderSearchResults([], ""); return; }
+  const t0 = performance.now();
+  const results = doSearch(q);
+  const lat = performance.now() - t0;
+  selIdx = 0;
+  renderSearchResults(results, q);
+  const total = results.reduce((a, r) => a + r.count, 0);
+  searchStat.textContent = total + " 处匹配 · " + lat.toFixed(1) + " ms（模拟 FTS5）";
+});
+searchInput.addEventListener("keydown", ev => {
+  ev.stopPropagation();
+  if(ev.key === "Escape"){ ev.preventDefault(); closeSearch(); return; }
+  const q = searchInput.value.trim();
+  const results = q ? doSearch(q) : [];
+  if(ev.key === "ArrowDown"){ ev.preventDefault(); moveSel(1, results); }
+  else if(ev.key === "ArrowUp"){ ev.preventDefault(); moveSel(-1, results); }
+  else if(ev.key === "Enter"){ ev.preventDefault(); if(results.length) jumpToResult(results, selIdx, q); }
+});
+searchOverlay.addEventListener("mousedown", ev => {
+  if(ev.target === searchOverlay) closeSearch();
+});
+
+// ── 编辑模式（正式版：CodeMirror 6 实例，Rust 写回磁盘） ──
+function updateSeg(){
+  $("seg-read").classList.toggle("on", state.mode !== "edit");
+  $("seg-edit").classList.toggle("on", state.mode === "edit");
+}
+function setDirty(d){
+  state.dirty = d;
+  // N14：两处提示足够（页签橙点贴近对象、编辑栏贴近动作），不再三处同屏
+  $("tab-dirty").hidden = !d;
+  $("dirty-hint").hidden = !d;
+}
+function toggleEdit(){
+  if(state.mode === "edit"){
+    if(state.dirty) saveEdit();   // 有修改才存盘并提示；干净则直接退出
+    else exitEditMode();
+    return;
+  }
+  if(!(DOCS[state.doc] && DOCS[state.doc].src)){ toast("该文档在原型中未内置内容"); return; }
+  const max = scrollArea.scrollHeight - scrollArea.clientHeight;
+  state.editRatio = max > 0 ? scrollArea.scrollTop / max : 0;
+  state.mode = "edit";
+  editor.value = DOCS[state.doc].src;
+  setDirty(false);
+  editorWrap.hidden = false;
+  article.style.display = "none";
+  updateSeg();
+  editor.focus();
+  edScroll.scrollTop = 0;
+  rebuildLineNumbers();
+  paintHighlight();
+}
+function exitEditMode(){
+  state.mode = "read";
+  editorWrap.hidden = true;
+  article.style.display = "";
+  setDirty(false);
+  updateSeg();
+}
+function saveEdit(msg){
+  if(state.mode !== "edit") return;
+  const doc = DOCS[state.doc];
+  if(doc && doc.draft){                    // 新建文档的首次保存：弹「保存」对话框确认名字与位置
+    doc.src = editor.value;                // 缓冲先落到内存对象，确认后才登记
+    openPicker("save", doc.file, (dirPath, name) => {
+      doc.draft = false; doc.file = name; doc.slug = name;
+      doc.title = name.replace(/\.(md|markdown|txt)$/i, "");
+      doc.dir = dirPath;
+      if(libraryOpen){
+        const trimUp = p => p.replace(/[\\/]+$/, "").toUpperCase();
+        const n = trimUp(dirPath), rootN = trimUp(LIB_ROOT);
+        if(n === rootN || n.startsWith(rootN + "\\")){
+          const rel = dirPath.replace(/[\\/]+$/, "").slice(LIB_ROOT.replace(/[\\/]+$/, "").length).replace(/^[\\/]+/, "").replace(/\\/g, "/");
+          if(!LIB.some(e => e.doc === state.doc)) addLibEntry(state.doc, name, (rel ? rel + "/" : "") + name, "新建");
+        }
+      }
+      exitEditMode();
+      renderDoc(state.doc, { keepRatio: true });
+      toast("已保存为「" + name + "」— " + dirPath + "（原型内存演示 · 正式版写入磁盘）");
+    });
+    return;
+  }
+  DOCS[state.doc].src = editor.value;
+  exitEditMode();
+  renderDoc(state.doc, { keepRatio: true });
+  toast(msg || "已保存并重新渲染（正式版由 Rust 写回磁盘并更新 FTS5 索引）");
+}
+function discardEdit(){
+  if(state.mode !== "edit") return;
+  exitEditMode();   // 放弃：不写回 src，正文未变无需重渲染
+  toast("已放弃未保存修改，返回阅读模式");
+}
+editor.addEventListener("input", () => {
+  setDirty(editor.value !== (DOCS[state.doc] && DOCS[state.doc].src));
+});
+$("editor-save").addEventListener("click", () => saveEdit());
+$("editor-discard").addEventListener("click", discardEdit);
+$("seg-read").addEventListener("click", () => {
+  if(state.mode === "edit"){ if(state.dirty) saveEdit(); else exitEditMode(); }
+});
+$("seg-edit").addEventListener("click", toggleEdit);
+
+// ── 行号槽：软换行时行号格随逻辑行的实际占高拉伸，与 textarea 逐行对齐 ──
+const lnumEl = $("lnum"), lnumMirror = $("lnum-mirror"), edScroll = $("ed-scroll");
+let lnumRaf = 0, lnumHeights = [];
+function lnumCurrentLine(){
+  return editor.value.slice(0, editor.selectionStart || 0).split("\n").length - 1;
+}
+function rebuildLineNumbers(){
+  if(state.mode !== "edit") return;
+  const lines = editor.value.split("\n");
+  // 镜像宽度 = textarea 内容宽（clientWidth 已除边框与滚动条，再减去左右 padding 24+24）
+  lnumMirror.style.width = Math.max(120, edScroll.clientWidth - 48) + "px";
+  lnumMirror.textContent = "";
+  const frag = document.createDocumentFragment();
+  for(const ln of lines){
+    const d = document.createElement("div");
+    d.textContent = ln === "" ? "\u200b" : ln;   // blank line also gets a cell (zero-width space keeps height)
+    frag.appendChild(d);
+  }
+  lnumMirror.appendChild(frag);
+  const cur = lnumCurrentLine();
+  let html = "", total = 0;
+  lnumHeights = [];
+  for(let i = 0; i < lines.length; i++){
+    const h = lnumMirror.children[i].offsetHeight || 22;
+    lnumHeights.push(h);
+    total += h;
+    html += '<i class="' + (i === cur ? "cur" : "") + '" style="height:' + h + 'px">' + (i + 1) + "</i>";
+  }
+  lnumEl.innerHTML = html;
+  lnumEl.scrollTop = edScroll.scrollTop;
+  // textarea 自适应全高（顶 padding 16 + 行高总和 + 底 40），滚动交给包裹层
+  editor.style.height = (total + 56) + "px";
+}
+// textarea 自身不再滚动，浏览器不会为光标自动滚外层，手动保证光标行可见
+function ensureCaretVisible(){
+  if(state.mode !== "edit" || !lnumHeights.length) return;
+  const line = lnumCurrentLine();
+  let y = 16;
+  for(let i = 0; i < line && i < lnumHeights.length; i++) y += lnumHeights[i];
+  const lh = lnumHeights[line] || 22;
+  const top = edScroll.scrollTop, vh = edScroll.clientHeight;
+  if(vh && y < top + 8) edScroll.scrollTop = Math.max(0, y - 8);
+  else if(vh && y + lh > top + vh - 24) edScroll.scrollTop = y + lh - vh + 24;
+}
+// ── Markdown 语法着色层（轻量行级着色器；正式版由 CodeMirror 6 的 Lezer 解析器实现） ──
+const hlLayer = $("hl-layer"), hlPre = $("hl-pre");
+function hlInline(s){
+  s = s.replace(/(`+)([^`]+)\1/g, '<span class="hl-code">$1$2$1</span>');
+  s = s.replace(/(!?)\[([^\]]*)\]\(([^)\s]*)\)/g,
+    (m, bang, txt, url) => '<span class="hl-lkb">' + bang + "[</span>" +
+      '<span class="hl-lkt">' + txt + "</span>" + '<span class="hl-lkb">](</span>' +
+      '<span class="hl-url">' + url + "</span>" + '<span class="hl-lkb">)</span>');
+  s = s.replace(/(\*\*|__)(\S(?:[^*_]*\S)?)\1/g, '<span class="hl-strong">$1$2$1</span>');
+  s = s.replace(/(?<![\\\w])\*(\S(?:[^*\n]*\S)?)\*(?!\w)/g, '<span class="hl-em">*$1*</span>');
+  s = s.replace(/~~(\S(?:[^~\n]*\S)?)~~/g, '<span class="hl-del">~~$1~~</span>');
+  return s;
+}
+function mdHighlight(src){
+  const lines = src.replace(/\r\n/g, "\n").split("\n");
+  let inFence = false;
+  return lines.map(line => {
+    if(/^\s*(```|~~~)/.test(line)){ inFence = !inFence; return '<span class="hl-fence">' + escapeHtml(line) + "</span>"; }
+    if(inFence) return '<span class="hl-fence">' + escapeHtml(line) + "</span>";
+    const esc = escapeHtml(line);
+    let m;
+    if((m = esc.match(/^(\s*)(#{1,6})(\s+)(.*)$/)))
+      return m[1] + '<span class="hl-hash">' + m[2] + "</span>" + m[3] +
+             '<span class="hl-head">' + hlInline(m[4]) + "</span>";
+    if(/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(esc)) return '<span class="hl-hr">' + esc + "</span>";
+    if((m = esc.match(/^(\s*&gt;+\s?)(.*)$/)))
+      return '<span class="hl-quote">' + m[1] + hlInline(m[2]) + "</span>";
+    if((m = esc.match(/^(\s*)([-*+]|\d+[.)])(\s+)(\[[ xX]\])?(\s*)(.*)$/)))
+      return m[1] + '<span class="hl-bullet">' + m[2] + "</span>" + m[3] +
+             (m[4] ? '<span class="hl-task">' + m[4] + "</span>" + m[5] : "") + hlInline(m[6]);
+    if(/^\s*\|.*\|?\s*$/.test(esc) && esc.includes("|"))
+      return hlInline(esc).replace(/\|/g, '<span class="hl-pipe">|</span>');
+    return hlInline(esc);
+  }).join("\n");
+}
+function paintHighlight(){
+  if(state.mode !== "edit") return;
+  // 与 textarea 内容区同宽（clientWidth 已除滚动条，再减左右 padding 24+24）→ 逐字符同位换行
+  hlPre.style.width = Math.max(120, edScroll.clientWidth - 48) + "px";
+  hlPre.innerHTML = mdHighlight(editor.value) + "\n";
+}
+function scheduleLineNumbers(){
+  cancelAnimationFrame(lnumRaf);
+  lnumRaf = requestAnimationFrame(() => { rebuildLineNumbers(); paintHighlight(); ensureCaretVisible(); });
+}
+function markCurrentLine(){
+  const prev = lnumEl.querySelector("i.cur");
+  if(prev) prev.classList.remove("cur");
+  const cell = lnumEl.children[lnumCurrentLine()];
+  if(cell) cell.classList.add("cur");
+}
+// 着色层与 textarea 都在滚动包裹层内，随滚动原生同移；只需带一行号槽
+edScroll.addEventListener("scroll", () => { lnumEl.scrollTop = edScroll.scrollTop; });
+editor.addEventListener("input", scheduleLineNumbers);
+editor.addEventListener("keyup", () => { markCurrentLine(); ensureCaretVisible(); });
+for(const tp of ["click", "focus"]) editor.addEventListener(tp, markCurrentLine);
+window.addEventListener("resize", scheduleLineNumbers);
+if(document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleLineNumbers);
+
+// ── 任务清单复选框：点击回写源文本 [ ] <-> [x]（正式版写回磁盘），与编辑态共享同一份 src ──
+article.addEventListener("click", ev => {
+  const cb = ev.target.closest ? ev.target.closest(".cbx") : null;
+  if(!cb) return;
+  const doc = DOCS[state.doc];
+  if(!doc || !doc.src) return;
+  const items = [...article.querySelectorAll("li.task, li.done")];
+  const n = items.indexOf(cb.closest("li"));
+  if(n < 0) return;
+  // N3：与渲染器同一坐标系——逐行扫描并跳过代码围栏，代码块里的假任务不参与计数
+  const lines = doc.src.split("\n");
+  let inFence = false, seen = 0, ti = -1;
+  for(let i = 0; i < lines.length; i++){
+    if(/^\s*```/.test(lines[i])){ inFence = !inFence; continue; }
+    if(inFence) continue;
+    const m = lines[i].match(/^([ \t]*(?:[-*+]|\d+[.)])[ \t]+)\[([ xX])\](?=[ \t])/);
+    if(m){
+      if(seen === n){
+        lines[i] = m[1] + "[" + (m[2].trim() === "" ? "x" : " ") + "]" + lines[i].slice(m[0].length);
+        ti = i; break;
+      }
+      seen++;
+    }
+  }
+  if(ti < 0) return;
+  doc.src = lines.join("\n");
+  const max = scrollArea.scrollHeight - scrollArea.clientHeight;
+  state.editRatio = max > 0 ? scrollArea.scrollTop / max : 1e-9;
+  renderDoc(state.doc, { keepRatio: true });
+  toast("已更新任务清单（正式版将写回 .md 源文件）");
+});
+
+// ── 图片点击放大 ──
+article.addEventListener("click", ev => {
+  const im = ev.target.closest ? ev.target.closest("img") : null;
+  if(!im) return;
+  $("imgbox-img").src = im.getAttribute("src");
+  $("imgbox").classList.add("open");
+});
+$("imgbox").addEventListener("mousedown", () => $("imgbox").classList.remove("open"));
+
+// ── 代码块复制 ──
+article.addEventListener("click", ev => {
+  const btn = ev.target.closest(".cb-copy");
+  if(!btn) return;
+  const block = btn.closest(".codeblock");
+  const code = block ? block.querySelector("code") : null;
+  const text = code ? code.textContent : "";
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text)
+      .then(() => toast("已复制代码块 · " + text.length + " 字符"))
+      .catch(() => toast("复制失败：剪贴板不可用（file:// 环境限制）"));
+  }else toast("复制失败：剪贴板不可用");
+});
+
+// ── 排版偏好 ──
+function curFs(){ return state.prefs.serif ? state.prefs.fs.serif : state.prefs.fs.sans; }
+// 强调色：写到 body(.app) 内联，胜过 .app[data-theme] 的规则；由 hex 派生 bg/dim/ink 保证各态与文字对比
+function hexRgb(h){ h=String(h).replace("#",""); if(h.length===3) h=h.split("").map(c=>c+c).join(""); const n=parseInt(h,16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+function applyAccent(hex){
+  const b=document.body;
+  if(!hex){ ["--accent","--accent-bg","--accent-dim","--accent-ink"].forEach(p=>b.style.removeProperty(p)); return; }
+  const [r,g,bl]=hexRgb(hex);
+  b.style.setProperty("--accent",hex);
+  b.style.setProperty("--accent-bg","rgba("+r+","+g+","+bl+",.14)");
+  b.style.setProperty("--accent-dim","rgb("+Math.round(r*.82)+","+Math.round(g*.82)+","+Math.round(bl*.82)+")");
+  const L=(0.2126*r+0.7152*g+0.0722*bl)/255;                 // 相对亮度决定强调底上的前景墨色
+  b.style.setProperty("--accent-ink", L>0.6 ? "#0A1020" : "#FFFFFF");
+}
+function applyPrefs(){
+  document.body.dataset.theme = state.prefs.theme;
+  const dark = state.prefs.theme === "dark";
+  const _bt = $("btn-theme");            // 标题栏已无主题按钮（切主题走 查看菜单），存在才同步
+  if(_bt){ _bt.querySelector(".icon-moon").style.display = dark ? "none" : "";
+           _bt.querySelector(".icon-sun").style.display = dark ? "" : "none";
+           _bt.title = dark ? "切换到浅色" : "切换到深色"; }
+  article.classList.toggle("sans", !state.prefs.serif);
+  const pp = state.prefs;
+  // 排版全部走 CSS 变量（挂在 article= .prose，后代 .prose p / .codeblock pre 继承）
+  article.style.setProperty("--prose-fs", curFs() + "px");
+  article.style.setProperty("--prose-w", pp.width + "px");
+  article.style.setProperty("--prose-lh", pp.lh);
+  article.style.setProperty("--prose-ls", pp.ls + "em");
+  article.style.setProperty("--prose-para", (Math.round(curFs() * pp.para * 10) / 10) + "px");
+  article.style.setProperty("--prose-align", pp.align);
+  article.style.setProperty("--code-fs", pp.codeFs + "px");
+  article.classList.toggle("density-compact", pp.tbl === "compact");
+  article.classList.toggle("density-loose", pp.tbl === "loose");
+  applyAccent(pp.accent);   // 强调色真正生效（写到 body 覆盖主题默认）
+  syncSettingsUI();   // 把 prefs 反映到配置界面控件
+  paintThemeSub();    // 查看→主题 子菜单打点同步（菜单/设置两条路改主题都走到这里）
+}
+function savePrefs(){ store.set("folio-prefs", state.prefs); }
+// 文件→新建文档：先建内存草稿（不落盘、不进树），首次保存弹「保存」对话框确认名字与位置
+// （正式版同流程：草稿文件藏于应用数据目录 drafts/，首次保存写往所选位置后清理，见 §3.2/§10.8）
+function newDocDemo(){
+  ensureSavedForSwitch();
+  let i = 0, name = "未命名文档.md";
+  while(Object.values(DOCS).some(d => d.file === name)){ i++; name = "未命名文档 " + i + ".md"; }
+  const id = "n" + fnv32(name + "|" + Date.now());
+  DOCS[id] = { title:"未命名文档", file:name, dir:"未保存", slug:name, src:"# 未命名文档\n\n", draft:true };
+  renderDoc(id);
+  pushHist({ doc:id, sec:null });
+  switchSide("outline");
+  if(state.mode !== "edit") toggleEdit();
+  toast("已新建未命名文档，进入编辑 · 首次保存时确认文件名与位置（原型内存演示，暂不落盘）");
+}
+// 主题三选（查看→主题▸）：原「深色/浅色」二态互斥钮退役；设置浮窗配色方案卡与此共用同一口径（dark/light/sepia）
+function setTheme(t){
+  state.prefs.theme = t;
+  applyPrefs(); savePrefs();
+}
+function paintThemeSub(){
+  document.querySelectorAll(".mi[data-theme]").forEach(el => {   // 含窄窗溢出菜单克隆项（已去 id）
+    const ck = el.querySelector(".ck");
+    if(ck) ck.style.visibility = el.dataset.theme === state.prefs.theme ? "" : "hidden";
+  });
+}
+// ── 配置界面（结构与 settings-page.html 完全一致；按「行标题 + 选项文本」接线，markup 保持原样不改） ──
+function prefOf(k){ return k === "fs" ? (state.prefs.serif ? state.prefs.fs.serif : state.prefs.fs.sans) : state.prefs[k]; }
+function rowTitleOf(el){ const s = el.closest(".srow"); return s ? s.querySelector(".info .t").textContent.trim() : ""; }
+function optText(el){ const c = el.cloneNode(true); const rd = c.querySelector(".rd"); if(rd) rd.remove(); return c.textContent.trim(); }
+function widthOf(t){ return t.indexOf("填满") >= 0 ? 1600 : parseInt(t, 10); }
+function tblOf(t){ return t === "紧凑" ? "compact" : t === "宽松" ? "loose" : "standard"; }
+function THEME_TXT(t){ return t === "深色" ? "dark" : t === "浅色" ? "light" : t === "护眼米色" ? "sepia" : null; }
+// [key, min, max, step, unit, digits]（正文字号域随衬线/无衬线变化）
+function numRow(title){
+  if(title === "正文字号"){ const r = state.prefs.serif ? [13.5,19.5] : [12.5,18]; return ["fs", r[0], r[1], .5, " px", 1]; }
+  if(title === "行高")   return ["lh", 1.4, 2.4, .05, "×", 2];
+  if(title === "字距")   return ["ls", 0, .12, .005, " em", 3];
+  if(title === "段落间距") return ["para", .6, 2, .05, " em", 2];
+  if(title === "代码字号") return ["codeFs", 10.5, 15.5, .5, " px", 1];
+  return null;
+}
+function getNum(title){ return prefOf(numRow(title)[0]); }
+function fmtNum(title){ const d = numRow(title); return getNum(title).toFixed(d[5]) + d[4]; }
+function setNum(title, v){
+  const d = numRow(title), k = d[0], mi = d[1], ma = d[2], step = d[3];
+  v = Math.min(ma, Math.max(mi, v)); v = +(Math.round(v / step) * step).toFixed(4);
+  if(k === "fs"){ if(state.prefs.serif) state.prefs.fs.serif = v; else state.prefs.fs.sans = v; }
+  else state.prefs[k] = v;
+  applyPrefs(); savePrefs();
+}
+let settingsSaved = null;
+function clonePrefs(p){ return JSON.parse(JSON.stringify(p)); }
+function openSettings(){ document.body.classList.add("settings-open"); settingsSaved = clonePrefs(state.prefs); syncSettingsUI(); }   // 快照=打开时的基线，供「撤销更改」回滚；入口=标题栏 ⚙（rail 底部钮已撤，2026-11-16）
+function closeSettings(){ document.body.classList.remove("settings-open"); }
+function toggleSettings(){ document.body.classList.contains("settings-open") ? closeSettings() : openSettings(); }
+// 浮窗形态：点遮罩空白处关闭（命中 .settings 窗体本身不算——事件目标必须是 st-view 容器）
+(function(){ const v = $("settings-view"); if(v) v.addEventListener("click", e => { if(e.target === v) closeSettings(); }); })();
+function settingsNav(id){
+  document.querySelectorAll('#settings-view .stab[data-target]').forEach(s => s.classList.toggle("on", s.getAttribute("data-target") === id));
+  const g = document.getElementById(id); if(g) g.scrollIntoView({behavior:"smooth", block:"start"});
+}
+function syncSettingsUI(){
+  const v = $("settings-view"); if(!v) return; const pp = state.prefs;
+  v.querySelectorAll(".thc").forEach(c => { const m = c.querySelector(".meta"); const t = m ? m.textContent.trim() : ""; c.classList.toggle("on", THEME_TXT(t) === pp.theme); });
+  v.querySelectorAll(".swatches i").forEach(x => { const hex = (x.getAttribute("style").match(/#[0-9a-fA-F]{6}/) || [""])[0]; x.classList.toggle("on", hex.toLowerCase() === String(pp.accent || "").toLowerCase()); });
+  const ACC_NAME = { "#2dd4bf":"青绿", "#7fb2ff":"淡蓝", "#a78bfa":"紫罗兰", "#f59e0b":"琥珀", "#fb7185":"玫红", "#a0562a":"赭石" };
+  const accLbl = v.querySelector(".swatches .sv3"); if(accLbl) accLbl.textContent = ACC_NAME[String(pp.accent||"").toLowerCase()] || "";
+  v.querySelectorAll(".radio").forEach(r => { const t = rowTitleOf(r), txt = optText(r); let on;
+    if(t === "字体族") on = (txt === "衬线") === !!pp.serif;
+    else if(t === "正文最大宽度") on = widthOf(txt) === pp.width;
+    else if(t === "对齐方式") on = (txt === "左对齐" ? "left" : "justify") === pp.align;
+    else if(t === "表格密度") on = tblOf(txt) === pp.tbl;
+    else return;                                   // 界面密度等演示项不托管
+    r.classList.toggle("on", on);
+  });
+  v.querySelectorAll(".slider").forEach(sl => { const t = rowTitleOf(sl), d = numRow(t); if(!d) return;
+    const pct = (getNum(t) - d[1]) / (d[2] - d[1]) * 100;
+    const i = sl.querySelector("i"), b = sl.querySelector("b"); if(i) i.style.width = pct + "%"; if(b) b.style.left = pct + "%";
+    const sv = sl.parentElement.querySelector(".sv3"); if(sv) sv.textContent = fmtNum(t);
+  });
+  v.querySelectorAll(".stepper").forEach(st => { const t = rowTitleOf(st); if(!numRow(t)) return; const sv = st.querySelector(".stv"); if(sv) sv.textContent = fmtNum(t); });
+}
+$("settings-view").addEventListener("click", ev => {
+  const cfg = ev.target.closest("#cfg-save,#cfg-undo,#cfg-import,#cfg-export");
+  if(cfg){                                                          // 头部动作：保存/撤销 + 导入/导出图标钮
+    if(cfg.id === "cfg-save"){ settingsSaved = clonePrefs(state.prefs); closeSettings(); toast("已保存并关闭（正式版按工作区写入 settings 表）"); }
+    else if(cfg.id === "cfg-undo"){
+      if(settingsSaved){ state.prefs = clonePrefs(settingsSaved); applyPrefs(); savePrefs(); syncSettingsUI(); }
+      toast("已撤销到打开设置时的状态");
+    }
+    else if(cfg.id === "cfg-import"){ toast("导入配置：正式版选择 settings.json 校验后即时应用（原型演示）"); }
+    else { toast("导出配置：正式版把当前 prefs 写出 settings.json（原型演示）"); }
+    return;
+  }
+  const stab = ev.target.closest(".stab[data-target]"); if(stab){ settingsNav(stab.getAttribute("data-target")); return; }
+  const thc = ev.target.closest(".thc"); if(thc){ const m = thc.querySelector(".meta"); const th = THEME_TXT(m ? m.textContent.trim() : ""); if(th){ state.prefs.theme = th; applyPrefs(); savePrefs(); } return; }
+  const swx = ev.target.closest(".swatches i"); if(swx){ const hex = (swx.getAttribute("style").match(/#[0-9a-fA-F]{6}/) || ["#2DD4BF"])[0]; state.prefs.accent = hex; applyPrefs(); savePrefs(); return; }
+  const radio = ev.target.closest(".radio"); if(radio){ const t = rowTitleOf(radio), txt = optText(radio), pp = state.prefs;
+    if(t === "字体族") pp.serif = txt === "衬线";
+    else if(t === "正文最大宽度") pp.width = widthOf(txt);
+    else if(t === "对齐方式") pp.align = txt === "左对齐" ? "left" : "justify";
+    else if(t === "表格密度") pp.tbl = tblOf(txt);
+    else { const g = radio.parentElement; Array.prototype.forEach.call(g.children, c => c.classList.remove("on")); radio.classList.add("on"); return; }  // 演示：仅切换高亮
+    applyPrefs(); savePrefs(); return;
+  }
+  const stp = ev.target.closest(".stp"); if(stp){ const t = rowTitleOf(stp), d = numRow(t); if(d) setNum(t, getNum(t) + (+stp.getAttribute("data-d")) * d[3]); return; }
+  const sw = ev.target.closest(".sw"); if(sw){ sw.classList.toggle("on"); return; }   // 编辑区开关：演示
+});
+let _sdrag = null;
+function sliderSet(sl, cx){ const t = rowTitleOf(sl), d = numRow(t); if(!d) return; const r = sl.getBoundingClientRect(); const frac = Math.min(1, Math.max(0, (cx - r.left) / r.width)); setNum(t, d[1] + frac * (d[2] - d[1])); }
+$("settings-view").addEventListener("mousedown", ev => { const sl = ev.target.closest(".slider"); if(sl){ _sdrag = sl; sliderSet(sl, ev.clientX); ev.preventDefault(); } });
+document.addEventListener("mousemove", ev => { if(_sdrag) sliderSet(_sdrag, ev.clientX); });
+document.addEventListener("mouseup", () => { _sdrag = null; });
+
+// ── 快捷键 / 关于 弹层 ──
+const KEYMAP = [
+  ["Ctrl O", "打开本地 .md（或直接把文件拖入窗口）"],
+  ["Ctrl N", "新建文档（草稿即写，首次保存确认名字与位置）"],
+  ["Ctrl F / Ctrl K", "全文搜索（FTS5）"],
+  ["F3 / Shift+F3", "搜索命中的下一处 / 上一处（跳转后）"],
+  ["Ctrl E", "切换阅读 / 编辑模式"],
+  ["Ctrl S", "保存编辑"],
+  ["Alt ↑ / Alt ↓", "上一章 / 下一章"],
+  ["Alt ← / Alt →", "后退 / 前进（回到当时所在行）"],
+  ["Home", "回到顶部（编辑焦点内不劫持光标）"],
+  ["Esc", "关闭弹层 · 清除高亮 · 退出专注 · 编辑中放弃修改"]
+];
+function openKeys(){
+  $("keys-body").innerHTML = KEYMAP.map(([k, d]) =>
+    '<div class="krow"><kbd>' + escapeHtml(k) + '</kbd><span class="sp"></span><span>' + d + "</span></div>").join("");
+  $("keys-overlay").classList.add("open");
+}
+function openAbout(){ $("about-overlay").classList.add("open"); }
+// 深度链接统一形态：folio://open?doc=<slug>[&sec=<标题文本>]（状态栏 / 关于页 / 指南文档一致）
+// 显示与复制一律保持可读原文（2026-11-16）：中文 slug/标题不做 percent 编码——
+// URI 消费端（hashchange 与正式版 parse_folio）本就做解码，粘贴到浏览器时由浏览器自动编码，
+// 所以给人看的链接就该长给人看的样子（folio://open?doc=3-管理会话&sec=2. 借用与引用）。
+function deepLink(withSec){
+  const doc = DOCS[state.doc];
+  let l = "folio://open?doc=" + (doc && doc.slug ? doc.slug : state.doc);
+  if(withSec && state.activeHeading) l += "&sec=" + state.activeHeading.textContent;
+  return l;
+}
+function openProps(){
+  const doc = DOCS[state.doc];
+  const s = docStats();
+  const file = doc && doc.file ? doc.file : state.doc;
+  $("info-name").textContent = file;
+  const rows = [
+    ["路径", (doc && doc.dir ? doc.dir : "—") + " / " + file],
+    ["状态", s ? "已加载" : "演示条目 · 内容未内置"],
+    ["字数", s ? s.words.toLocaleString() + " 字（已排除元信息行）" : "—"],
+    ["小节", s ? s.secs + " 个" : "—"],
+    ["编码", "UTF-8"],
+    ["当前章节", state.activeHeading ? state.activeHeading.textContent : "—"],
+    ["阅读进度", $("stat-pct").textContent],
+    ["深度链接", deepLink(true)],
+  ];
+  $("info-body").innerHTML = rows.map(([k, v]) =>
+    '<div class="krow"><span style="color:var(--text-3)">' + escapeHtml(k) + '</span><span class="sp"></span>' +
+    '<span style="font-family:var(--font-mono);font-size:11.5px;word-break:break-all;text-align:right">' +
+    escapeHtml(v) + "</span></div>").join("");
+  $("info-overlay").classList.add("open");
+}
+/* 复制成功浮层：窗口中央小卡 2 秒自动消失（2026-11-16，替代贴状态栏的 toast） */
+let copyPopTimer = null;
+function showCopyPop(msg, link){
+  $("copypop-t").textContent = msg;
+  const c = $("copypop-l");
+  c.textContent = link || ""; c.hidden = !link;
+  const el = $("copypop");
+  el.classList.add("on");
+  clearTimeout(copyPopTimer);
+  copyPopTimer = setTimeout(() => el.classList.remove("on"), 2000);
+}
+function copyDeepLink(){
+  // N20：演示占位条目不产出深链，不复制一个指向不存在文档的链接
+  if(!(DOCS[state.doc] && DOCS[state.doc].src)){ toast("该条目为演示占位，未加载真实文档"); return; }
+  if(DOCS[state.doc].draft){ toast("新建文档还未保存 · 先 Ctrl+S 保存后即可复制深度链接"); return; }
+  const link = deepLink(true);
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(link)
+      .then(() => showCopyPop("已复制深度链接", link))
+      .catch(() => toast("剪贴板不可用：" + link));
+  }else toast("剪贴板不可用：" + link);
+}
+for(const pair of [["keys-overlay", "keys-close"], ["keys-overlay", "keys-ok"],
+                   ["about-overlay", "about-close"], ["about-overlay", "about-ok"],
+                   ["info-overlay", "info-close"], ["info-overlay", "info-ok"]]){
+  $(pair[1]).addEventListener("click", () => $(pair[0]).classList.remove("open"));
+}
+for(const id of ["keys-overlay", "about-overlay", "info-overlay", "pick-overlay", "rootq-overlay"]){
+  $(id).addEventListener("mousedown", ev => {
+    if(ev.target === $(id)) $(id).classList.remove("open");
+  });
+}
+
+// ── 工具栏 / 标题栏 / 文档库 / 面板按钮 ──
+$("btn-search").addEventListener("click", openSearch);
+$("btn-focus").addEventListener("click", toggleFocus);
+$("btn-cfg").addEventListener("click", toggleSettings);   // 标题栏设置快捷钮（专注模式右边）；rail 底部钮已撤，此处为唯一快捷入口
+$("btn-back").addEventListener("click", goBack);
+$("btn-fwd").addEventListener("click", goForward);
+$("btn-prev-sec").addEventListener("click", () => jumpSection(-1));
+$("btn-next-sec").addEventListener("click", () => jumpSection(1));
+$("cap-close").addEventListener("click", () => toast("窗口控制由 Tauri window API 接管（原型内仅演示）"));
+$("cap-min").addEventListener("click", () => toast("最小化由 Tauri window API 接管（原型内仅演示）"));
+$("cap-max").addEventListener("click", () => toast("最大化由 Tauri window API 接管（原型内仅演示）"));
+$("stat-link-btn").addEventListener("click", ev => { ev.stopPropagation(); copyDeepLink(); });
+$("stat-enc").addEventListener("click", openProps);
+// ── 文档库头部动作（对齐真实程序：˅ 全部展开 / ˄ 全部收起；chip=单库，重扫与关闭内联在框内）──
+$("lib-expand").addEventListener("click", ev => { ev.stopPropagation(); setAllDirOpen(true); });
+$("lib-collapse").addEventListener("click", ev => { ev.stopPropagation(); setAllDirOpen(false); });
+$("lib-root-chip").addEventListener("click", () => openPicker("dir"));   // 选新目录=切换库（replace_root）；确认框在选完目录后才弹
+$("lib-rescan").addEventListener("click", ev => {
+  ev.stopPropagation();
+  if(!libraryOpen) return;
+  // 真实重扫（2026-11-16）：以仿真磁盘（ROOT_LIB）为准对账库登记，镜像 commands::scan 的增量语义——
+  // 拖入的文件（外部变化）在这里从「磁盘」进树；树上被外部消失的条目在这里移除。
+  const disk = (ROOT_LIB[LIB_ROOT] || []).slice();
+  const byId = new Map(LIB.map(e => [e.doc, e]));
+  const diskIds = new Set(disk.map(d => d.doc));
+  let added = 0, updated = 0, removed = 0;
+  for(const d of disk){ const c = byId.get(d.doc);
+    if(!c) added++;
+    else if(c.name !== d.name || c.dir !== d.dir || c.mt !== d.mt) updated++; }
+  for(const e of LIB) if(!diskIds.has(e.doc)) removed++;
+  LIB.length = 0; for(const e of disk) LIB.push(e);
+  for(const k in dirOpen) delete dirOpen[k];
+  libChipRender(); renderLib(); syncHistBadges();
+  toast("重新扫描「" + libLeaf(LIB_ROOT) + "」：新增 " + added + " · 更新 " + updated +
+        " · 未变 " + (disk.length - added - updated) + " · 移除 " + removed);
+});
+$("lib-close").addEventListener("click", ev => {
+  ev.stopPropagation();
+  if(!libraryOpen) return;
+  const n = LIB.length, root = LIB_ROOT;
+  askRootq({ icon:"i-x", title:"关闭文件夹", sub:"关闭当前打开的文件夹，不会删除电脑里任何文件。",
+    rows:[["要关闭的文件夹", root], ["里面的文档", n + " 篇"]],
+    note:"关闭后：这些文件都还在电脑里，一篇也不会少；读到哪儿了也记着，以后在「最近打开」列表里还能找到并继续读。想再打开，选中同一个文件夹就行。",
+    ok:"关闭文件夹", onOk:() => {
+      libraryOpen = false; LIB.length = 0;
+      libChipRender(); renderLib(); syncHistBadges();
+      toast("已关闭文件夹「" + libLeaf(root) + "」— 文件未删除，可在「最近打开」里继续读（共 " + n + " 篇）");
+    } });
+});
+$("lib-clear").addEventListener("click", () => { $("lib-search").value = ""; renderLib(); });
+$("lib-list").addEventListener("click", ev => {                 // 行事件走委托（目录行=展开/收起，文件行=打开）
+  const t = ev.target.closest(".tf");
+  if(t) libRowActivate(t);
+});
+$("lib-list").addEventListener("keydown", ev => {
+  if(ev.key !== "Enter" && ev.key !== " ") return;
+  const t = ev.target.closest(".tf");
+  if(!t) return;
+  ev.preventDefault();
+  libRowActivate(t);
+});
+function libRowActivate(el){
+  if(el.classList.contains("dir")) toggleDir(el.dataset.key);
+  else if(el.dataset.doc) openDoc(el.dataset.doc, true);
+}
+// ── 最近打开（与库分列）：垃圾桶=清空、加号=打开文档、行尾 ×=单条移除、筛选 ──
+$("hist-clear").addEventListener("click", ev => {               // 真实程序先弹确认；原型演示直接清
+  ev.stopPropagation();
+  document.querySelectorAll("#history-list .tf, #history-list .sec-h").forEach(el => el.remove());
+  $("hist-count").textContent = "0 条";
+  toast("已清空打开历史（库成员与磁盘文件不受影响 · 原型演示）");
+});
+$("hist-add").addEventListener("click", ev => { ev.stopPropagation(); openPicker("files"); });
+$("rec-clear").addEventListener("click", () => { $("rec-search").value = ""; filterHistory(); });
+$("rec-search").addEventListener("input", filterHistory);
+function filterHistory(){
+  const q = $("rec-search").value.trim().toLowerCase();
+  $("rec-clear").hidden = !q;
+  let header = null, headerShown = false, anyShown = false;
+  const flush = () => { if(header) header.style.display = headerShown ? "" : "none"; };
+  for(const el of $("history-list").children){
+    if(el.classList.contains("sec-h")){ flush(); header = el; headerShown = false; }
+    else if(el.classList.contains("tf")){
+      const hay = (el.querySelector(".nm").textContent + " " + (el.title || "")).toLowerCase();
+      const show = !q || hay.includes(q);
+      el.style.display = show ? "" : "none";
+      if(show){ headerShown = true; anyShown = true; }
+    }
+  }
+  flush();
+  let tip = document.getElementById("rec-empty");
+  if(q && !anyShown){
+    if(!tip){ tip = document.createElement("div"); tip.id = "rec-empty"; tip.className = "ol-empty"; $("history-list").appendChild(tip); }
+    tip.textContent = "无匹配记录：「" + $("rec-search").value.trim() + "」";
+  }else if(tip) tip.remove();
+}
+document.addEventListener("click", ev => {
+  if(!ev.target.closest("#menubar")) closeMenus();
+});
+document.querySelectorAll("#history-list .tf").forEach(el => {  // 历史行：点击打开 / 行尾 × 移除（库走行委托）
+  el.addEventListener("click", ev => {
+    if(ev.target.closest(".row-x")){
+      ev.stopPropagation();
+      el.remove();
+      $("hist-count").textContent = document.querySelectorAll("#history-list .tf").length + " 条";
+      toast("已从历史移除（不在库的条目正式版会连带回收登记 · 原型演示）");
+      return;
+    }
+    openDoc(el.dataset.doc, true);
+  });
+  el.addEventListener("keydown", ev => {
+    if(ev.key === "Enter" || ev.key === " "){ ev.preventDefault(); openDoc(el.dataset.doc, true); }
+  });
+});
+
+// ── 真实打开文件：Ctrl+O / 菜单 / 拖放（正式版经 Tauri dialog + fs 并自动索引） ──
+function fnv32(s){
+  let h = 2166136261;
+  for(let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(36);
+}
+function ensureSavedForSwitch(){
+  if(state.mode === "edit"){
+    if(state.dirty) saveEdit("打开新文档：已自动保存当前编辑");
+    else exitEditMode();
+  }
+}
+// ══ 文档库树（对齐真实程序 libtree.ts + SidePanels.LibraryPanel 语义）══════════════════
+// 单库：chip 只显示当前库根；库根=树的顶层节点；缩进 padding-left = 6 + depth*13px；
+// 收起的目录不带孩子；默认展开 = 库根 + 当前在读文档的祖先链（reveal）；「全部展开/收起」写显式覆盖；
+// 目录按名称自然序、目录内文件按新→旧（真实按 mtime 倒序）；筛选词非空→平铺命中并补出所在目录。
+// 仿真磁盘的唯一数据源：key=库根绝对路径 → 该根下全部登记条目（dir 为库根相对路径，"/" 分隔）。
+// 文档树（LIB）与选择对话框（vfsTree）都从这张表取数——不再有「静态 LIB + 静态 HTML」两套真相。
+let LIB_ROOT = "E:\\docs";
+let libraryOpen = true;
+const ROOT_LIB = {
+  "E:\\docs": [
+    { doc:"guide", name:"Folio 使用指南.md",   dir:"markdown", pin:true,  mt:"今天" },
+    { doc:"rust",  name:"Rust 学习笔记.md",   dir:"notes",    mt:"昨天" },
+    { doc:"arch",  name:"架构设计 v3.md",      dir:"markdown", mt:"11-06", demo:true },
+    { doc:"meet",  name:"周会纪要 11-06.md",   dir:"work",     mt:"11-06", demo:true },
+    { doc:"tauri", name:"Tauri 2 迁移清单.md", dir:"markdown", mt:"11-02", demo:true },
+    { doc:"er",    name:"数据库 ER 图说明.md", dir:"markdown", mt:"10-28", demo:true },
+  ],
+  "E:\\books": [
+    { doc:"ddia",  name:"DDIA 精读笔记.md",     dir:"",       mt:"11-10", demo:true },
+    { doc:"craft", name:"凤凰项目（序摘）.md",  dir:"翻译",   mt:"11-08", demo:true },
+    { doc:"sre",   name:"SRE 工作手册选译.md",  dir:"翻译",   mt:"10-21", demo:true },
+  ],
+  "D:\\reading": [
+    { doc:"sysd",   name:"系统设计笔记.md",      dir:"",       mt:"08-12", demo:true },
+    { doc:"papers", name:"论文摘录 · 一致性.md", dir:"papers", mt:"07-19", demo:true },
+  ],
+  "C:\\Users\\liumc\\Documents\\notes": [
+    { doc:"todo",      name:"本周待办.md",         dir:"", mt:"11-14", demo:true },
+    { doc:"clippings", name:"网页剪藏 11-12.md",   dir:"", mt:"11-12", demo:true },
+  ],
+};
+const LIB = ROOT_LIB[LIB_ROOT].slice();
+function libLeaf(p){ return p ? p.split("\\").pop() : "此电脑"; }
+const dirOpen = Object.create(null);   // 显式展开/收起记录（键→bool）；没记录过的跟随默认（库根+reveal 链）
+function libPathOf(f){ return LIB_ROOT + (f.dir ? "\\" + f.dir : "") + "\\" + f.name; }
+function libHay(f){ return (f.name + " " + libPathOf(f)).toLowerCase(); }
+function libDirs(){                    // 库根 + 磁盘层级 → DirNode 树（置顶文档不进树，单独「置顶」组）
+  const root = { key:LIB_ROOT, name:LIB_ROOT.split("\\").pop(), depth:0, dirs:[], files:[] };
+  for(const f of LIB){
+    if(f.pin) continue;
+    let n = root;
+    for(const seg of f.dir ? f.dir.split("/") : []){
+      const key = n.key + "\\" + seg;
+      let c = n.dirs.find(x => x.key === key);
+      if(!c){ c = { key, name:seg, depth:n.depth + 1, dirs:[], files:[] }; n.dirs.push(c); }
+      n = c;
+    }
+    n.files.push(f);
+  }
+  (function prep(n){
+    n.dirs.sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN", { numeric:true, sensitivity:"base" }));
+    n.dirs.forEach(prep);
+    n.count = n.files.length + n.dirs.reduce((s, c) => s + c.count, 0);
+  })(root);
+  return root;
+}
+function libReveal(){                  // 当前在读文档的祖先目录链（含库根）——收起时也别把正在读的藏起来
+  const s = new Set([LIB_ROOT]);
+  const e = LIB.find(f => f.doc === state.doc);
+  if(e && e.dir){ let acc = LIB_ROOT; for(const seg of e.dir.split("/")){ acc += "\\" + seg; s.add(acc); } }
+  return s;
+}
+function libIsOpen(n, reveal){ return (n.key in dirOpen) ? dirOpen[n.key] : (n.depth <= 0 || reveal.has(n.key)); }
+function toggleDir(key){
+  const row = [...$("lib-list").querySelectorAll(".tf.dir")].find(r => r.dataset.key === key);
+  dirOpen[key] = !row || row.dataset.open !== "1";
+  renderLib();
+}
+function setAllDirOpen(v){             // 批量展开/收起：整批写显式记录（真实程序同语义）
+  (function w(n){ dirOpen[n.key] = v; n.dirs.forEach(w); })(libDirs());
+  renderLib();
+}
+function libDirHtml(n, open, hide){
+  return '<div class="tf dir' + (n.depth === 0 ? " root" : "") + '" data-key="' + escapeHtml(n.key) +
+    '" data-open="' + (open ? 1 : 0) + '" tabindex="0" title="' + escapeHtml(n.key) +
+    '" style="padding-left:' + (6 + n.depth * 13) + 'px;' + (hide ? "display:none" : "") + '">' +
+    '<svg class="ico ico-14 chev"><use href="' + (open ? "#i-folder-open" : "#i-folder") + '"/></svg>' +
+    '<span class="nm">' + escapeHtml(n.name) + '</span><span class="mt">' + n.count + '</span></div>';
+}
+function libFileHtml(f, depth, hide, filtering){
+  const on = f.doc === state.doc;
+  const pl = filtering ? 6 : 6 + depth * 13;
+  const leaf = f.dir ? f.dir.split("/").pop() : "docs";
+  return '<div class="tf' + (f.demo ? " demo" : "") + (on ? " on" : "") + '" data-doc="' + f.doc +
+    '" data-depth="' + depth + '" tabindex="0" title="' + escapeHtml(libPathOf(f) + (f.demo ? "（演示条目：内容未内置）" : "")) +
+    '" style="padding-left:' + pl + 'px;' + (hide ? "display:none" : "") + '">' +
+    '<svg class="ico ico-14" style="color:' + (on ? "var(--accent)" : "var(--text-3)") + '"><use href="' + (f.demo ? "#i-file-text" : "#i-md") + '"/></svg>' +
+    '<span class="nm">' + escapeHtml(f.name) + '</span>' +
+    '<span class="src-dir ellip"' + (filtering ? "" : ' style="display:none"') + '>' + escapeHtml(leaf) + '</span>' +
+    (f.demo ? '<span class="badge">演示</span>' : "") +
+    '<span class="mt">' + escapeHtml(f.mt || "") + '</span></div>';
+}
+function renderLib(){
+  const list = $("lib-list");
+  if(!list) return;
+  if(!libraryOpen){                       // 关闭库：面板给占位空态（chip 虚线 + 这里指路）
+    list.innerHTML = '<div class="ol-empty">尚未打开文件夹<br>点击上方文件夹框选择文件夹 · 真实 .md 可直接拖入窗口</div>';
+    $("lib-count").textContent = "共 0 篇";
+    return;
+  }
+  const kw = $("lib-search").value.trim();
+  const q = kw.toLowerCase();
+  const filtering = !!q;
+  $("lib-clear").hidden = !filtering;
+  const out = [];
+  const pinned = LIB.filter(f => f.pin);
+  const pinShown = pinned.filter(f => !q || libHay(f).includes(q));
+  out.push('<div class="sec-h"' + (pinShown.length ? "" : ' style="display:none"') + '>置顶<span class="sp"></span></div>');
+  pinned.forEach(f => out.push(libFileHtml(f, 0, !pinShown.includes(f), filtering)));
+  if(filtering){                       // 筛选态：平铺命中（附路径提示），目录行整体隐藏
+    LIB.filter(f => !f.pin).forEach(f => out.push(libFileHtml(f, 0, !libHay(f).includes(q), true)));
+    if(!LIB.some(f => libHay(f).includes(q)))
+      out.push('<div class="ol-empty" id="lib-empty">无匹配文档：「' + escapeHtml(kw) + '」</div>');
+  }else{
+    const reveal = libReveal();
+    (function walk(n, hide){
+      const open = libIsOpen(n, reveal);
+      out.push(libDirHtml(n, open, hide));
+      const hideKids = hide || !open;
+      n.dirs.forEach(c => walk(c, hideKids));
+      n.files.forEach(f => out.push(libFileHtml(f, n.depth + 1, hideKids, false)));
+    })(libDirs(), false);
+  }
+  list.innerHTML = out.join("");
+  $("lib-count").textContent = "共 " + LIB.length + " 篇";
+}
+function addLibEntry(id, name, relPath, mt){
+  if(!libraryOpen) return;   // 未开库时导入 = 仅最近打开（v3 决议：打开单文件不入库）
+  // 真实：扫描登记后树按磁盘层级成形；原型按 relPath 的目录段挂到对应层级（新导入=最新，目录内排前）
+  const segs = (relPath || "").replace(/\\/g, "/").split("/").filter(Boolean).slice(0, -1);
+  const e = { doc:id, name, dir:segs.join("/"), mt:mt || "导入" };
+  LIB.unshift(e);
+  const arr = ROOT_LIB[LIB_ROOT] || (ROOT_LIB[LIB_ROOT] = []);
+  if(!arr.some(x => x.doc === id)) arr.push(e);   // 同步仿真磁盘表：选择对话框也看得见导入件（N11 重导入去重）
+  renderLib();
+}
+/* 拖放导入 =「外部磁盘变化」模拟（2026-11-16）：只写仿真磁盘（ROOT_LIB），不直接入库——
+ * 与真实程序同语义：要点文件夹面板的 ⟳ 重新扫描才登记进树，重扫按钮从此"演示得出来" */
+function addDiskEntry(id, name, relPath, mt){
+  if(!libraryOpen) return;
+  const segs = (relPath || "").replace(/\\/g, "/").split("/").filter(Boolean).slice(0, -1);
+  const arr = ROOT_LIB[LIB_ROOT] || (ROOT_LIB[LIB_ROOT] = []);
+  const e = { doc:id, name, dir:segs.join("/"), mt:mt || "导入" };
+  const hit = arr.find(x => x.doc === id);
+  if(hit){ Object.assign(hit, e); } else { arr.push(e); }
+}
+function importFile(file, relPath){
+  return new Promise(res => {
+    const r = new FileReader();
+    r.onload = () => {
+      const id = "f" + fnv32(file.name + "|" + (relPath || file.name));   // 稳定 ID：重导入=更新而非重复入库（N11）
+      const isNew = !DOCS[id];
+      const rel = (relPath && relPath !== file.name) ? relPath.replace(/[\\/][^\\/]+$/, "") : "";
+      DOCS[id] = {
+        title: file.name.replace(/\.(md|markdown|txt)$/i, ""),
+        file: file.name,
+        dir: rel ? LIB_ROOT + "\\" + rel.replace(/\//g, "\\") : "导入",   // 面包屑给完整路径（对齐 chip title 口径）
+        slug: file.name,
+        src: String(r.result).replace(/\r\n/g, "\n").replace(/^\n+/, "").replace(/\s+$/, "")
+      };
+      if(isNew) addDiskEntry(id, file.name, relPath || file.name);   // 2026-11-16：只写仿真磁盘，⟳ 重扫后才入库
+      // N11：原型级「入库」——正文缓存进 localStorage，刷新后仍在；超配额自动退化为会话级
+      try{
+        const cache = store.get("folio-imports", {});
+        cache[id] = DOCS[id];
+        store.set("folio-imports", cache);
+      }catch(e){}
+      res(id);
+    };
+    r.onerror = () => res(null);
+    r.readAsText(file, "utf-8");
+  });
+}
+async function handleFiles(files){
+  const list = [...files].filter(f => /\.(md|markdown|txt)$/i.test(f.name));
+  if(!list.length){ toast("未找到 Markdown 文件（支持 .md / .markdown / .txt）"); return; }
+  ensureSavedForSwitch();
+  const limited = list.slice(0, 100);
+  if(list.length > 100) toast("文件较多，本次仅导入前 100 个");
+  let first = null;
+  for(const f of limited){
+    const id = await importFile(f, f.webkitRelativePath || f.name);
+    if(id && !first) first = id;
+  }
+  if(!first) { toast("读取失败"); return; }
+  renderDoc(first);
+  pushHist({ doc: first, sec: null });
+  switchSide("outline");   // 2026-11-16：拖放打开文件同样自动切到大纲面板
+  toast("已打开 " + DOCS[first].file + (limited.length > 1 ? "（本批共导入 " + limited.length + " 个文档）" : "") +
+    (libraryOpen ? " · 已写入当前文件夹（仿真磁盘）· 点文件夹面板的 ⟳ 重新扫描后入库" : " · 当前没打开文件夹，已记到「最近打开」"));
+}
+// 真实文件唯一入口=拖放（选择对话框走仿真树；正式版由 Tauri dialog 读盘）
+// 拖放遮罩：进入即高亮整窗，给出「松手会发生什么」的预演
+let dragDepth = 0;
+function showVeil(on){ $("dropveil").classList.toggle("on", on); if(!on) dragDepth = 0; }
+["dragenter", "dragover", "dragleave", "drop"].forEach(tp => window.addEventListener(tp, ev => {
+  // 只接管文件拖放（阻断浏览器默认「导航打开文件」）；编辑器内拖选文字不受影响
+  const hasFiles = ev.dataTransfer && [...ev.dataTransfer.types].indexOf("Files") >= 0;
+  if(!hasFiles) return;
+  ev.preventDefault(); ev.stopPropagation();
+  if(tp === "dragenter") dragDepth++;
+  else if(tp === "dragover") showVeil(true);
+  else if(tp === "dragleave"){ dragDepth = Math.max(0, dragDepth - 1); if(!dragDepth) showVeil(false); }
+  else if(tp === "drop"){ showVeil(false); handleFiles(ev.dataTransfer.files); }
+}));
+
+// 选择/保存对话框左右宽度分隔条（120–420px，localStorage 持久，2026-11-16）
+(function pkSplit(){
+  const sp = $("pk-split");
+  if(!sp) return;
+  $("pk-tree").style.width = (store.get("folio-pickw", 176)) + "px";
+  let d = null;
+  sp.addEventListener("pointerdown", e => { d = { x: e.clientX, w: $("pk-tree").offsetWidth }; sp.setPointerCapture(e.pointerId); });
+  sp.addEventListener("pointermove", e => { if(!d) return;
+    $("pk-tree").style.width = Math.min(420, Math.max(120, d.w + e.clientX - d.x)) + "px"; });
+  sp.addEventListener("pointerup", () => { if(d){ store.set("folio-pickw", $("pk-tree").offsetWidth); d = null; } });
+})();
+$("lib-search").addEventListener("input", () => renderLib());   // 命中文件名或完整路径；平铺态补出目录，孤儿组头自动隐藏
+
+// ══ 选择对话框 + 库切换/关闭确认（2026-11-16：全部规范内浮层，不调起系统原生窗口）══════════
+// 「打开文档」「打开文件夹…」都走 #pick-overlay（.modal 家族 · 悬浮窗族透明遮罩，§8.0/§8.2 口径）；
+// 磁盘 = ROOT_LIB 派生的仿真树。真实文件仍走拖放（#dropveil → handleFiles）。
+// 正式版由 Tauri 系统对话框接管「读盘」这一步——交互契约不变：选 → 确认（新旧对照）→ 应用/零副作用取消。
+function mkNode(p, name){ return { path:p, name, dirs:[], files:[] }; }
+function vfsTree(){
+  const root = mkNode("", "此电脑");
+  for(const [rpath, entries] of Object.entries(ROOT_LIB)){
+    let n = root;
+    for(const seg of rpath.split("\\")){
+      const p = n.path ? n.path + "\\" + seg : seg;
+      let c = n.dirs.find(d => d.path === p);
+      if(!c){ c = mkNode(p, seg); n.dirs.push(c); }
+      n = c;
+    }
+    for(const e of entries){
+      let m = n;
+      for(const seg of (e.dir || "").split("/").filter(Boolean)){
+        const p = m.path + "\\" + seg;
+        let c = m.dirs.find(d => d.path === p);
+        if(!c){ c = mkNode(p, seg); m.dirs.push(c); }
+        m = c;
+      }
+      m.files.push({ doc:e.doc, name:e.name, mt:e.mt, demo:!!e.demo, pin:!!e.pin });
+    }
+  }
+  (function sortRec(nd){
+    const cmp = (a, b) => a.name.localeCompare(b.name, "zh-Hans-CN", { numeric:true, sensitivity:"base" });
+    nd.dirs.sort(cmp); nd.files.sort(cmp); nd.dirs.forEach(sortRec);
+  })(root);
+  return root;
+}
+function vfsFind(nd, p){ if(nd.path === p) return nd; for(const d of nd.dirs){ const r = vfsFind(d, p); if(r) return r; } return null; }
+function nodeHasFiles(nd){ return nd.files.length > 0 || nd.dirs.some(nodeHasFiles); }
+function nodeCount(nd){ return nd.files.length + nd.dirs.reduce((s, c) => s + nodeCount(c), 0); }
+function scanRoot(nd){   // 打开文件夹 = 扫描其下全部 .md 登记、保留相对层级（真实程序 scan 语义）
+  const out = [];
+  (function walk(n, rel){
+    for(const f of n.files) out.push({ doc:f.doc, name:f.name, dir:rel, mt:f.mt, demo:f.demo, pin:f.pin });
+    for(const d of n.dirs) walk(d, rel ? rel + "/" + d.name : d.name);
+  })(nd, "");
+  return out;
+}
+const picker = { mode:"files", tree:null, node:null, back:[], fwd:[], selObj:null, topen:new Set(), fmt:0, q:"" };
+const PK_FMTS = [
+  { t:"所有支持的文件 (*.md; *.markdown; *.txt)", re:/\.(md|markdown|txt)$/i },
+  { t:"Markdown (*.md)", re:/\.md$/i },
+  { t:"文本文件 (*.txt)", re:/\.txt$/i },
+];
+function openPicker(mode, saveName, onSave){
+  picker.mode = mode; picker.tree = vfsTree(); picker.back = []; picker.fwd = [];
+  picker.selObj = null; picker.q = ""; picker.fmt = 0;
+  picker.saveName = saveName || ""; picker.onSave = onSave || null;
+  picker.topen = new Set([""]);
+  pkAncestors(libraryOpen ? LIB_ROOT : "").forEach(p => picker.topen.add(p));
+  $("pk-q").value = "";
+  $("pick-title").textContent = mode === "files" ? "打开" : mode === "save" ? "保存文档" : "选择文件夹";
+  $("pick-sub").textContent = mode === "files"
+    ? "演示磁盘 · 双击文件即打开 · 真实文件也可直接拖进窗口（正式版从硬盘选取）"
+    : mode === "save"
+      ? "选一个文件夹并填写文件名 · 同名会先问是否覆盖（原型为内存演示，正式版写入磁盘）"
+      : "选中装着文档的文件夹并打开 · 切换或关闭现有文件夹前都会先跟你确认";
+  $("pk-ok").textContent = mode === "files" ? "打开(O)" : mode === "save" ? "保存(S)" : "选择文件夹";
+  $("pk-fmt").hidden = mode !== "files";
+  pkGoto(mode === "save" && libraryOpen ? (vfsFind(picker.tree, LIB_ROOT) || picker.tree) : picker.tree, false);
+  if(mode === "save") $("pk-name").value = picker.saveName;
+  $("pick-overlay").classList.add("open");
+  $("pk-name").focus();
+}
+function closePicker(){ $("pk-fmtmenu").classList.remove("open"); $("pick-overlay").classList.remove("open"); }
+function pkAncestors(p){ const out = [""]; let acc = ""; for(const seg of (p ? p.split("\\") : [])){ acc = acc ? acc + "\\" + seg : seg; out.push(acc); } return out; }
+function pkGoto(nd, push){
+  if(push !== false){ if(picker.node && picker.node !== nd) picker.back.push(picker.node); picker.fwd = []; }
+  picker.node = nd; picker.selObj = null;
+  pkAncestors(nd.path).forEach(p => picker.topen.add(p));
+  pkRender();
+}
+function pkBack(){ if(!picker.back.length) return; const cur = picker.node, n = picker.back.pop(); picker.fwd.push(cur); pkGoto(n, false); }
+function pkFwd(){ if(!picker.fwd.length) return; const cur = picker.node, n = picker.fwd.pop(); picker.back.push(cur); pkGoto(n, false); }
+function pkUp(){ const p = picker.node.path, q = p.lastIndexOf("\\"); pkGoto(q < 0 ? picker.tree : (vfsFind(picker.tree, p.slice(0, q)) || picker.tree)); }
+function pkOkEnabled(){
+  const dirMode = picker.mode === "dir", sel = picker.selObj, txt = $("pk-name").value.trim();
+  if(picker.mode === "save") return !!txt && picker.node !== picker.tree;   // 保存必须有名字、且不能停在「此电脑」
+  return dirMode
+    ? (!!sel && sel.kind === "dir") || (!!picker.node.path && nodeHasFiles(picker.node))
+    : (!!sel && sel.kind === "file") || !!txt;
+}
+function pkRender(){
+  const nd = picker.node, dirMode = picker.mode === "dir";
+  const crumbs = ['<b data-p="">此电脑</b>'];
+  let acc = "";
+  for(const seg of (nd.path ? nd.path.split("\\") : [])){
+    acc = acc ? acc + "\\" + seg : seg;
+    crumbs.push('<i>›</i><b data-p="' + escapeHtml(acc) + '">' + escapeHtml(seg) + "</b>");
+  }
+  $("pk-path").innerHTML = crumbs.join("");
+  $("pk-back").classList.toggle("off", !picker.back.length);
+  $("pk-fwd").classList.toggle("off", !picker.fwd.length);
+  $("pk-up").classList.toggle("off", !nd.path);
+  $("pk-q").placeholder = "搜索 " + nd.name + "…";
+  pkRenderTree(); pkRenderList();
+  const sel = picker.selObj;
+  if(picker.mode !== "save")   // 保存模式：文件名是用户资产，跨目录导航不清空
+    $("pk-name").value = dirMode ? (sel && sel.kind === "dir" ? sel.key : nd.path) : (sel && sel.kind === "file" ? sel.name : "");
+  $("pk-fmt-t").textContent = PK_FMTS[picker.fmt].t;
+  $("pk-ok").disabled = !pkOkEnabled();
+}
+function pkRenderTree(){
+  const rows = [];
+  const row = (path, name, depth, hasKids, open) =>
+    '<div class="tf' + (picker.node && picker.node.path === path ? " on" : "") + '" data-tp="' + escapeHtml(path) +
+    '" tabindex="0" title="' + escapeHtml(path || "此电脑") + '" style="padding-left:' + (4 + depth * 12) + 'px">' +
+    (hasKids ? '<svg class="ico ico-12" data-tg="' + escapeHtml(path) + '" style="flex:none;cursor:pointer;color:var(--text-3)"><use href="' + (open ? "#i-chev-d" : "#i-chev-r") + '"/></svg>' : '<span style="width:16px;flex:none"></span>') +
+    '<svg class="ico ico-14 chev"><use href="#i-folder"/></svg><span class="nm">' + escapeHtml(name) + "</span></div>";
+  rows.push('<div class="pk-grp">快速访问</div>');
+  const recents = [libraryOpen ? LIB_ROOT : null, ...Object.keys(ROOT_LIB).filter(k => k !== LIB_ROOT)].filter(Boolean).slice(0, 4);
+  for(const p of recents){ const n = vfsFind(picker.tree, p); if(n) rows.push(row(p, n.name, 0, false, false)); }
+  rows.push('<div class="pk-grp">此电脑</div>');
+  (function walk(nd, depth){
+    const open = picker.topen.has(nd.path);
+    rows.push(row(nd.path, nd.name, depth, nd.dirs.length > 0, open));
+    if(open) for(const c of nd.dirs) walk(c, depth + 1);
+  })(picker.tree, 0);
+  $("pk-tree").innerHTML = rows.join("");
+}
+function pkRenderList(){
+  const nd = picker.node, dirMode = picker.mode === "dir";
+  const q = picker.q.toLowerCase(), re = PK_FMTS[picker.fmt].re;
+  const rows = [];
+  const mk = (kind, name, mt, demo, key) => {
+    const on = picker.selObj && picker.selObj.kind === kind && picker.selObj.key === key;
+    return '<div class="tf' + (kind === "dir" ? " dir" : "") + (demo ? " demo" : "") + (on ? " on" : "") +
+      (dirMode && kind === "file" ? " pk-off" : "") + '" data-k="' + kind + '" data-key="' + escapeHtml(key) +
+      '" tabindex="0" title="' + escapeHtml(key + (demo ? "（演示条目：内容未内置）" : "")) + '">' +
+      '<svg class="ico ico-14 chev"><use href="' + (kind === "dir" ? "#i-folder" : demo ? "#i-file-text" : "#i-md") + '"/></svg>' +
+      '<span class="nm">' + escapeHtml(name) + "</span>" + (demo ? '<span class="badge">演示</span>' : "") +
+      '<span class="mt">' + escapeHtml(kind === "dir" ? "" : mt || "") + "</span></div>";
+  };
+  for(const d of nd.dirs)
+    if(!q || d.name.toLowerCase().includes(q)) rows.push(mk("dir", d.name, "", false, d.path));
+  for(const f of nd.files){
+    if(q && !f.name.toLowerCase().includes(q)) continue;
+    if(picker.mode !== "dir" && !re.test(f.name)) continue;
+    rows.push(mk("file", f.name, f.mt, f.demo, nd.path + "\\" + f.name));
+  }
+  if(!rows.length)
+    rows.push('<div class="ol-empty">' + (q ? "没有找到与 “" + escapeHtml(picker.q) + "” 匹配的文件" : (dirMode ? "该文件夹下没有可登记的 Markdown" : "空文件夹")) + "</div>");
+  $("pk-list").innerHTML = rows.join("");
+}
+function pkPick(kind, key){
+  const nd = picker.node;
+  if(kind === "dir"){ const d = nd.dirs.find(x => x.path === key); if(d) picker.selObj = { kind, key, name:d.name, data:d }; }
+  else { const f = nd.files.find(x => nd.path + "\\" + x.name === key); if(f) picker.selObj = { kind, key, name:f.name, data:f }; }
+  pkRender();
+}
+function pkConfirm(){
+  if(picker.mode === "save"){
+    const nd = picker.node;
+    let name = ($("pk-name").value || "").trim().replace(/^"|"$/g, "");
+    if(!name || nd === picker.tree) return;
+    if(!/\.(md|markdown|txt)$/i.test(name)) name += ".md";
+    const dirPath = nd.path.replace(/[\\/]+$/, "");
+    const cb = picker.onSave;
+    const go = () => { closePicker(); if(cb) cb(dirPath, name); };
+    if(nd.files.some(f => f.name.toLowerCase() === name.toLowerCase())){
+      askRootq({ icon:"i-info", title:"确认覆盖", sub:"「" + name + "」在这个文件夹里已经存在。",
+        rows:[["保存位置", dirPath + "\\" + name]],
+        note:"保存会用当前编辑内容覆盖原文件，覆盖后原内容无法找回。点「取消」返回继续填写。",
+        ok:"覆盖保存", onOk: go });
+      return;
+    }
+    go(); return;
+  }
+  if(picker.mode === "dir"){
+    const sel = picker.selObj, txt = $("pk-name").value.trim();
+    let nd = null;
+    if(sel && sel.kind === "dir") nd = sel.data;
+    else if(txt && /^[A-Za-z]:/.test(txt)) nd = vfsFind(picker.tree, txt.replace(/\\+$/, ""));
+    else nd = picker.node;
+    if(!nd || nd === picker.tree || !nodeHasFiles(nd)){ toast("无法打开：该文件夹里没有 Markdown 文件"); return; }
+    closePicker(); chooseRoot(nd); return;
+  }
+  let doc = null, name = "";
+  const sel = picker.selObj;
+  if(sel && sel.kind === "file"){ doc = sel.data.doc; name = sel.data.name; }
+  else{
+    const txt = $("pk-name").value.trim();
+    if(!txt) return;
+    const hit = picker.node.files.find(f => f.name.toLowerCase() === txt.toLowerCase()) ||
+                picker.node.files.find(f => f.name.replace(/\.(md|markdown|txt)$/i, "").toLowerCase() === txt.toLowerCase());
+    if(!hit){ toast("找不到 “" + txt + "”。请检查文件名拼写，然后重试。"); return; }
+    doc = hit.doc; name = hit.name;
+  }
+  const inLib = libraryOpen && LIB.some(e => e.doc === doc);
+  closePicker();
+  openDoc(doc, true);
+  switchSide("outline");   // 2026-11-16：打开文件后自动回到大纲面板（与打开文件夹→切文档库对称）
+  if(!inLib) toast("已打开「" + name + "」— 它不在这个文件夹里，已记到「最近打开」");
+}
+$("pk-list").addEventListener("click", ev => {
+  const t = ev.target.closest(".tf[data-k]");
+  if(!t || t.classList.contains("pk-off")) return;
+  // 2026-11-16 需求：选择文件夹/保存对话框里「单击文件夹=进入展开」；打开文件仍 Windows 口径（单击选中、双击进入）
+  if(t.dataset.k === "dir" && (picker.mode === "dir" || picker.mode === "save")) pkEnter(t.dataset.key);
+  else if(t.dataset.k === "file" && picker.mode === "save"){ $("pk-name").value = t.querySelector(".nm").textContent; pkRender(); }
+  else pkPick(t.dataset.k, t.dataset.key);
+});
+$("pk-list").addEventListener("dblclick", ev => {
+  const t = ev.target.closest(".tf[data-k]");
+  if(!t || t.classList.contains("pk-off")) return;
+  if(t.dataset.k === "dir") pkGoto(vfsFind(picker.tree, t.dataset.key) || picker.tree);
+  else if(picker.mode === "save"){ $("pk-name").value = t.querySelector(".nm").textContent; pkConfirm(); }
+  else { pkPick("file", t.dataset.key); pkConfirm(); }
+});
+$("pk-list").addEventListener("keydown", ev => {
+  if(ev.key !== "Enter" && ev.key !== " ") return;
+  const t = ev.target.closest(".tf[data-k]");
+  if(!t || t.classList.contains("pk-off")) return;
+  ev.preventDefault();
+  if(ev.key === " "){ pkPick(t.dataset.k, t.dataset.key); return; }
+  if(t.dataset.k === "dir") pkGoto(vfsFind(picker.tree, t.dataset.key) || picker.tree);
+  else { pkPick("file", t.dataset.key); pkConfirm(); }
+});
+$("pk-tree").addEventListener("click", ev => {
+  const row = ev.target.closest(".tf[data-tp]");
+  if(!row) return;
+  const p = row.dataset.tp;
+  if(ev.target.closest("[data-tg]")){
+    if(picker.topen.has(p)) picker.topen.delete(p); else picker.topen.add(p);
+    pkRenderTree(); return;
+  }
+  const nd = vfsFind(picker.tree, p);
+  if(nd) pkGoto(nd);
+});
+$("pk-path").addEventListener("click", ev => {
+  const b = ev.target.closest("b[data-p]");
+  if(b) pkGoto(vfsFind(picker.tree, b.dataset.p) || picker.tree);
+});
+$("pk-up").addEventListener("click", pkUp);
+$("pk-back").addEventListener("click", pkBack);
+$("pk-fwd").addEventListener("click", pkFwd);
+$("pk-ok").addEventListener("click", pkConfirm);
+$("pk-cancel").addEventListener("click", closePicker);
+$("pick-close").addEventListener("click", closePicker);
+$("pk-name").addEventListener("input", () => { $("pk-ok").disabled = !pkOkEnabled(); });
+$("pk-name").addEventListener("keydown", ev => {
+  if(ev.key === "Enter"){ ev.preventDefault(); pkConfirm(); }
+});
+$("pk-q").addEventListener("input", () => { picker.q = $("pk-q").value.trim(); pkRender(); });
+$("pk-fmt").addEventListener("click", ev => {
+  ev.stopPropagation();
+  $("pk-fmtmenu").innerHTML = PK_FMTS.map((f, i) =>
+    '<div class="mi" data-i="' + i + '"><span class="ck"' + (i === picker.fmt ? "" : ' style="visibility:hidden"') + '></span><span class="t">' + f.t + "</span></div>").join("");
+  $("pk-fmtmenu").classList.toggle("open");
+});
+$("pk-fmtmenu").addEventListener("click", ev => {
+  const m = ev.target.closest(".mi");
+  if(!m) return;
+  picker.fmt = +m.dataset.i;
+  $("pk-fmtmenu").classList.remove("open");
+  pkRender();
+});
+document.addEventListener("click", ev => {
+  if(!ev.target.closest("#pk-fmtmenu") && !ev.target.closest("#pk-fmt")) $("pk-fmtmenu").classList.remove("open");
+});
+
+// ── 询问框（切换/关闭库共用；取消·✕·点遮罩·Esc 一律零副作用）──
+let rootqOnOk = null;
+function askRootq(o){
+  $("rootq-title").textContent = o.title;
+  $("rootq-sub").textContent = o.sub;
+  $("rootq-icon").setAttribute("href", "#" + (o.icon || "i-folder"));
+  $("rootq-body").innerHTML =
+    o.rows.map(r => '<div class="krow"><span style="color:var(--text-3)">' + escapeHtml(r[0]) +
+      '</span><span class="sp"></span><code style="font-family:var(--font-mono);font-size:11.5px;color:var(--text);text-align:right;min-width:0;word-break:break-all">' +
+      escapeHtml(r[1]) + "</code></div>").join("") +
+    '<div style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-2);font-size:11.5px;color:var(--text-3);line-height:1.9">' +
+      escapeHtml(o.note) + "</div>";
+  $("rootq-ok").textContent = o.ok;
+  rootqOnOk = o.onOk;
+  $("rootq-overlay").classList.add("open");
+  $("rootq-cancel").focus();
+}
+function cancelRootq(){ $("rootq-overlay").classList.remove("open"); rootqOnOk = null; }
+$("rootq-ok").addEventListener("click", () => { const fn = rootqOnOk; cancelRootq(); if(fn) fn(); });
+$("rootq-cancel").addEventListener("click", cancelRootq);
+$("rootq-close").addEventListener("click", cancelRootq);
+
+// ── 库的打开 / 切换 / 关闭（replace_root：同时只允许一个库）──
+function libChipRender(){
+  const chip = $("lib-root-chip");
+  if(!chip) return;
+  chip.classList.toggle("empty", !libraryOpen);
+  chip.querySelector(".rp").textContent = libraryOpen ? LIB_ROOT : "未打开文件夹 · 点击选择…";
+  chip.title = libraryOpen
+    ? LIB_ROOT + "\n当前库 · 点击选择文件夹切换到另一个库（同时只保留一个库）"
+    : "点击选择一个文件夹打开";
+  $("lib-rescan").hidden = $("lib-close").hidden = !libraryOpen;
+}
+function syncHistBadges(){   // 库成员徽标随成员身份走：出库的历史条目摘掉「库」pill（schema v3 语义可视化）
+  document.querySelectorAll("#history-list .tf[data-doc]").forEach(el => {
+    const member = libraryOpen && LIB.some(e => e.doc === el.dataset.doc);
+    const libB = [...el.querySelectorAll(".badge")].find(x => x.textContent === "库");
+    if(member && !libB && !el.classList.contains("demo")){
+      const b = document.createElement("span");
+      b.className = "badge"; b.textContent = "库";
+      const mt = el.querySelector(".mt");
+      if(mt) el.insertBefore(b, mt); else el.appendChild(b);
+    }else if(!member && libB) libB.remove();
+  });
+}
+function chooseRoot(nd){
+  const path = nd.path;
+  if(libraryOpen && path === LIB_ROOT){ toast("「" + libLeaf(path) + "」已经是当前打开的文件夹；想刷新文件列表，点框右侧的 ⟳ 就行"); return; }
+  if(!libraryOpen){ applyRoot(nd, null); return; }   // 无旧库：没有新旧对照，不弹「切换」确认（弹窗两路径才有价值）
+  askRootq({
+    icon:"i-folder-open", title:"切换文件夹", sub:"同一时间只打开一个文件夹",
+    rows:[["现在的文件夹", LIB_ROOT + "（" + LIB.length + " 篇）"], ["要切换到的文件夹", path + "（里面有 " + scanRoot(nd).length + " 篇）"]],
+    note:"切换后列表只显示新文件夹里的文档。原文件夹的文件不会被删除，进度也都保留，以后在「最近打开」里仍能找到；重新选回原文件夹即可恢复。点「取消」什么都不会变。",
+    ok:"切换文件夹", onOk:() => applyRoot(nd, LIB_ROOT) });
+}
+function applyRoot(nd, oldPath){
+  const oldN = libraryOpen ? LIB.length : 0;
+  LIB_ROOT = nd.path; libraryOpen = true;
+  const entries = scanRoot(nd);
+  ROOT_LIB[LIB_ROOT] = entries;
+  LIB.length = 0; for(const e of entries) LIB.push(e);
+  for(const k in dirOpen) delete dirOpen[k];
+  libChipRender(); renderLib(); syncHistBadges();
+  switchSide("library");   // 2026-11-16：打开/切换文件夹后自动切到文档库面板，让结果立刻可见
+  toast(oldPath ? "已切换到文件夹「" + libLeaf(LIB_ROOT) + "」（" + LIB.length + " 篇）；「" + libLeaf(oldPath) +
+    "」的 " + oldN + " 篇没有删除，可在「最近打开」里继续读"
+    : "已打开文件夹「" + libLeaf(LIB_ROOT) + "」：共 " + LIB.length + " 篇文档");
+}
+
+// ── 全局快捷键 ──
+document.addEventListener("keydown", ev => {
+  const t = ev.target;
+  const typing = t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable);
+  const mod = ev.ctrlKey || ev.metaKey;
+  if(mod && (ev.key === "q" || ev.key === "Q")){
+    // N6：菜单标注了 Ctrl+Q 就必须接管（个别浏览器组合键优先级更高，正式版由 Tauri 全局注册）
+    ev.preventDefault(); toast("退出由 Tauri 接管（原型内仅演示）"); return;
+  }
+  // 编辑器 / 筛选框聚焦时：只放行 Ctrl+S、Ctrl+E、Ctrl+F/K、Esc；Home、Alt 系列、Ctrl+/ 等一律不穿透
+  if(typing){
+    if(mod && (ev.key === "s" || ev.key === "S")){
+      ev.preventDefault();   // N7：在筛选框打字时 Ctrl+S 也不许落到浏览器「保存网页」
+      if(state.mode === "edit") saveEdit();
+      else toast("当前处于阅读模式 · Ctrl+E 进入编辑后可保存");
+      return;
+    }
+    if(mod && (ev.key === "e" || ev.key === "E")){ ev.preventDefault(); toggleEdit(); return; }
+    if(mod && (ev.key === "f" || ev.key === "F" || ev.key === "k" || ev.key === "K")){
+      ev.preventDefault(); openSearch(); return;   // 「查找」肌肉记忆保留，焦点移入搜索层
+    }
+    if(ev.key !== "Escape") return;
+    if(state.mode === "edit" && t === editor){ ev.preventDefault(); discardEdit(); return; }
+  }
+  if(ev.key === "Escape"){
+    // 规范裁决链：菜单 → 设置浮窗 → 询问框（Esc=取消，零副作用）→ 选择对话框 → 其余弹层 → 高亮 → 专注
+    if(menuBs.some(b => b.classList.contains("open"))){ closeMenus(); return; }
+    if(document.body.classList.contains("settings-open")){ closeSettings(); return; }
+    if($("rootq-overlay").classList.contains("open")){ cancelRootq(); return; }
+    if($("pick-overlay").classList.contains("open")){ closePicker(); return; }
+    for(const id of ["search-overlay", "info-overlay", "keys-overlay", "about-overlay", "imgbox"]){
+      if($(id).classList.contains("open")){ $(id).classList.remove("open"); if(id === "search-overlay") clearHighlights(); return; }
+    }
+    if(!$("hitnav").hidden){ clearHighlights(); return; }   // Esc 统一清除搜索高亮
+    if(winEl.classList.contains("focus")){ toggleFocus(); return; }  // 专注模式的一级退出口
+    return;
+  }
+  if(mod && (ev.key === "n" || ev.key === "N")){
+    ev.preventDefault(); newDocDemo(); return;
+  }
+  if(mod && (ev.key === "o" || ev.key === "O")){
+    ev.preventDefault(); openPicker("files");
+  }else if(mod && (ev.key === "f" || ev.key === "F" || ev.key === "k" || ev.key === "K")){
+    ev.preventDefault(); openSearch();
+  }else if(mod && (ev.key === "e" || ev.key === "E")){
+    ev.preventDefault(); toggleEdit();
+  }else if(mod && (ev.key === "s" || ev.key === "S")){
+    ev.preventDefault();   // 阅读态也拦截，避免浏览器弹「保存网页」对话框
+    if(state.mode === "edit") saveEdit();
+    else toast("当前处于阅读模式 · Ctrl+E 进入编辑后可保存");
+  }else if(mod && ev.key === "/"){
+    ev.preventDefault(); openKeys();
+  }else if(ev.key === "F3"){
+    ev.preventDefault();
+    if(!$("hitnav").hidden) stepHit(ev.shiftKey ? -1 : 1);
+  }else if(ev.key === "Enter" && t === document.body && !$("hitnav").hidden){
+    ev.preventDefault(); stepHit(ev.shiftKey ? -1 : 1);
+  }else if(ev.altKey && ev.key === "ArrowLeft"){
+    ev.preventDefault(); goBack();
+  }else if(ev.altKey && ev.key === "ArrowRight"){
+    ev.preventDefault(); goForward();
+  }else if(ev.altKey && ev.key === "ArrowUp"){
+    ev.preventDefault(); jumpSection(-1);
+  }else if(ev.altKey && ev.key === "ArrowDown"){
+    ev.preventDefault(); jumpSection(1);
+  }else if(ev.key === "Home"){
+    ev.preventDefault(); scrollArea.scrollTo({ top: 0, behavior: "smooth" });
+  }
+});
+
+// ── 启动（对应正式版：恢复上次会话） ──
+applyPrefs();
+libChipRender(); syncHistBadges();   // chip 与历史「库」徽标按当前库状态对齐
+const posMap = store.get("folio-pos-map", {});
+const legacyPos = store.get("folio-pos", null);   // 迁移旧版「仅最后一个文档」的位置记录
+if(legacyPos && DOCS[legacyPos.doc] && !posMap[legacyPos.doc]){
+  posMap[legacyPos.doc] = { ratio: legacyPos.ratio, sec: legacyPos.sec, secOff: 0 };
+  store.set("folio-pos-map", posMap);
+}
+// 深度链接演示：地址栏 hash 形如 #doc=rust&sec=2. 借用与引用（对应正式版 folio:// URI）
+function applyHashLink(){
+  const raw = location.hash.replace(/^#/, "");
+  if(!raw) return false;
+  const p = {};
+  for(const kv of raw.split("&")){
+    const j = kv.indexOf("=");
+    if(j > 0) p[kv.slice(0, j)] = decodeURIComponent(kv.slice(j + 1).replace(/\+/g, " "));
+  }
+  const doc = DOCS[p.doc];
+  if(!(doc && doc.src)) return false;
+  renderDoc(p.doc, p.sec ? { sec: p.sec } : {});
+  pushHist({ doc: p.doc, sec: p.sec || null });
+  toast(p.sec ? "深度链接：已打开并定位到「" + p.sec + "」" : "深度链接：已打开 " + doc.file);
+  return true;
+}
+// N11：导入过的文档从 localStorage 缓存恢复（原型级「入库」，刷新仍在）
+for(const [id, d] of Object.entries(store.get("folio-imports", {}))){
+  if(!DOCS[id] && d && d.src){
+    DOCS[id] = d;
+    let rel = (d.dir || "").replace(/\//g, "\\");           // DOCS.dir 存绝对路径；挂树要库根相对段
+    if(!rel || rel === "导入") rel = "";
+    else if(rel.toLowerCase().startsWith(LIB_ROOT.toLowerCase() + "\\")) rel = rel.slice(LIB_ROOT.length + 1);
+    addLibEntry(id, d.file, (rel ? rel + "\\" : "") + d.file);
+  }
+}
+let startDoc = null;
+const lastDoc = store.get("folio-last-doc", null);
+if(lastDoc && DOCS[lastDoc] && DOCS[lastDoc].src) startDoc = lastDoc;
+else for(const k of Object.keys(posMap)){ if(DOCS[k] && DOCS[k].src){ startDoc = k; break; } }
+if(!startDoc) startDoc = "guide";
+if(!applyHashLink()){
+  renderDoc(startDoc, { resume: true });
+  pushHist({ doc: startDoc, sec: null });
+}
+// N18：预演正式版「运行中收到 folio:// 唤起」——hashchange 实时定位
+window.addEventListener("hashchange", () => applyHashLink());
+window.addEventListener("resize", () => { state.activeSec = null; updateActive(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<title>Folio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+  /* 首帧防闪白（主题恢复前与深色窗口底色一致） */
+  html, body, #root { height: 100%; margin: 0; background: #080D18; }
+  /* 启动骨架（性能 P0-1）：纯 HTML/CSS，窗口出现即有画面，零 JS、零请求；
+   * 移除时机由应用代码控制（src/lib/boot.ts），淡出后不挡首帧探针（.sub）判定。 */
+  #boot-splash { position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center;
+    background: #080D18; color: #C7D2E4; transition: opacity .4s ease; }
+  #boot-splash.gone { opacity: 0; pointer-events: none; }
+  .bs { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .bs-logo { width: 64px; height: 64px; border-radius: 16px; display: grid; place-items: center;
+    background: linear-gradient(150deg, #2DD4BF 0%, #14B8A6 100%); color: #052B26;
+    font: 700 30px/1 "Segoe UI", system-ui, sans-serif; box-shadow: 0 10px 34px rgba(45, 212, 191, .16); }
+  .bs-name { font: 600 15px/1 "Segoe UI", system-ui, sans-serif; letter-spacing: 3px; text-transform: uppercase; }
+  .bs-hint { font: 400 12px/1 "Segoe UI", system-ui, sans-serif; opacity: .55; }
+  .bs-bar { width: 148px; height: 2px; border-radius: 1px; background: rgba(199, 210, 228, .14); overflow: hidden; }
+  .bs-bar i { display: block; width: 40%; height: 100%; border-radius: 1px; background: #2DD4BF;
+    animation: bs-slide 1.15s cubic-bezier(.4, 0, .6, 1) infinite; }
+  @keyframes bs-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(275%); } }
+  @media (prefers-reduced-motion: reduce) { .bs-bar i { animation: none; width: 100%; opacity: .55; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="boot-splash" aria-hidden="true">
+  <div class="bs">
+    <div class="bs-logo">F</div>
+    <div class="bs-name">Folio</div>
+    <div class="bs-hint">正在打开文档…</div>
+    <div class="bs-bar"><i></i></div>
+  </div>
+</div>
+<!-- MathJax v3（vendored 3.2.2，es5/tex-svg-full.js）：不进 vite bundle，<script> 直挂全局，
+     由 src/lib/mathjax.ts 消费（同 highlight.js vendored 先例）。defer 不阻塞首屏；
+     config.js 在前、库在后，defer 文档序保证配置先生效。库缺失时公式块退化为 <pre> 源码（不白屏）。 -->
+<script defer src="/vendor/mathjax/config.js"></script>
+<script defer src="/vendor/mathjax/tex-svg-full.js"></script>
+<script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+# ============================================================
+# Folio · .gitignore
+# 结构：prototype/（交互原型+冒烟测试）  source/（Tauri 正式版）
+#       docs/（PRD/评审）  README.md
+# ============================================================
+
+# ---------- 构建产物与依赖（一律不入仓） ----------
+# Rust：workspace 编译输出（source/target 为唯一 target 目录）
+target/
+# Node：依赖（source/ 与 prototype/_smoke/ 各有一份 node_modules）
+node_modules/
+# Vite 构建输出与缓存（tauri.conf frontendDist=../dist）
+dist/
+.vite/
+*.tsbuildinfo
+
+# ---------- Tauri 构建期生成物 ----------
+# gen/schemas 每次 build 重生成；capabilities/default.json 是手写清单，入库
+source/src-tauri/gen/
+# `tauri icon` 一次生成全平台图标。本项目 Windows-only + NSIS：
+# 入库 icon.png（1024 源图）/ icon.ico / 32x32 / 128x128(@2x)；
+# 移动端与 MSIX 商店图不入库（本地 `tauri icon` 可复现）。
+# 本项目没有图标生成脚本，icon.png 是全套图标的唯一源图，必须入库！
+source/src-tauri/icons/android/
+source/src-tauri/icons/ios/
+source/src-tauri/icons/*.icns
+source/src-tauri/icons/StoreLogo.png
+source/src-tauri/icons/Square*Logo.png
+source/src-tauri/icons/64x64.png
+
+# ---------- 运行期本地数据 ----------
+# 正式版 SQLite 位于 %APPDATA%（app.folio.desktop）；调试时若相对路径落库，在此拦截
+# （rusqlite WAL 模式，见 folio-db/schema.rs → 三件套都要挡）
+*.db
+*.db-wal
+*.db-shm
+logs/
+*.log
+
+# ---------- 无 git 时代的历史快照（git 历史接管回滚职能后不再入仓） ----------
+# 模式不带前导斜杠 = 匹配任意深度同名目录（source/backups、prototype/_smoke/backup 一并盖住）
+# backup/   = 整工程 robocopy 快照（65M）
+backup/
+# backups/  = 单文件 .pre-* 备份（根 19M + source/backups；其文件名无 .bak 后缀，*.bak 挡不住）
+backups/
+# 原型逐轮快照 + prototype.backup.html 基线（5M/39 件）
+prototype/snapshot/
+
+# ---------- 一次性取证/探针产物（CDP 截图、dump、临时图） ----------
+artifacts/
+source/_*.png
+source/_*.txt
+source/sync_*.png
+source/final.png
+source/fold.png
+prototype/_*.png
+_webview_shot.png
+
+# ---------- 发号游标（bump-build.cjs 每次构建重写；缺文件时从 ANCHOR 自动重建，忽略安全） ----------
+source/.build
+source/.build-version
+source/.build.lock/
+
+# ---------- IDE / 编辑器本地状态 ----------
+.vs/
+.claude/settings.local.json
+
+# ---------- md 文档一律不入仓（README 例外） ----------
+# PRD、UI 规范、评审记录（docs/、prototype/review/）、修改/审查/性能报告、
+# CLAUDE.md、assets 测试语料等，只留本地。
+# 注：被忽略目录（node_modules/target 等）内的 README 不会因此回流——父目录排除优先生效。
+*.md
+!README.md
+# 以下三枚不是文档，是构建输入（api.ts 的 ?raw import / lib.rs 的 include_str!），删了编译即断：
+!source/src/assets/guide.md
+!source/src/assets/rust-notes.md
+!source/src/assets/welcome.md
+
+# ---------- 临时文件与系统杂项 ----------
+*.tmp
+*.bak
+~$*
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.vscode/
+
+# ---------- 刻意入库、勿加忽略（防手滑） ----------
+# source/public/vendor/**                —— MathJax/Mermaid 离线打包（5.6M），运行时硬依赖，必须入库
+#                                          （已在 .gitattributes 标 linguist-generated，不计语言、折叠 diff）
+# prototype/_smoke/smoke.js / package.json / package-lock.json —— 冒烟脚本本体（其下 backup/ 已被模式盖住）
+# source/_cdp_*.mjs / prototype/_gen*.py —— 探针与生成脚本是复用工具（CLAUDE.md 取证流程引用），入库；
+#                                          它们的输出（png/txt/log）才忽略
+# source/Cargo.lock / source/package-lock.json / prototype/_smoke/package-lock.json
+#                                        —— 应用类工程锁定依赖，随仓提交
+# source/src-tauri/capabilities/default.json —— 手写权限清单，入库
+# source/src-tauri/icons/icon.png        —— 全套图标唯一源图（见上方说明）
+# 注①：旧注释中「prototype.backup.html / prototype.snapshot-*.html 留档入库」已废止——
+#      git 历史即回滚点，快照目录改入上方忽略区（文件仍在本地，不入仓）。
+# 注②：旧注释「docs/ 全部入库」亦废止（2026-11-16 需求方决定：README 之外的 md 一律不入仓）。
+# 安装包（target/release/bundle/{nsis,msi}）随 target/ 一起不入库——发布走 GitHub Release 附件。

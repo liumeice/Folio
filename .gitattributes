@@ -1,0 +1,50 @@
+# ============================================================
+# Folio · .gitattributes
+# 实测本仓现存文件（源码/文档/原型/快照）全部为 LF —— 统一 LF。
+# md/docs 不做 eol=crlf 特化：首次 checkout 批量改写文档换行会污染
+# 逐行 diff；且本项目文档正是 Folio 自己/浏览器的阅读对象，LF 无兼容问题。
+# 尚未 git init，规则自始生效，无迁移成本。
+# ============================================================
+
+# 默认：自动识别文本；入库与检出统一 LF
+* text=auto eol=lf
+
+# 核心语言显式声明（防未来混入 CRLF 字节）
+*.rs    text eol=lf
+*.toml  text eol=lf
+*.json  text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.md    text eol=lf
+*.svg   text eol=lf
+# shell/脚本类必须 LF：CRLF 会让 release.sh / bump-build.cjs 在部分解释器下报错
+*.sh    text eol=lf
+*.cjs   text eol=lf
+
+# 二进制：禁换行转换、禁文本 diff
+*.png    binary
+*.ico    binary
+*.icns   binary
+*.woff   binary
+*.woff2  binary
+*.db     binary
+*.sqlite binary
+*.zip    binary
+*.exe    binary
+*.msi    binary
+*.pdf    binary
+*.dll    binary
+*.pdb    binary
+
+# 第三方离线打包库：入库（运行时硬依赖）但 GitHub 视为生成代码——不计语言占比、diff 默认折叠
+source/public/vendor/** linguist-generated=true
+
+# 原型留档快照（prototype/snapshot/、backup/、backups/）已整体不入仓（git 历史即回滚点），
+# 原针对根目录快照文件的显式 text 规则成为死规则，已删。
+
+# NSIS 定制脚本：1.x 若引入 .nsh 覆盖模板再启用（老 makensis 对 CRLF 更稳）
+# *.nsh text eol=crlf

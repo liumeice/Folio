@@ -1,0 +1,11 @@
+[package]
+name = "folio-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Folio 领域模型、错误类型与公共工具（无 IO 依赖）"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true

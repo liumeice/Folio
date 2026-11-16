@@ -1,0 +1,10 @@
+[package]
+name = "folio-search"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "查询规划（FTS5 trigram 与 LIKE 兜底）与片段构造"
+
+[dependencies]
+folio-core.workspace = true

@@ -1,0 +1,33 @@
+{
+  "name": "folio-desktop",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test --test-concurrency=1 tests/md.test.ts tests/nav.test.ts tests/libtree.test.ts tests/mdstyle.test.ts tests/typography.test.ts tests/settings-spec.test.ts tests/layout.test.ts tests/codehl.test.ts tests/formula.test.ts tests/html.test.ts",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@tauri-apps/api": "^2.1.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-opener": "^2.2.0",
+    "codemirror": "^6.0.1",
+    "highlight.js": "^11.12.0",
+    "solid-js": "^1.9.3"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "jsdom": "^31.0.1",
+    "typescript": "~5.8.2",
+    "vite": "^6.0.0",
+    "vite-plugin-solid": "^2.11.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
