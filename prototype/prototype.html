@@ -571,6 +571,8 @@ svg{display:block}
 .about-stack .tag{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;
   border-radius:11px;font-size:11.5px;background:var(--accent-bg);color:var(--accent);font-weight:550}
 .about-stack .tag.plain{background:var(--bg-side);color:var(--text-2);border:1px solid var(--line)}
+.about-repo{color:var(--accent);cursor:pointer;text-decoration:none}
+.about-repo:hover{text-decoration:underline}
 
 /* ---- 文件/目录选择对话框（仿 Windows 通用对话框版式 · .modal 家族派生 · 不调起系统原生窗口）---- */
 .pk-b{display:flex;flex-direction:column;gap:8px}
@@ -1128,6 +1130,7 @@ body.settings-open .st-view{display:flex}
         <span class="tag plain">Vitest · Playwright</span>
       </div>
       <div style="margin-top:16px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-2);font-family:var(--font-mono);font-size:11px;color:var(--text-3)">
+        GitHub：<a class="about-repo" href="https://github.com/liumeice/Folio" target="_blank" rel="noopener">github.com/liumeice/Folio</a><br>
         深度链接：<span style="color:var(--accent)">folio://open?doc=guide&amp;sec=…</span><br>
         单实例 · WebView2 · 全文索引 342 篇（演示数据）
       </div>

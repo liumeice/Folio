@@ -62,6 +62,21 @@ export function AboutModal() {
     ["Tauri 2.11", false], ["Rust workspace", true], ["SolidJS 1.9", true],
     ["TypeScript 5.8", true], ["CodeMirror 6", true], ["SQLite + FTS5", true], ["Vite 6", true],
   ];
+  /* 打开仓库主页：Tauri 下走 opener 插件交系统默认浏览器（同 Reader.openExternal 范式，
+   * WebView2 里 target=_blank 不会自己出去，必须 preventDefault + openUrl） */
+  const REPO_URL = "https://github.com/liumeice/Folio";
+  async function openRepo() {
+    if (isTauri) {
+      try {
+        const { openUrl } = await import("@tauri-apps/plugin-opener");
+        await openUrl(REPO_URL);
+      } catch {
+        s.toast("打开外链失败");
+      }
+    } else {
+      window.open(REPO_URL, "_blank", "noopener");
+    }
+  }
   return (
     <OverlayShell id="about-overlay" mid open={ui.aboutOpen()} onClose={() => ui.setAboutOpen(false)}>
       <div class="modal" style={{ width: "440px" }}>
@@ -80,6 +95,8 @@ export function AboutModal() {
             <For each={tags}>{([t, plain]) => <span class={plain ? "tag plain" : "tag"}>{t}</span>}</For>
           </div>
           <div style={{ "margin-top": "16px", padding: "10px 12px", border: "1px solid var(--line)", "border-radius": "var(--r-2)", "font-family": "var(--font-mono)", "font-size": "11px", color: "var(--text-3)" }}>
+            GitHub：<a class="about-repo" href={REPO_URL} target="_blank" rel="noopener"
+              onClick={(e) => { e.preventDefault(); openRepo(); }}>github.com/liumeice/Folio</a><br />
             深度链接：<span style={{ color: "var(--accent)" }}>folio://open?doc=&lt;slug&gt;&amp;sec=…</span><br />
             {isTauri ? "单实例 · WebView2 · " + s.docs().length + " 篇已索引" : "浏览器演示环境（Rust 未接入，localStorage 模拟）"}
           </div>

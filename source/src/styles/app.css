@@ -392,6 +392,9 @@ svg{display:block}
 .about-stack .tag{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;
   border-radius:11px;font-size:11.5px;background:var(--accent-bg);color:var(--accent);font-weight:550}
 .about-stack .tag.plain{background:var(--bg-side);color:var(--text-2);border:1px solid var(--line)}
+/* 关于对话框 GitHub 仓库链接（与原型 .about-repo 同步） */
+.about-repo{color:var(--accent);cursor:pointer;text-decoration:none}
+.about-repo:hover{text-decoration:underline}
 
 /* ── 统一通知 toast（需求方规范 2026-11-16：所有提示不得出现在窗口底沿）──
  * 此前 .toast-zone 没有任何定位样式 → 按 DOM 顺序堆在窗口底部。现钉窗口顶部居中悬浮。 */
