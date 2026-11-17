@@ -3,6 +3,7 @@ import { For, Show } from "solid-js";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
 import { escapeHtml } from "../lib/md";
+import { countWords } from "../lib/wordcount";
 import { api, isTauri } from "../lib/api";
 import { revealInFolder, confirmBox, pickFolderAndScan } from "../lib/actions";
 import { APP_VERSION, IS_DEV } from "../lib/version";
@@ -121,6 +122,15 @@ export function CopyPop() {
   );
 }
 
+/* 导出 PDF 进行中浮层（FR-13.2）：顶部居中（与 toast 同位，pointer-events:none），兼互斥指示 */
+export function ExportBusy() {
+  return (
+    <Show when={ui.exportBusy()}>
+      <div class="exporting" role="status"><span class="spin" aria-hidden="true" />正在导出 PDF…</div>
+    </Show>
+  );
+}
+
 export function PropsModal() {
   const s = useStore();
   const cur = () => s.current();
@@ -138,7 +148,7 @@ export function PropsModal() {
     return [
       ["路径", c.meta.path],
       ["大小", (c.meta.size / 1024).toFixed(1) + " KB"],
-      ["字数", c.meta.wordCount.toLocaleString() + " 字（源文本口径）"],
+      ["字数", countWords(c.src).toLocaleString() + " 字（正文口径 · 不含公式/图表源码）"],
       ["小节 / 标题", c.meta.secCount + " 节 / " + c.outline.length + " 条"],
       ["编码", "UTF-8"],
       ["修改时间", new Date(c.meta.mtime * 1000).toLocaleString()],

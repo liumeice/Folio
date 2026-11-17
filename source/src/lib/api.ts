@@ -8,6 +8,7 @@ import type {
 import { DEFAULT_SETTINGS } from "./defaults";
 import { RANGE, clampNum } from "./typography";
 import { headingMatch, isFenceLine } from "./md";
+import { countWords } from "./wordcount";
 
 /** 「此电脑」虚拟节点的路径哨兵（与 folio-fs::MY_PC 一致） */
 export const MY_PC = "::my-pc";
@@ -123,6 +124,39 @@ async function saveFileAs(defaultName: string, content: string): Promise<string 
   URL.revokeObjectURL(url);
   return "downloaded";
 }
+/* 导出 PDF（FR-13.2）。保存路径用系统 save 对话框——与设置导出/HTML 导出同口径
+ * （去原生化轮明确保留的「系统集成例外」场景）；浏览器回退层没有磁盘路径概念，给假路径。 */
+async function apiPickSavePath(defaultName: string, kind: "pdf" | "html" = "pdf"): Promise<string | null> {
+  if (isTauri) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const path = await save({
+      defaultPath: defaultName,
+      filters: kind === "pdf" ? [{ name: "PDF", extensions: ["pdf"] }] : [{ name: "HTML", extensions: ["html"] }],
+    });
+    return typeof path === "string" ? path : null;
+  }
+  return "browser://" + defaultName;
+}
+
+/* FR-13.1 图片随行：导出 HTML 时把正文引用的一切图片实体化到 <HTML 同级>/images/。
+ * file=本地磁盘绝对路径（hydrate 留痕 data-folio-local），url=http(s) 直连下载（绕开
+ * webview CSP——connect-src 只放行 IPC，前端 fetch 远程图必被拦；下载在 Rust reqwest 侧）。
+ * name=null 表示该图落盘失败（前端保留原始 src 兜底展示）。浏览器回退层无磁盘目录概念，返回空表。 */
+export interface ImageRef { source: string; kind: "file" | "url" }
+async function apiExportImages(htmlPath: string, items: ImageRef[]):
+  Promise<Record<string, string | null>> {
+  if (!isTauri || !items.length) return {};
+  const rows = await invoke<{ source: string; name: string | null }[]>("export_images", { htmlPath, items });
+  return Object.fromEntries(rows.map((r) => [r.source, r.name]));
+}
+/** 当前阅读视图 → PDF（含书签）。正式行为在 Rust：WebView2 进程内 CDP `Page.printToPDF`
+ *  （generateDocumentOutline）；`bgColor`=#RRGGBB=阅读窗底色——导出期间临时成为 WebView2 页面
+ *  衬底（页边距环带只认衬底，CSS 管不到，2026-11-17 二分实测）。浏览器回退层用 window.print() 近似。 */
+async function apiExportPdf(path: string, bgColor: string): Promise<void> {
+  if (isTauri) { await invoke("export_pdf", { path, bgColor }); return; }
+  window.print();
+}
+
 async function apiToggleTask(path: string, nth: number): Promise<DocFull> {
   return isTauri ? invoke("toggle_task", { path, nth }) : mock.toggleTask(path, nth);
 }
@@ -338,7 +372,7 @@ function headingsOf(src: string) {
 function statsOf(src: string) {
   const hs = headingsOf(src);
   return {
-    wordCount: src.replace(/\s/g, "").length,
+    wordCount: countWords(src), // 正文口径：公式/图表块不计（2026-11-17 需求定夺，Rust stats 同规则）
     headCount: hs.length,
     secCount: hs.filter((h) => h.level >= 2).length,
   };
@@ -733,6 +767,9 @@ export const api = {
   listRoots: apiListRoots,
   removeRoot: apiRemoveRoot,
   saveFileAs,
+  pickSavePath: apiPickSavePath,
+  exportImages: apiExportImages,
+  exportPdf: apiExportPdf,
   toggleTask: apiToggleTask,
   scanFolder: apiScanFolder,
   search: apiSearch,

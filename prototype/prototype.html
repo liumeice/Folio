@@ -311,8 +311,9 @@ svg{display:block}
 .prose h5,.prose h6{font-family:var(--font-ui);font-size:12.5px;font-weight:650;
   margin:16px 0 6px;color:var(--text-2);scroll-margin-top:60px}
 .prose p{margin:0 0 var(--prose-para,15px)}
+/* 阅读窗图片一律水平居中（需求方 2026-11-17，正式版 app.css 同规则；多图横行的 imgrow 为正式版能力，原型未演示） */
 .prose img{max-width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:10px;
-  margin:8px 0 6px;cursor:zoom-in}
+  margin:8px auto 6px;cursor:zoom-in}
 .prose a{color:var(--accent);text-decoration:underline;
   text-decoration-color:color-mix(in srgb,var(--accent) 40%,transparent);text-underline-offset:3px}
 .prose strong{font-weight:700}
@@ -741,6 +742,27 @@ body.settings-open .st-view{display:flex}
 #article.density-compact th,#article.density-compact td{padding:5px 11px}
 #article.density-loose th,#article.density-loose td{padding:13px 17px}
 
+/* ── 导出 PDF（FR-13.2）打印版式：与正式版 app.css `@media print` 同源口径 ──
+ * ① 拆滚动链（.view 的 overflow 不放开正文会被裁成视口高）；② 窗口壳与浮层全隐；
+ * ③ 版心放开到纸宽（禁止横向分页）；④ 主题色忠实（print-color-adjust:exact + 正式版 printBackground）；
+ * ⑤ 标题不落页尾、块级对象不拦腰斩；⑥ 折叠 Callout 打印展开。
+ * 原型里浏览器打印预览演示的就是这一版式；正式版静默直写文件并额外生成大纲书签（见菜单处理注释）。 */
+@media print{
+  html,body{height:auto;overflow:visible;background:var(--bg-view)}
+  body{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  .win{height:auto;overflow:visible;display:block}
+  .body,.center{display:block;height:auto;min-height:0;overflow:visible}
+  .tbar,.rail,.side,.splitter,.pane-bar,.crumb-bar,.status,.pgbar,.editor-wrap,.ctxmenu,.copypop,#toast,#dropveil,.overlay,#settings-view{display:none!important}
+  .view{overflow:visible;height:auto;flex:none}
+  #article{max-width:none!important;margin:0;padding:0}
+  #article .callout.folded .co-body{display:block}
+  .codeblock,.codeblock pre,.tw-tbl{overflow:visible}
+  .codeblock pre{white-space:pre-wrap;word-break:break-word}
+  #article h1,#article h2,#article h3,#article h4,#article h5,#article h6{break-after:avoid-page}
+  .codeblock,#article blockquote,.callout,.tw-tbl,.f-block,#article [data-mermaid],tr,img,.fb-box{break-inside:avoid}
+  #article p,#article li{orphans:2;widows:2}
+}
+
 </style>
 </head>
 <body class="app" data-theme="dark">
@@ -814,6 +836,7 @@ body.settings-open .st-view{display:flex}
           <div class="mi" data-act="doc-rust"><svg class="ico ico-14"><use href="#i-md"/></svg><span class="t">Rust 学习笔记</span></div>
           <div class="msep"></div>
           <div class="mi" data-act="export"><svg class="ico ico-14"><use href="#i-external"/></svg><span class="t">导出为 HTML…</span></div>
+          <div class="mi" data-act="export-pdf"><svg class="ico ico-14"><use href="#i-download"/></svg><span class="t">导出为 PDF…</span></div>
           <div class="msep"></div>
           <div class="mi" data-act="quit"><svg class="ico ico-14"><use href="#i-x"/></svg><span class="t">退出</span><kbd>Ctrl Q</kbd></div>
         </div>
@@ -2014,6 +2037,18 @@ function menuAction(act){
     case "doc-guide": openDoc("guide", true); break;
     case "doc-rust": openDoc("rust", true); break;
     case "export": toast("导出 HTML / PDF：正式版由 Rust 侧渲染完成（原型演示）"); break;
+    // 导出 PDF（FR-13.2）：原型用浏览器打印预览演示同一套 @media print 版式（目标选「另存为 PDF」）；
+    // 大纲→PDF 书签、静默落盘为正式版能力（正式版走 WebView2 进程内 CDP Page.printToPDF 的
+    // generateDocumentOutline——官方 PrintToPdf API 不生成书签），原型演示不出来的部分在询问框里明说。
+    case "export-pdf": askRootq({
+      title:"导出为 PDF",
+      sub:"按当前阅读视图样式打印为 PDF 文件",
+      icon:"i-download",
+      rows:[["演示方式","浏览器打印预览 · 目标选「另存为 PDF」"],["正式版","静默写入所选文件 · 大纲标题层级生成 PDF 书签树"]],
+      note:"阅读窗口的主题配色、强调色、字号版式原样进 PDF；标题栏、侧栏、状态栏等窗口壳自动隐藏；折叠的提示块打印时展开（PDF 里没得点开）。",
+      ok:"打印预览",
+      onOk:()=>{ setTimeout(()=>window.print(), 120); }
+    }); break;
     case "quit": toast("退出与窗口控制由 Tauri window API 接管（原型内仅演示）"); break;
     case "focus": toggleFocus(); break;
     case "library": switchSide("library"); break;

@@ -112,6 +112,57 @@ export function registerArticle(el: HTMLElement | null) {
   articleEl = el;
 }
 
+/* ── 导出 PDF（FR-13.2）：在途互斥标记（同时驱动中央浮层）与打印前的正文就绪检查 ── */
+export const [exportBusy, setExportBusy] = createSignal(false);
+
+/** 阅读正文是否还有未达终态的图占位（mermaid/zenuml 渲染在途）→ 导出要拒绝，否则会拍到占位框 */
+export function articlePendingFigures(): boolean {
+  return !!articleEl?.querySelector("[data-mermaid]:not(.f-ready):not(.f-error)");
+}
+
+/** 懒加载图催熟（FR-13.2）：md.ts 产出的 loading=lazy 图在打印时可能尚未解码；
+ *  全部转 eager 并等 decode()，总超时后不再等（缺图按现状打，导出不许挂死在这）。 */
+export function primeArticleImages(timeoutMs = 3000): Promise<void> {
+  if (!articleEl) return Promise.resolve();
+  const imgs = [...articleEl.querySelectorAll<HTMLImageElement>("img")];
+  imgs.forEach((i) => { if (i.loading === "lazy") i.loading = "eager"; });
+  const waits = imgs.map((i) => (i.decode ? i.decode().catch(() => undefined) : Promise.resolve()));
+  return Promise.race([
+    Promise.all(waits).then(() => undefined),
+    new Promise<void>((r) => setTimeout(r, timeoutMs)),
+  ]);
+}
+
+/** 阅读窗底色 → `#RRGGBB`（导出 PDF 传给 Rust 当页边距衬底色；取不到按白纸）。 */
+export function viewBgHex(): string {
+  const v = articleEl?.closest?.(".view") ?? document.querySelector(".view");
+  const bg = v ? getComputedStyle(v).backgroundColor : "";
+  const m = bg.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+  if (!m) return "#FFFFFF";
+  const hex = (n: string) => Number(n).toString(16).padStart(2, "0");
+  return "#" + hex(m[1]) + hex(m[2]) + hex(m[3]);
+}
+
+/** 等正文渲染稳定（2026-11-17 实测教训：长文档初排是渐进的——47k 字文档开文 2.5s 时
+ *  只渲染了 15%，此刻导出 PDF 会缺后半正文。连续 N 次采样高度一致才算稳，超时兜底放行
+ *  ——打印交给用户重试永远不如自己等一拍）。 */
+export function waitArticleStable(sampleMs = 350, need = 3, maxMs = 15000): Promise<void> {
+  if (!articleEl) return Promise.resolve();
+  return new Promise((resolve) => {
+    let same = 0;
+    let last = -1;
+    const t0 = Date.now();
+    const tick = () => {
+      const cur = articleEl ? articleEl.scrollHeight : 0;
+      same = cur === last ? same + 1 : 0;
+      last = cur;
+      if (same >= need - 1 || Date.now() - t0 > maxMs) return resolve();
+      setTimeout(tick, sampleMs);
+    };
+    tick();
+  });
+}
+
 /* UI-01：设置窗/菜单/右键菜单也是「上层」——编辑态按 Esc 时只要有任何弹层压在上面，
  * 就绝不能走丢弃未保存内容的路径（此前漏了 settingsOpen 导致「按 Esc 想关设置，内容没了」） */
 export function anyOverlayOpen() {

@@ -1,7 +1,7 @@
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
-import { newDoc, pickAndOpen, pickFolderAndScan, quitApp, copyDeepLink, exportHtml } from "../lib/actions";
+import { newDoc, pickAndOpen, pickFolderAndScan, quitApp, copyDeepLink, exportHtml, exportPdf } from "../lib/actions";
 import { APP_VERSION, IS_DEV } from "../lib/version";
 
 /** theme 字段只给「主题▸」子项：与 settings().theme 相等时打 accent 点（单选可视化） */
@@ -15,6 +15,7 @@ const MENUS: Menu[] = [
     { act: "open-dir", label: "打开文件夹…", icon: "i-open-folder" },
     { sep: true },
     { act: "export", label: "导出为 HTML…", icon: "i-external" },
+    { act: "export-pdf", label: "导出为 PDF…", icon: "i-download" },
     { sep: true },
     { act: "quit", label: "退出", kbd: "Ctrl Q", icon: "i-x" },
   ] },
@@ -68,6 +69,7 @@ export default function TitleBar() {
       case "open-dir": void pickFolderAndScan(s); break;
       case "quit": void quitApp(s); break;
       case "export": void exportHtml(s); break;
+      case "export-pdf": void exportPdf(s); break;
       case "focus": s.toggleFocus(); break;
       case "library": s.setSide("library"); break;
       case "recents": s.setSide("recents"); break;

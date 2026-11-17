@@ -25,6 +25,7 @@
    - 地址栏加 `#doc=rust&sec=2. 借用与引用` 刷新 —— hash 深链定位（对应正式版 `folio://` URI）
    - 三主题（深色 / 浅色 / 护眼米色）+ 六枚强调色色板，选中即时套用高亮·描边·链接·主按钮（按亮度自动配前景墨色）
    - 标题栏 ⚙ 打开设置浮窗（居中独立窗 + 轻遮罩，主界面可见）：外观·字体·段落·版面·代码与表格 五组共 11 项，改动即时写 SQLite、重启仍在；支持导入/导出配置、撤销更改、恢复默认；Esc / 点遮罩关闭
+   - 「文件 → 导出为 PDF…」→ 打印预览里选「另存为 PDF」：打印版式（窗口壳隐藏、主题色忠实、分页规则）与正式版同源（`@media print`）；正式版另带静默落盘与**大纲→PDF 书签**
 
 ## 键盘快捷键
 
@@ -50,6 +51,7 @@
 |---|---|---|
 | 桌面壳 / 窗口 | Tauri 2.11（WebView2、单实例、`folio://`） | 浏览器标签页；窗口三键为演示态 |
 | 渲染 | SolidJS 1.9 + TS 5.8 渲染管线 | 内嵌迷你 Markdown 解析器（标题/表格/任务/嵌套引用/围栏） |
+| 阅读图片对齐 | **一律水平居中（2026-11-17 需求方）**：本地/远程图片、Mermaid/ZenUML/MathJax 图表全部居中；多图横行（`p.imgrow`）整行居中；导出 HTML/PDF 版式继承同一规则 | `.prose img` 同一条 auto 边距规则可演示；imgrow 横行与图表渲染原型未内置（明示正式版） |
 | 编辑器 | CodeMirror 6（增量解析、折叠） | textarea 双层：透明文本 + Markdown 着色层；行号槽按行高镜像对齐软换行 |
 | 存储 | SQLite（rusqlite）**schema v4**：documents(+builtin) / docs_fts(trigram) / positions / settings / roots / recents | `localStorage`：`folio-prefs`、`folio-pos-map`（每文档 `{ratio, sec, secOff}`） |
 | 搜索 | FTS5，范围=**全部已登记**（库成员 + 仅在历史里的文件） | 当前文档内块级索引 + 章节分组结果 |
@@ -58,6 +60,7 @@
 | 打开 / 选择 / 确认对话框 | 全部**应用内规范浮层**（`PickDialog`/`AskDialog`，2026-11-16 起不再调起系统 open/confirm；真实盘 `list_dir`、文件多选、批量上限 100）；导出/设置导入导出仍走系统对话框 | 全为**规范内浮层**（仿 Windows 通用对话框版式 + 仿真磁盘树，UI 规范 §8.6）；真实文件走拖放 |
 | 主题 / 强调色 | `Settings.theme`=`dark`/`light`/`sepia`（护眼米色），`Settings.accent` 六枚色板，前端按亮度派生 `--accent-dim/-ink/-bg` 写进 body 内联 | 同一色板与派生公式（`applyAccent` 逐式一致），三主题预览卡随强调色变纹路 |
 | 设置 | **居中浮窗**（`.st-panel` 轻遮罩 + `.st-win` 独立窗 1060×640；标题栏 ⚙ 或查看菜单进，Esc/点遮罩退）：5 组 11 项声明式规格（`lib/settings-spec.ts` 可单测），即时落库 + 导入/导出/撤销/恢复 | 同布局同形态（2026-11-16 原型先定稿、正式版随移植），左分组导航 + 右卡片 + 抬头「导入·导出/撤销/保存并关闭」 |
+| 导出 | FR-13.1 HTML（自包含精简样式；**2026-11-17 起图片随行**：正文引用的全部图片——本地按 `data-folio-local` 留痕从磁盘复制、远程由 Rust reqwest 直下（绕开 CSP），统一落 HTML 同级 `images/` 并改写相对 src；单图失败保留原 src 兜底，Mermaid/MathJax 内联 SVG 本随正文；新命令 `export_images`）；**FR-13.2 PDF（2026-11-17）**：`文件→导出为 PDF…` 把当前阅读视图导出为 A4 PDF——主题所见即所得（含背景色）、窗口壳自动隐藏、懒图催熟；**正文标题层级（h1–h6）生成 PDF 书签树=大纲结构**（WebView2 进程内 CDP `Page.printToPDF generateDocumentOutline`，官方 PrintToPdf API 不产书签故弃）；静默落盘 + 互斥 + 失败中央提示 | 菜单同项 → 询问框 → `window.print()` 浏览器打印预览演示同一套 `@media print` 版式（书签与静默直写在框内明示为正式版能力） |
 
 > **正式版硬提醒**：FTS5 默认 `unicode61` 不分中文词，中文检索需 trigram 或外接分词（如 jieba-rs）；Chromium textarea 滚动不计 `padding-bottom`（原型已用「外层滚动 + textarea 自适应高度」规避）。
 

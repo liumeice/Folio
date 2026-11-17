@@ -1,7 +1,9 @@
 /* 跨组件共享的动作（标题栏菜单、快捷键、按钮都调这里） */
 import { api } from "./api";
+import type { ImageRef } from "./api";
 import type { Store } from "./store";
 import * as ui from "./ui";
+import { pdfExportName } from "./pdfname";
 
 /** 选择统一入口（§8.6）：Tauri = 应用内选择对话框（仿真原生通用对话框版式，真实盘，可多选）；
  *  浏览器回退层保留遗留 input（那是浏览器自身行为，不是 Windows 原生窗；mock 也没有磁盘树）。 */
@@ -150,6 +152,43 @@ export async function revealInFolder(path: string, s: Store) {
   }
 }
 
+/* 导出 PDF（FR-13.2）：把当前阅读视图按屏幕样式打成 PDF（A4，大纲 h1–h6 → PDF 书签，
+ * 整页底色=阅读窗底色——页边距环带由 Rust 临时改 WebView2 衬底实现「边框随主题」）。
+ * 守卫顺序即契约：无文档/在途提前退；编辑态先切回阅读；渲染稳定等待后再复检图表；
+ * 正文=屏幕所见（含未保存草稿）；取消保存对话框=零副作用。版式在 app.css `@media print`。 */
+export async function exportPdf(s: Store) {
+  const cur = s.current();
+  if (!cur) { s.toast("未打开文档，无可导出内容"); return; }
+  if (ui.exportBusy()) { s.toast("上一次导出尚未完成"); return; }
+  if (s.mode() === "edit") {
+    s.toggleEdit();
+    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+  }
+  if (!ui.getArticleHtml()) { s.toast("导出失败：正文尚未渲染"); return; }
+  if (ui.articlePendingFigures()) { s.toast("图表仍在渲染，请稍候再试"); return; }
+  ui.clearHits();
+  let target: string | null = null;
+  try { target = await api.pickSavePath(pdfExportName(cur.meta.fileName)); }
+  catch (e) { s.toast("导出失败：" + ui.fmtErr(e)); return; }
+  if (!target) return;                                        // 用户取消
+  if (!/\.pdf$/i.test(target)) target += ".pdf";              // 对话框里删了后缀也兜住
+  ui.setExportBusy(true);
+  const prevTitle = document.title;
+  try {
+    await ui.waitArticleStable();                             // 长文档初排渐进：截在半途会缺后半正文
+    if (ui.articlePendingFigures()) { s.toast("图表仍在渲染，请稍候再试"); return; }
+    await ui.primeArticleImages();
+    document.title = cur.meta.title;                          // PDF 书签根节点取 <title>——洗净文件名尾巴
+    await api.exportPdf(target, ui.viewBgHex());              // 页边距衬底 = 阅读窗底色（边框随主题）
+    ui.showCopied("已导出 PDF", target);                       // 中央浮层（铁律：不贴窗口底沿）
+  } catch (e) {
+    s.toast("导出失败：" + ui.fmtErr(e));
+  } finally {
+    document.title = prevTitle;
+    ui.setExportBusy(false);
+  }
+}
+
 /* 导出单文档为自包含 HTML（FR-13.1）。样式为独立精简集，与阅读视图观感一致但不含主题变量。 */
 const EXPORT_CSS = `
 body{margin:0;background:#FCFCFD;color:#18212F;font-family:Georgia,'Noto Serif SC','Segoe UI','Microsoft YaHei UI',serif}
@@ -161,26 +200,79 @@ pre{background:#0F1626;color:#E7EEF9;padding:14px 16px;border-radius:10px;overfl
 pre code{background:none;border:none;color:inherit;padding:0}
 blockquote{border-left:3px solid #0D9488;color:#46536A;margin:0 0 16px;padding:2px 0 2px 18px}
 table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid #CFD7E3;padding:8px 12px;text-align:left}
-th{background:#F2F4F8;font-weight:600}img{max-width:100%;height:auto;border-radius:8px;border:1px solid #CFD7E3}
+th{background:#F2F4F8;font-weight:600}img{max-width:100%;height:auto;border-radius:8px;border:1px solid #CFD7E3;display:block;margin:8px auto}
+p.imgrow{text-align:center}p.imgrow img{display:inline-block;margin:1px 2px;vertical-align:middle}p.imgrow>a{display:inline-block;vertical-align:middle}p.imgrow>a img{margin:0}
+.f-block{text-align:center;margin:14px 0}.f-block svg{max-width:100%;height:auto}.f-block[data-mermaid]>svg,.f-block[data-math="block"] svg{display:block;margin:0 auto}.fb-box,.f-error{text-align:left}
 ul li::marker{color:#EA580C}hr{border:none;height:1px;background:#CFD7E3;margin:28px 0}
 .sub{display:none}`;
 
+/* 导出单文档为 HTML（FR-13.1）。样式为独立精简集，与阅读视图观感一致但不含主题变量。
+ * 图片随行（需求方 2026-11-17）：正文引用的全部图片实体化到 <HTML 同级>/images/——本地图按
+ * 水合留痕（data-folio-local）从磁盘复制、远程图由 Rust 侧下载（webview CSP 拦前端 fetch），
+ * src 重写为相对路径；Mermaid/MathJax 是内联 svg，本随正文导出。落盘失败的图保留原始 src
+ * （远程=留链接，联网可看）。取消保存对话框=零副作用；守卫与 PDF 导出同口径。
+ * 浏览器回退层没有磁盘目录概念：维持 blob 下载、图片留原链（mock 非产品行为）。 */
 export async function exportHtml(s: Store) {
   const cur = s.current();
   if (!cur) { s.toast("未打开文档，无可导出内容"); return; }
   ui.clearHits();
-  const body = ui.getArticleHtml();
-  if (!body) { s.toast("导出失败：正文尚未渲染"); return; }
-  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">` +
+  const body0 = ui.getArticleHtml();
+  if (!body0) { s.toast("导出失败：正文尚未渲染"); return; }
+  const wrap = (inner: string) =>
+    `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>` +
     cur.meta.title.replace(/</g, "&lt;") + ` · Folio 导出</title><style>${EXPORT_CSS}</style></head>` +
-    `<body><article>${body}</article></body></html>`;
+    `<body><article>${inner}</article></body></html>`;
   const name = cur.meta.fileName.replace(/\.(md|markdown|txt)$/i, ".html");
+
+  if (!api.isTauriRuntime()) {
+    try {
+      const r = await api.saveFileAs(name, wrap(body0));
+      if (!r) return;
+      s.toast(r === "downloaded" ? "已导出 HTML（浏览器下载）" : "已导出 HTML：" + r);
+    } catch (e) {
+      s.toast("导出失败：" + String(e));
+    }
+    return;
+  }
+
+  if (ui.exportBusy()) { s.toast("上一次导出尚未完成"); return; }
+  let target: string | null = null;
+  try { target = await api.pickSavePath(name, "html"); }
+  catch (e) { s.toast("导出失败：" + ui.fmtErr(e)); return; }
+  if (!target) return;                                        // 用户取消
+  if (!/\.html?$/i.test(target)) target += ".html";           // 对话框里删了后缀也兜住
+  ui.setExportBusy(true);
   try {
-    const r = await api.saveFileAs(name, html);
-    if (!r) return;                                   // 用户取消
-    s.toast(r === "downloaded" ? "已导出 HTML（浏览器下载）" : "已导出 HTML：" + r);
+    await ui.waitArticleStable();                             // 长文初排渐进：截在半途会缺后半正文/图表（与 PDF 同判据）
+    const holder = document.createElement("div");
+    holder.innerHTML = ui.getArticleHtml() || body0;
+    const imgs = [...holder.querySelectorAll<HTMLImageElement>("img")];
+    const refs: ImageRef[] = [];
+    for (const img of imgs) {
+      if (img.classList.contains("img-missing")) continue;    // 屏幕已裂的图不复制死文件
+      if (img.dataset.folioLocal) refs.push({ source: img.dataset.folioLocal, kind: "file" });
+      else if (/^https?:/i.test(img.getAttribute("src") || "")) refs.push({ source: img.getAttribute("src")!, kind: "url" });
+    }
+    const map = await api.exportImages(target, refs);
+    let ok = 0, kept = 0;
+    for (const img of imgs) {
+      const src = img.getAttribute("src") || "";
+      const local = img.dataset.folioLocal || "";
+      delete img.dataset.folioLocal;                          // 导出文件里不留内部痕迹
+      if (img.classList.contains("img-missing")) continue;
+      const key = local || (/^https?:/i.test(src) ? src : "");
+      if (!key) continue;                                     // data:/blob: 内联图原样随文
+      const nm = map[key];
+      if (nm) { img.setAttribute("src", "images/" + nm); ok++; }
+      else kept++;                                            // 落盘失败→保留原始 src 兜底
+    }
+    await api.writeFile(target, wrap(holder.innerHTML));
+    const tail = refs.length ? `（图 ${ok} 张随行${kept ? `，${kept} 张保留原链` : ""}）` : "";
+    ui.showCopied("已导出 HTML" + tail, target);               // 中央浮层（铁律：不贴窗口底沿）
   } catch (e) {
-    s.toast("导出失败：" + String(e));
+    s.toast("导出失败：" + ui.fmtErr(e));
+  } finally {
+    ui.setExportBusy(false);
   }
 }

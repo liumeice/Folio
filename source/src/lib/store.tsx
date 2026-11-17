@@ -55,8 +55,9 @@ export interface Store {
   activeTabId: () => number | null;
   // actions
   refreshDocs(): Promise<void>;
-  openMeta(meta: DocMeta): Promise<void>;
-  openPath(path: string, secText?: string | null): Promise<void>;
+  /** 返回是否打开成功（失败=文件丢失时条目自动移出最近打开，2026-11-17 定夺） */
+  openMeta(meta: DocMeta): Promise<boolean>;
+  openPath(path: string, secText?: string | null): Promise<boolean>;
   openSlug(slug: string, secText?: string | null): Promise<void>;
   requestAnchor(sec: number, record: boolean): void;
   enterEdit(): void;
@@ -263,19 +264,45 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     }
   }
 
-  async function openMeta(meta: DocMeta) {
-    if (current()?.meta.id === meta.id) return;
+  /** 打开失败=文件丢失 → 该条目从「最近打开」清除（需求方 2026-11-17 定夺）；
+   *  孤儿登记行（不在库非内置）随 remove_recent 一并回收。返回是否真正打开成功。 */
+  async function dropMissingFromRecents(docId: number | undefined): Promise<void> {
+    if (docId == null) return;
+    try {
+      await api.removeRecent(docId);
+      void refreshDocs();
+    } catch { /* 清除失败不再叠加提示：上一次「打开失败」toast 已说明问题 */ }
+  }
+  async function openMeta(meta: DocMeta): Promise<boolean> {
+    if (current()?.meta.id === meta.id) return true;
     try {
       await switchTo(await api.openDoc(meta.path));
+      return true;
     } catch (e) {
-      toast("打开失败：" + ui.fmtErr(e));
+      const msg = ui.fmtErr(e);
+      if (msg.includes("文件不存在")) {
+        await dropMissingFromRecents(meta.id);
+        toast("文件不存在或已被移动，已从最近打开清除");
+      } else {
+        toast("打开失败：" + msg);
+      }
+      return false;
     }
   }
-  async function openPath(path: string, secText: string | null = null) {
+  async function openPath(path: string, secText: string | null = null): Promise<boolean> {
     try {
       await switchTo(await api.openDoc(path), { secText });
+      return true;
     } catch (e) {
-      toast("打开失败：" + ui.fmtErr(e));
+      const msg = ui.fmtErr(e);
+      if (msg.includes("文件不存在")) {
+        const key = path.toLowerCase();
+        await dropMissingFromRecents(docs().find((d) => d.path.toLowerCase() === key)?.id);
+        toast("文件不存在或已被移动，已从最近打开清除");
+      } else {
+        toast("打开失败：" + msg);
+      }
+      return false;
     }
   }
   async function openSlug(slug: string, secText: string | null = null) {
@@ -488,7 +515,8 @@ export function StoreProvider(props: ParentProps): JSX.Element {
         if (pos) setNavRequest({ kind: "restore", sec: pos.sec, secText: pos.secText, ratio: pos.ratio, secOff: pos.secOff });
         pushHist({ docId: doc.meta.id, path: doc.meta.path, sec: null, secText: null, top: null, ratio: null });
       } catch {
-        /* 空态 */
+        /* 启动恢复目标已丢失：同规则清出历史（不声张，空态自洽），下次恢复看下一条 */
+        await dropMissingFromRecents(restore.id);
       }
     }
     dismissSplash(); // 内容决策已定（正文上屏 / 空态），揭幕

@@ -89,6 +89,13 @@ test("escapeHtml 往返：data-code 含 & < > \\\" 经 DOM 解析逐字节还原
   assert.ok(escapeHtml('a&b<c>"d').includes("&amp;") && escapeHtml('x"y').includes("&quot;"), "转义集完备");
 });
 
+test("zenuml 路由标记：首行 zenuml 关键字 → data-zuml（归 @zenuml/core），普通 mermaid 不受牵连", () => {
+  const z = mdToHtml("```mermaid\nzenuml\n    title Reply message\n    Client->A: hi\n```");
+  assert.ok(z.includes('data-mermaid="1"') && z.includes('data-zuml="1"') && z.includes('data-lang="zenuml"'), z);
+  const m = mdToHtml("```mermaid\ngraph TD\nA-->B\n```");
+  assert.ok(!m.includes("data-zuml") && m.includes('data-lang="mermaid"'), m);
+});
+
 test("classifyCodeLang 精确匹配", () => {
   assert.equal(classifyCodeLang("math"), "math");
   assert.equal(classifyCodeLang("MATH"), "math");

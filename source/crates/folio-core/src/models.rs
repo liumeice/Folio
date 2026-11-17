@@ -15,6 +15,8 @@ pub struct DocMeta {
     pub size: u64,
     /// 文件 mtime（unix 秒）
     pub mtime: i64,
+    /// 正文口径字数：非空白码点数，**公式块（$$/```math）与图表块（```mermaid 含 zenuml）整块不计**
+    /// （2026-11-17 需求定夺；权威实现 markdown::stats，前端 lib/wordcount.ts 同规则同 fixture 钉桩）
     pub word_count: i64,
     /// 大纲条目数（h1~h6）
     pub head_count: i64,

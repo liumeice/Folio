@@ -323,9 +323,248 @@ pub fn resolve_image(doc_path: &str, url: &str) -> Option<String> {
     }
 }
 
+/* ── FR-13.1 导出 HTML 图片随行（需求方 2026-11-17：页面内所有图片资源随页面一同导出，
+ * 统一存放到 HTML 文件同级目录的 images/ 下）。
+ * kind="file"=本地磁盘绝对路径（Reader 水合留痕 data-folio-local）；kind="url"=http(s) 直下。
+ * 下载放 Rust 侧：webview CSP 的 connect-src 只放行 IPC，前端 fetch 远程图必被拦。
+ * 单图失败只标记它自己（name=None，前端保留原 src 兜底），不中断整次导出。 */
+#[derive(serde::Deserialize)]
+pub struct ImageRef {
+    pub source: String,
+    pub kind: String, // "file" | "url"
+}
+#[derive(serde::Serialize)]
+pub struct ImageOut {
+    pub source: String,
+    pub name: Option<String>, // None = 落盘失败
+}
+
+/// 单图字节上限（32MB）——正常图片远小于此，超限多半是错引或恶意路径。
+const MAX_EXPORT_IMG_BYTES: u64 = 32 * 1024 * 1024;
+
+/// 源地址 → 安全文件名：取路径/URL 末段，URL 先剥 query/fragment 再 percent-decode；
+/// Windows 非法字符与控制符剔除，超 80 字符截断（保住扩展名）。
+fn image_base_name(source: &str, kind: &str) -> String {
+    let raw = if kind == "url" {
+        let cut = source.split(['?', '#']).next().unwrap_or(source);
+        let seg = cut.rsplit('/').next().unwrap_or(cut);
+        urlencoding::decode(seg).map(|c| c.into_owned()).unwrap_or_else(|_| seg.to_string())
+    } else {
+        Path::new(source)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .map(|c| if (c as u32) < 0x20 || c == '/' { '_' } else { c })
+        .collect();
+    let trimmed = cleaned.trim_matches(&['.', ' '][..]).to_string();
+    if trimmed.is_empty() {
+        return "image".into();
+    }
+    if trimmed.chars().count() <= 80 {
+        return trimmed;
+    }
+    let (stem, ext) = split_name_ext(&trimmed);
+    let mut s: String = stem.chars().take(60).collect();
+    while s.ends_with('.') || s.ends_with(' ') {
+        s.pop();
+    }
+    if s.is_empty() { s = "image".into(); }
+    join_name(&s, &ext)
+}
+
+/// 拆（干，扩展）；扩展名须为 1~6 位字母数字，否则视为无扩展（不把脏尾巴带进文件系统）。
+fn split_name_ext(name: &str) -> (String, String) {
+    match name.rfind('.') {
+        Some(i) if i > 0 => {
+            let ext = &name[i + 1..];
+            if !ext.is_empty() && ext.len() <= 6 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+                (name[..i].to_string(), ext.to_string())
+            } else {
+                (name.to_string(), String::new())
+            }
+        }
+        _ => (name.to_string(), String::new()),
+    }
+}
+
+fn join_name(stem: &str, ext: &str) -> String {
+    if ext.is_empty() { stem.to_string() } else { format!("{stem}.{ext}") }
+}
+
+/// 给每个去重后的源分配唯一目标文件名：同源复用同名；同名不同源→后来者加 8 位哈希后缀。
+/// 纯函数、DOM 序即入参序 → 导出结果确定可单测。
+pub fn plan_image_names(items: &[ImageRef]) -> HashMap<String, String> {
+    let mut by_src: HashMap<String, String> = HashMap::new();
+    let mut used: HashSet<String> = HashSet::new();
+    for it in items {
+        if by_src.contains_key(&it.source) {
+            continue;
+        }
+        let base = image_base_name(&it.source, &it.kind);
+        let name = if used.insert(base.clone()) {
+            base
+        } else {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            it.source.hash(&mut h);
+            let tag = format!("{:08x}", h.finish() & 0xffff_ffff);
+            let (stem, ext) = split_name_ext(&base);
+            let mut cand = join_name(&format!("{stem}_{tag}"), &ext);
+            let mut n = 1;
+            while !used.insert(cand.clone()) {
+                n += 1;
+                cand = join_name(&format!("{stem}_{tag}_{n}"), &ext);
+            }
+            cand
+        };
+        by_src.insert(it.source.clone(), name);
+    }
+    by_src
+}
+
+/// 执行图片随行。本地复制与远程下载都走 tokio::fs/reqwest（不占执行器线程，等价 spawn_blocking
+/// 契约）；远程并发、单请求 15s 超时。返回按去重源逐条的落盘结果。
+pub async fn run_export_images(html_path: &Path, items: Vec<ImageRef>) -> Vec<ImageOut> {
+    let mut uniq: Vec<&ImageRef> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    for it in &items {
+        if seen.insert(it.source.as_str()) {
+            uniq.push(it);
+        }
+    }
+    let dir = html_path.parent().unwrap_or(Path::new(".")).join("images");
+    let names = plan_image_names(&items);
+    if tokio::fs::create_dir_all(&dir).await.is_err() {
+        return uniq
+            .into_iter()
+            .map(|it| ImageOut { source: it.source.clone(), name: None })
+            .collect();
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Folio/1.0")
+        .build()
+        .ok();
+    let mut out = Vec::new();
+    let mut handles = Vec::new();
+    for it in uniq {
+        let Some(name) = names.get(&it.source).cloned() else { continue };
+        if it.kind == "url" {
+            let (src, dst_dir) = (it.source.clone(), dir.clone());
+            let Some(c) = client.clone() else {
+                out.push(ImageOut { source: src, name: None });
+                continue;
+            };
+            handles.push(tokio::spawn(async move {
+                let mut ok_name: Option<String> = None;
+                if let Ok(resp) = c.get(&src).send().await {
+                    if resp.status().is_success() {
+                        let too_big = resp.content_length().map(|l| l > MAX_EXPORT_IMG_BYTES).unwrap_or(false);
+                        if !too_big {
+                            if let Ok(bytes) = resp.bytes().await {
+                                if (bytes.len() as u64) <= MAX_EXPORT_IMG_BYTES
+                                    && tokio::fs::write(dst_dir.join(&name), &bytes).await.is_ok()
+                                {
+                                    ok_name = Some(name);
+                                }
+                            }
+                        }
+                    }
+                }
+                ImageOut { source: src, name: ok_name }
+            }));
+        } else {
+            let src = PathBuf::from(&it.source);
+            let dst = dir.join(&name);
+            let mut res: Option<String> = None;
+            if let Ok(m) = tokio::fs::metadata(&src).await {
+                if m.is_file() && m.len() <= MAX_EXPORT_IMG_BYTES {
+                    if let Ok(bytes) = tokio::fs::read(&src).await {
+                        if tokio::fs::write(&dst, &bytes).await.is_ok() {
+                            res = Some(name);
+                        }
+                    }
+                }
+            }
+            out.push(ImageOut { source: it.source.clone(), name: res });
+        }
+    }
+    for h in handles {
+        if let Ok(o) = h.await {
+            out.push(o);
+        } // join 失败（panic/取消）视作落盘失败：前端按缺键兜底保留原链
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_image_names_dedups_and_disambiguates() {
+        let mk = |s: &str, k: &str| ImageRef { source: s.into(), kind: k.into() };
+        let items = vec![
+            mk("C:\\docs\\a\\pic.png", "file"),
+            mk("C:\\docs\\b\\pic.png", "file"),          // 同名不同源 → 后缀消歧
+            mk("C:\\docs\\a\\pic.png", "file"),          // 同源重复引用 → 复用同名
+            mk("https://ex.com/x/pic.png?v=2", "url"),   // 剥 query 后又撞 pic.png → 再消歧
+            mk("https://ex.com/dir/", "url"),            // 无名可取 → 兜底 image
+        ];
+        let plan = plan_image_names(&items);
+        assert_eq!(plan.len(), 4, "同源只算一条");
+        assert_eq!(plan["C:\\docs\\a\\pic.png"], "pic.png");
+        let b = &plan["C:\\docs\\b\\pic.png"];
+        assert!(b.starts_with("pic_") && b.ends_with(".png") && b != "pic.png", "{b}");
+        let u = &plan["https://ex.com/x/pic.png?v=2"];
+        assert!(u.starts_with("pic_") && u.ends_with(".png") && u != b && u != "pic.png", "{u}");
+        assert_eq!(&plan["https://ex.com/dir/"], "image");
+        let set: HashSet<&String> = plan.values().collect();
+        assert_eq!(set.len(), plan.len(), "全部互不相同");
+    }
+
+    #[test]
+    fn image_base_name_sanitizes_decodes_and_truncates() {
+        // Windows 非法字符剔除
+        assert_eq!(image_base_name("C:\\a\\b<img>:x?.png", "file"), "bimgx.png");
+        // 尾点/空格修剪（Windows 会静默吃掉）
+        assert_eq!(image_base_name("C:\\a\\x. . ", "file"), "x");
+        assert_eq!(image_base_name("C:\\a\\..", "file"), "image");
+        // URL：剥 query/fragment + percent-decode + 斜杠不残留
+        assert_eq!(image_base_name("https://ex.com/%E5%9B%BE%201.png#a?b", "url"), "图 1.png");
+        // 超长截断但保住扩展名
+        let long = format!("{}.png", "あ".repeat(100));
+        let n = image_base_name(&format!("C:\\d\\{long}"), "file");
+        assert!(n.chars().count() <= 65 && n.ends_with(".png"), "{n}");
+    }
+
+    #[test]
+    fn export_images_copies_local_and_reports() {
+        let base = std::env::temp_dir().join(format!("folio-eimg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("a.png"), [1u8, 2, 3]).unwrap();
+        let html = base.join("out.html");
+        let items = vec![
+            ImageRef { source: base.join("a.png").to_string_lossy().into_owned(), kind: "file".into() },
+            ImageRef { source: base.join("gone.png").to_string_lossy().into_owned(), kind: "file".into() },
+        ];
+        let outs = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(run_export_images(&html, items));
+        let by: HashMap<_, _> = outs.iter().map(|o| (o.source.clone(), o.name.clone())).collect();
+        assert_eq!(by[&base.join("a.png").to_string_lossy().into_owned()].as_deref(), Some("a.png"));
+        assert!(base.join("images").join("a.png").exists(), "图真落盘");
+        assert_eq!(std::fs::read(base.join("images").join("a.png")).unwrap(), [1u8, 2, 3]);
+        assert!(by[&base.join("gone.png").to_string_lossy().into_owned()].is_none(), "死图报失败");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn root_style_url_finds_repo_assets_via_ancestor_walk() {

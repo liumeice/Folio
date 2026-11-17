@@ -5,8 +5,10 @@ import { useStore } from "../lib/store";
 import { api } from "../lib/api";
 import * as ui from "../lib/ui";
 import { mdToHtml, taskOrdinalOf } from "../lib/md";
+import { countWords } from "../lib/wordcount";
 import { typesetMathIn } from "../lib/mathjax";
 import { renderMermaid } from "../lib/mermaidRender";
+import { renderZenuml } from "../lib/zenumlRender";
 import type { DocFull } from "../lib/types";
 
 /** 大纲坐标系：只认携带 data-sec 的标题（引用块/提示块内的标题无锚点，见 lib/md.ts CON-02） */
@@ -81,10 +83,12 @@ export default function Reader() {
     article.innerHTML = mdToHtml(doc.src);
     const h1 = article.querySelector("h1");
     if (h1) {
+      // 字数/阅读时长按正文口径现算（公式/图表源码不计，需求方 2026-11-17；lib/wordcount.ts 与 Rust stats 同规则）
+      const wc = countWords(doc.src);
       h1.insertAdjacentHTML("afterend",
         '<div class="sub"><svg class="ico"><use href="#i-file-text"/></svg><span>' +
-        doc.meta.wordCount.toLocaleString() + " 字</span><span>·</span><span>约 " +
-        Math.max(1, Math.round(doc.meta.wordCount / 400)) + " 分钟</span><span>·</span><span>" +
+        wc.toLocaleString() + " 字</span><span>·</span><span>约 " +
+        Math.max(1, Math.round(wc / 400)) + " 分钟</span><span>·</span><span>" +
         doc.meta.secCount + " 个小节</span><span>·</span><span>更新于 " + fmtDate(doc.meta.mtime) +
         "</span></div>");
     }
@@ -110,6 +114,7 @@ export default function Reader() {
   createEffect(on(() => s.settings().theme, (theme, prev) => {
     if (prev === undefined || theme === prev) return;
     void renderMermaid(article, undefined, theme);
+    void renderZenuml(article, theme);
   }, { defer: true }));
 
   /* 公式/图表排版链（MathJax + Mermaid 集成 §3.1）：innerHTML 之后才准排版。
@@ -122,7 +127,9 @@ export default function Reader() {
     if (seq !== renderSeq) return;
     await typesetMathIn(article);
     if (seq !== renderSeq || s.current() !== doc) return; // 或 article.contains(el)：容器已换即停
-    await renderMermaid(article);
+    await renderMermaid(article, undefined, s.settings().theme);
+    if (seq !== renderSeq || s.current() !== doc) return;
+    await renderZenuml(article, s.settings().theme); // zenuml 原生通道（@zenuml/core，mermaid v11 已不含该类型）
   }
 
   function whenVisible(): Promise<void> {
@@ -201,7 +208,7 @@ export default function Reader() {
   }
 
   /* ── 本地图片资源水合（FR-2.1）：相对/根绝对路径按文档位置解析 → asset: 协议 ── */
-  const imgCache = new Map<string, { url: string; w: number; h: number } | null>(); // null = 未找到（P2-3：尺寸随 url 一起缓存）
+  const imgCache = new Map<string, { url: string; path: string; w: number; h: number } | null>(); // null = 未找到（P2-3：尺寸随 url 一起缓存）
   function markMissing(img: HTMLImageElement, src: string) {
     img.classList.add("img-missing");
     img.title = "本地资源未找到：" + src;
@@ -244,6 +251,7 @@ export default function Reader() {
         if (c) {
           if (c.w > 0 && c.h > 0) { img.width = c.w; img.height = c.h; }
           img.src = c.url;
+          img.dataset.folioLocal = c.path; // FR-13.1 导出随行：src 已被 asset URL 顶掉，磁盘路径留痕于此
         } else markMissing(img, src);
         return;
       }
@@ -263,13 +271,14 @@ export default function Reader() {
       );
       for (const l of locals) {
         const r = bySrc.get(l.src) ?? null;
-        imgCache.set(l.key, r ? { url: r.url, w: r.w, h: r.h } : null);
+        imgCache.set(l.key, r ? { url: r.url, path: r.path, w: r.w, h: r.h } : null);
         if (r) {
           if (r.w > 0 && r.h > 0 && !l.img.getAttribute("width")) {
             l.img.width = r.w; l.img.height = r.h; // P2-3：先占位后加载，消除到达回流
           }
           l.img.src = r.url;
           l.img.title = r.path;
+          l.img.dataset.folioLocal = r.path; // FR-13.1 导出随行：src 已被 asset URL 顶掉，磁盘路径留痕于此
           watchImg(l.img, l.src);
         } else {
           markMissing(l.img, l.src);

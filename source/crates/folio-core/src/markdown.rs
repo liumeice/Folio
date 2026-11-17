@@ -53,15 +53,61 @@ pub fn headings(src: &str) -> Vec<Heading> {
 }
 
 /// (word_count, head_count, sec_count)。
-/// M0 口径：word_count = 源文本非空白字符数（含代码块，与原型 article.textContent 对齐）；
-/// head_count = 大纲条目（h1~h6）；sec_count = 小节（h2~h6）。
-/// 「代码块是否计字、阅读速度常数」是正式版待定的设置项（评审 v2·N19），M1 落。
+/// word_count 口径（2026-11-17 需求方定夺）：源文本非空白字符数，但**跳过公式块与图表块**
+/// （`$$…$$`、```math、```mermaid 整块含围栏行；普通代码围栏维持旧口径照计）。
+/// 与前端 lib/wordcount.ts 逐行同规则——两侧钉桩测试用同一 fixture，改一边必须同步另一边。
+/// head_count = 大纲条目（h1~h6）；sec_count = 小节（h2~h6）——口径不受 word 跳过影响。
 pub fn stats(src: &str) -> (i64, i64, i64) {
     let hs = headings(src);
-    let word_count = src.chars().filter(|c| !c.is_whitespace()).count() as i64;
+    let word_count = prose_chars(src);
     let head_count = hs.len() as i64;
     let sec_count = hs.iter().filter(|h| h.level >= 2).count() as i64;
     (word_count, head_count, sec_count)
+}
+
+/// 数学/图表围栏语言判定：``` 后跟 math / mermaid（大小写不敏感）
+fn is_skipped_fence(line: &str) -> bool {
+    let body = line.trim().trim_start_matches('`').trim().to_lowercase();
+    body == "math" || body == "mermaid"
+}
+
+/// 按 word 口径剔除非正文块后的非空白码点数
+fn prose_chars(src: &str) -> i64 {
+    let mut n = 0usize;
+    let mut in_code = false;
+    let mut code_skipped = false;
+    let mut in_math = false;
+    for raw in src.lines() {
+        if !in_code && !in_math && is_fence(raw) {
+            in_code = true;
+            code_skipped = is_skipped_fence(raw);
+            if !code_skipped {
+                n += raw.chars().filter(|c| !c.is_whitespace()).count(); // 普通围栏标记照旧计入
+            }
+            continue;
+        }
+        if in_code {
+            if is_fence(raw) {
+                in_code = false;
+                if !code_skipped {
+                    n += raw.chars().filter(|c| !c.is_whitespace()).count();
+                }
+            } else if !code_skipped {
+                n += raw.chars().filter(|c| !c.is_whitespace()).count();
+            }
+            continue;
+        }
+        let t = raw.trim();
+        if t == "$$" {
+            in_math = !in_math; // 界行本身不计
+            continue;
+        }
+        if in_math {
+            continue;
+        }
+        n += raw.chars().filter(|c| !c.is_whitespace()).count();
+    }
+    n as i64
 }
 
 /// 列表行拆分：若该行以 "缩进 + (-|*|+|n.|n\)) + 空白" 开头，返回标记段之后的剩余切片。
@@ -265,6 +311,24 @@ mod tests {
         // "- [ ]x"：Rust task_parts 不要求 ] 后空白，TS 渲染器同步放宽（\s* 而非 \s+）
         let out = toggle_task("- [ ]x\n", 0).unwrap();
         assert_eq!(out, "- [x]x\n");
+    }
+
+    #[test]
+    fn stats_skips_math_and_diagram_blocks() {
+        // 与前端 tests/wordcount.test.ts 共用同一 fixture：期望值必须一致（=24）
+        let src = "# A\n\n正文四字。\n\n$$\n\\frac{1}{2}\n$$\n\n```mermaid\ngraph TD\nA-->B\n```\n\n```js\nlet x=1\n```\n\n## B\n";
+        let (w, h, s) = stats(src);
+        // 期望 24 = #A(2)+正文四字。(5)+```js(5)+letx=1(6)+```(3)+##B(3)；
+        // $$ 界行、\frac 内容行与 mermaid 整块剔除。与 TS wordcount.test.ts 同数字（跨语言契约）
+        assert_eq!(w, 24, "正文+js 围栏计数；公式/图表内容整剔");
+        assert_eq!(h, 2, "标题数不受 word 口径影响");
+        assert_eq!(s, 1);
+        assert_eq!(stats("$$\n\\frac{1}{2}\n$$\n").0, 0);
+        assert_eq!(stats("```math\nE=mc^2\n```\n").0, 0);
+        assert_eq!(stats("```MERMAID\ngraph TD\nA-->B\n```\n").0, 0, "大小写不敏感");
+        assert!(stats("```js\nlet x=1\n```\n").0 > 0, "普通代码块照旧计入");
+        // 未闭合 $$ 吃到 EOF；块内 ``` 不误判为围栏
+        assert_eq!(stats("$$\n```\nx\n").0, 0);
     }
 
     #[test]

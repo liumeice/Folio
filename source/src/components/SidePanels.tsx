@@ -5,6 +5,7 @@ import { pickAndOpen, pickFolderAndScan, confirmBox } from "../lib/actions";
 import { api } from "../lib/api";
 import type { DocMeta, RecentDoc } from "../lib/types";
 import { allDirKeys, revealKeys } from "../lib/libtree";
+import { countWords } from "../lib/wordcount";
 import { buildLibTree, flattenAll, isDirOpen, leafName, rootOf, type DirNode, type TreeRow } from "../lib/libtree";
 
 function dayLabel(mtime: number): string {
@@ -344,7 +345,7 @@ function RecentItem(props: { r: RecentDoc }) {
     }
   }
   return (
-    <div class="tf" classList={{ on: on() }} tabindex={0} title={d().path}
+    <div class="tf rec" classList={{ on: on() }} tabindex={0} title={d().path}
       onClick={() => void s.openMeta(d())}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -353,7 +354,7 @@ function RecentItem(props: { r: RecentDoc }) {
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void s.openMeta(d()); } }}>
       <svg class="ico ico-14" style={{ color: on() ? "var(--accent)" : "var(--text-3)" }}><use href="#i-md" /></svg>
       <span class="nm">{d().fileName}</span>
-      <Show when={d().dir}><span class="src-dir ellip">{leafName(d().dir)}</span></Show>
+      {/* 需求方 2026-11-17：历史行不显示上级文件夹小字；时间右移贴住关闭按钮留位 */}
       <Show when={d().inLibrary}><span class="badge">库</span></Show>
       <Show when={d().builtin}><span class="badge">内置</span></Show>
       <span class="mt">{recentLabel(props.r.openedAt)}</span>
@@ -421,13 +422,21 @@ export function PaneBar() {
 
 export function CrumbBar() {
   const s = useStore();
+  // 分隔符跟随路径风格：Windows 登记路径是反斜杠，硬编码 "/" 会拼出
+  // `d:\a\b/ 文件名` 这种正斜杠混排（需求方 2026-11-17 指正）；mock 的 demo/ 路径仍用 "/"。
+  const crumb = () => {
+    const c = s.current();
+    const dir = c?.meta.dir ?? "";
+    const sep = dir.includes("\\") ? "\\" : "/";
+    return { dir: dir || "文件夹", sep, name: c?.meta.fileName ?? "未打开文档" };
+  };
   return (
     <div class="crumb-bar">
       <span class="path ellip">
         <svg class="ico"><use href="#i-folder" /></svg>
-        <span>{s.current()?.meta.dir ?? "文件夹"}</span>
-        <i>/</i>
-        <b>{s.current()?.meta.fileName ?? "未打开文档"}</b>
+        <span>{crumb().dir}</span>
+        <i>{crumb().sep}</i>
+        <b>{crumb().name}</b>
       </span>
     </div>
   );
@@ -454,7 +463,8 @@ export function StatusBar() {
       {/* 2026-11-16 两轮顺序调整：①当前章节紧跟文件名；②统计与编码右移、贴在「阅读%」左侧 */}
       <span class="si" id="stat-sec"><span class="ellip">{secText()}</span></span>
       <span class="sp" />
-      <span class="si">{s.current()?.meta.wordCount.toLocaleString() ?? "—"} 字</span>
+      {/* 正文口径字数（公式/图表源码不计，2026-11-17 需求定夺）：从 src 现算，不走 DB 旧口径 */}
+      <span class="si">{s.current() ? countWords(s.current()!.src).toLocaleString() + " 字" : "— 字"}</span>
       <span class="si">{s.current()?.meta.secCount ?? "—"} 节</span>
       <span class="si" id="stat-enc" onClick={() => ui.setPropsOpen(true)} title="查看文档信息">UTF-8</span>
       {/* 百分比定宽槽：位数变化不抖动（样式见 app.css .pct-slot） */}

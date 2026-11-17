@@ -51,8 +51,16 @@
 }
 
 *{box-sizing:border-box;margin:0;padding:0}
-html,body,#root{height:100%}
-body{font-family:var(--font-ui);font-size:13px;line-height:1.45;color-scheme:light dark;overflow:hidden;background:var(--bg-frame);color:var(--text)}
+/* 防级联滚动（2026-11-17 修复"点大纲条目后整个界面被顶上去"）：
+ * body 层的引擎级绝对定位容器（如 zenuml 的 intersection-detector，高度可超视口）
+ * 会撑大根滚动区 → scrollIntoView 级联把整份文档滚上去 102px：.win 顶部出视口、
+ * 状态栏下方露黑边。对策：body 固定成盒子、退出 html 流程——根级可滚溢出恒为 0。 */
+html{height:100%;overflow:hidden}
+body{position:fixed;inset:0;overflow:hidden;font-family:var(--font-ui);font-size:13px;line-height:1.45;color-scheme:light dark;background:var(--bg-frame);color:var(--text)}
+/* 防顶闸升级（2026-11-17 二次实测）：body 自身也是"hidden 但可编程滚动"的祖先
+ * （zenuml 容器把 body 溢出撑高 9px，scrollIntoView 级联照样滚 body）——
+ * #root 用 fixed 把包含块钉死到视口，免疫一切祖先级滚动；外来容器被 body 裁剪且盖不到应用之下。 */
+#root{position:fixed;inset:0;overflow:hidden;z-index:0}
 /* 需求反馈 #4：编辑区光标随主题取色（CM6 默认黑光标在深底上不可见；!important 压过 codemirror 基础主题的内联样式） */
 .cm-host .cm-cursor,.cm-host .cm-cursor-primary{border-left-color:var(--text)!important}
 .cm-host .cm-cursor-secondary{border-left-color:color-mix(in srgb,var(--text) 45%,transparent)!important}
@@ -238,10 +246,11 @@ svg{display:block}
 [data-theme="light"] .prose code{color:var(--accent-dim)}
 /* 代码块内的 code 不套用行内芯片样式（去背景框/边框，字号跟随 pre） */
 .prose pre code{background:none;border:none;padding:0;border-radius:0;font-size:inherit;color:inherit}
-.prose img{max-width:100%;height:auto;display:block;border:none;margin:8px 0 6px;cursor:zoom-in}
+/* 阅读窗图片一律水平居中（需求方 2026-11-17）：块级 img 用左右 auto 外边距，本地/远程同一条规则 */
+.prose img{max-width:100%;height:auto;display:block;border:none;margin:8px auto 6px;cursor:zoom-in}
 /* 纯图片段＝GitHub 流式排布（需求 2026-11-16 三次定夺「参考 Github 显示效果」）：
  * 徽章相互贴近成一行、超宽按词自然折行、无横向滚动、无大间距——inline 流式，不用 flex。 */
-.prose p.imgrow{margin:10px 0;line-height:2.1}
+.prose p.imgrow{margin:10px 0;line-height:2.1;text-align:center}
 .prose p.imgrow img{display:inline-block;vertical-align:middle;max-width:100%;width:auto;height:auto;
   margin:1px 2px;max-height:min(360px,45vh)}
 /* 套链徽章 [![img](shield)](link)：<a> 同样 inline 流式，徽章本体紧贴 */
@@ -634,6 +643,9 @@ svg{display:block}
 .prose .f-block[data-math="inline"]{display:inline-block;vertical-align:-0.2em}
 .prose .f-block[data-mermaid]{display:block;text-align:center;margin:14px 0;overflow-x:auto}
 .prose .f-block svg{max-width:100%;height:auto}
+/* 图表居中收口（需求方 2026-11-17）：mermaid/zenuml 产物是块级 svg、MathJax 产物嵌在 mjx-container 内，
+ * 容器 text-align 管不住块级盒——svg 显式块化 + auto 外边距。行内公式 [data-math="inline"] 不在列（随文排）。 */
+.prose .f-block[data-mermaid] > svg,.prose .f-block[data-math="block"] svg{display:block;margin:0 auto}
 /* $$ 块内被吞任务的序号记账占位：不可见不可点，仅活在 [data-task] 查询里（md.ts::taskMarksIn） */
 .prose .f-marks,.prose span[data-task][hidden]{display:none}
 /* 语法有误退化框（需求方最终定夺 2026-11-16：阅读窗对应位置把源码框起来 + 标注语法错误）。
@@ -680,3 +692,45 @@ svg{display:block}
 [data-theme="sepia"] .co-important{--co:#8250DF;--co-ink:#7147C8;--co-bg:rgba(130,80,223,.07);--co-line:rgba(130,80,223,.34)}
 [data-theme="sepia"] .co-warning{--co:#9A6700;--co-ink:#8A5D02;--co-bg:rgba(154,103,0,.08);--co-line:rgba(154,103,0,.36)}
 [data-theme="sepia"] .co-caution{--co:#CF222E;--co-ink:#B41C27;--co-bg:rgba(207,34,46,.07);--co-line:rgba(207,34,46,.34)}
+
+/* ── 导出 PDF（FR-13.2）── */
+/* 进行中浮层：顶部居中（toast 同位），pointer-events:none 不吃点击 */
+.exporting{position:fixed;top:calc(var(--h-title) + 10px);left:50%;transform:translateX(-50%);z-index:212;
+  display:inline-flex;align-items:center;gap:8px;padding:7px 16px;border-radius:8px;background:var(--bg-raise);
+  border:1px solid var(--line-hi);box-shadow:var(--shadow-pop);color:var(--text-2);font-size:12.5px;pointer-events:none}
+.exporting .spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line-hi);
+  border-top-color:var(--accent);animation:exp-spin .8s linear infinite}
+@keyframes exp-spin{to{transform:rotate(360deg)}}
+
+/* 打印介质 = PDF 版式唯一真相（CDP printToPDF 按 @media print 渲染，屏幕规则一概不带上）：
+ * ① 拆滚动链——.view 的 overflow:auto 不放开，正文会被裁成只剩视口高度；
+ * ② 窗口壳与一切浮层隐藏；③ 版心放开到纸宽（A4-24mm≈704px，行长自然回流，禁止横向分页）；
+ * ④ 主题色忠实——print-color-adjust:exact 配后端 printBackground:true，缺一深色主题变白底；
+ * ⑤ 分页：标题不落页尾、块级对象不拦腰斩；⑥ 折叠的 Callout 打印时展开（PDF 里没得点开，宁可全给）。 */
+@media print{
+  /* 真凶（2026-11-17 实测坐实）：屏幕侧防级联滚动的 `body{position:fixed;inset:0}`（app.css:59）让
+   * body 在打印时仍是视口高 821px 的脱流盒——#root/.view/article 展开到 35777px 也无济于事：
+   * Chromium 打印分页按根文档流的可滚溢出算，fixed 盒的溢出不产生第二页 → 只出 1 页。
+   * 修法：打印介质下把 body 放回文档流（position:static + inset:auto）；屏幕行为不受影响。 */
+  /* 页面底色分两层（2026-11-17 定稿「边框随主题」）：页边距环带只认 WebView2 页面衬底——
+   * 导出期间由 Rust（export_pdf 的 bg_color 参数）临时把衬底设为阅读窗底色，CSS 画不进边距；
+   * 内容区则由 html/body/.var(--bg-view) 铺满，两层同色无缝衔接 = 整页与阅读窗口同底色。 */
+  html,body{position:static!important;inset:auto!important;width:auto!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;background:var(--bg-view)!important}
+  body{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  #root{position:static!important;inset:auto!important;height:auto!important;max-height:none!important;overflow:visible!important;background:transparent!important}
+  .win,.body,.center{display:block!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;background:transparent!important}
+  .tbar,.rail,.side,.splitter,.pane-bar,.crumb-bar,.status,.pgbar,.editor-wrap,
+  .overlay,.st-panel,.ctxmenu,.toast-zone,.copypop,.exporting,.hitnav,#dropveil{display:none!important}
+  /* 黑边框真凶（2026-11-17 实测）：#boot-splash 是 position:fixed 的全屏深色层——Chromium 打印把
+   * fixed 元素逐页重复渲染；揭幕未完成（5s 兜底窗口内）时导出，每页都会铺一层 #080D18。
+   * 揭幕后它也只从 DOM 移除、不保证时序，打印介质下必须显式隐藏。 */
+  #boot-splash{display:none!important}
+  .view{overflow:visible!important;height:auto!important;max-height:none!important;flex:none!important;background:var(--bg-view)!important}
+  .prose{max-width:none!important;margin:0!important;padding:0!important}
+  .callout.folded .co-body{display:block}
+  .codeblock,.codeblock pre,.tw-tbl{overflow:visible}
+  .codeblock pre{white-space:pre-wrap;word-break:break-word}
+  h1,h2,h3,h4,h5,h6{break-after:avoid-page}
+  .codeblock,blockquote,.callout,.tw-tbl,.f-block,[data-mermaid],tr,img,.fb-box{break-inside:avoid}
+  p,li{orphans:2;widows:2}
+}

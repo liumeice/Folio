@@ -418,7 +418,10 @@ function mathBlockHtml(lang: string, code: string, nested: boolean): string {
 }
 
 function mermaidBlockHtml(code: string): string {
-  return `<div class="f-block" data-mermaid="1" data-lang="mermaid" data-code="${escapeHtml(code)}"></div>`;
+  // 首行 `zenuml` 关键字的块走 @zenuml/core 原生通道（mermaid v11 上游已移除 zenuml 图类型，
+  // 2026-11-16 需求方定夺原生支持；路由见 mermaidRender.ts / zenumlRender.ts）
+  const zuml = /^\s*zenuml(\b|$)/m.test(code);
+  return `<div class="f-block" data-mermaid="1"${zuml ? ' data-zuml="1"' : ""} data-lang="${zuml ? "zenuml" : "mermaid"}" data-code="${escapeHtml(code)}"></div>`;
 }
 
 /** nested=true：引用块/提示块内的递归渲染——标题不占 data-sec 序号（Rust 的 outline 不认 "> # x"），

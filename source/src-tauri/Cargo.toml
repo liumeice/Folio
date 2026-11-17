@@ -25,10 +25,23 @@ tauri-plugin-opener = "2"
 serde.workspace = true
 serde_json.workspace = true
 urlencoding.workspace = true
+base64 = "0.23"
+# FR-13.1 导出 HTML 图片随行：远程图在 Rust 侧下载（前端 fetch 被 CSP connect-src 拦死）。
+# reqwest 本就在 tauri 依赖树（Cargo.lock 0.13.5），这里提为直接依赖并补 TLS 后端：
+# 走 native-tls（Windows=schannel，纯系统 API）——0.13 的 rustls 特性绑 aws-lc-rs，要 CMake/NASM，不碰；
+# system-proxy 顺带开启，与「图片能刷出来」的浏览器代理环境同口径。tokio::fs/spawn 复用 tauri 运行时。
+reqwest = { version = "0.13", default-features = false, features = ["native-tls-no-alpn", "system-proxy"] }
+tokio = { version = "1", features = ["rt", "fs"] }
 folio-core.workspace = true
 folio-db.workspace = true
 folio-fs.workspace = true
 folio-search.workspace = true
+
+# FR-13.2 导出 PDF：进程内 CDP（Page.printToPDF）——官方 PrintToPdf API 不生成书签；
+# 版本必须与 tauri 依赖树一致（Cargo.lock：webview2-com 0.39.1 / windows-core 0.62.2）
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-single-instance = "2"

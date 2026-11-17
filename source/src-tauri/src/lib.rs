@@ -15,6 +15,8 @@ pub struct AppState {
     db: Arc<Db>,
     /// 冷启动命令行里的 folio:// 与文件路径（前端挂载后经 drain_pending 领取）
     pending: Mutex<Vec<String>>,
+    /// FR-13.2：导出 PDF 互斥（CDP printToPDF 无取消接口，同一时刻只允许一趟打印）
+    exporting: std::sync::atomic::AtomicBool,
 }
 
 fn errstr<E: std::fmt::Display>(e: E) -> String {
@@ -205,6 +207,159 @@ fn guarded_path(raw: &str) -> std::result::Result<std::path::PathBuf, String> {
     Ok(p)
 }
 
+/// 构造 CDP `Page.printToPDF` 的 params JSON。
+/// A4 纵向、上下 15mm / 左右 12mm 页边距（英寸=mm/25.4）、打印背景色、页眉页脚关。
+/// **`generateDocumentOutline:true` 是书签的开关**——内核据正文 h1–h6 生成 PDF 文档大纲树（FR-13.2 的核心需求）。
+#[cfg(windows)]
+fn pdf_print_params_json() -> String {
+    let mut m = serde_json::Map::new();
+    let ins = |mm: f64| mm / 25.4; // 毫米 → 英寸
+    m.insert("printBackground".into(), true.into());
+    m.insert("paperWidth".into(), (8.27f64).into());  // A4 8.27in
+    m.insert("paperHeight".into(), (11.69f64).into()); // A4 11.69in
+    m.insert("marginTop".into(), ins(15.0).into());
+    m.insert("marginBottom".into(), ins(15.0).into());
+    m.insert("marginLeft".into(), ins(12.0).into());
+    m.insert("marginRight".into(), ins(12.0).into());
+    m.insert("preferCSSPageSize".into(), false.into());
+    m.insert("displayHeaderFooter".into(), false.into());
+    m.insert("generateDocumentOutline".into(), true.into()); // ★ 大纲→书签
+    m.insert("transferMode".into(), "ReturnAsBase64".into());
+    serde_json::Value::Object(m).to_string()
+}
+
+/// 把 &str 拷进调用方持有的 Vec<u16>（补 null），返回指向它的 PCWSTR（借用了 buf，故 buf 必须活到调用结束）。
+#[cfg(windows)]
+fn pcstr_in(buf: &mut Vec<u16>, s: &str) -> windows_core::PCWSTR {
+    buf.clear();
+    buf.extend(s.encode_utf16());
+    buf.push(0);
+    windows_core::PCWSTR(buf.as_ptr())
+}
+
+/// 解析 `#RRGGBB`（前端传主题底色用；失败回退白纸）。
+#[cfg(windows)]
+fn parse_hex_color(s: &str) -> Option<(u8, u8, u8)> {
+    let h = s.strip_prefix('#')?;
+    if h.len() != 6 { return None; }
+    let r = u8::from_str_radix(&h[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&h[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&h[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
+/// 导出当前阅读视图为 PDF（FR-13.2，含大纲书签）。
+///
+/// 路线：WebView2 进程内 DevTools 协议 `Page.printToPDF`（`CallDevToolsProtocolMethod`），
+/// 而非官方 `PrintToPdf`——后者不支持文档大纲，而本需求的书签正是要靠 `generateDocumentOutline`
+/// 从正文 h1–h6 生成。内核支持性已由 `source/_cdp_pdfpoc.mjs` 活体 POC 验证（产物含 /Outlines+/Title）。
+/// 版式（A4 / 边距 / 隐藏窗口壳）全在 app.css 的 `@media print`，这里只管协议与落盘。
+/// `bg_color`（`#RRGGBB`）= 阅读窗底色：导出期间临时把 WebView2 页面衬底设成它（页边距环带
+/// 只认衬底，CSS 画不进去——2026-11-17 二分实测），完成后还原窗口原色，屏幕侧零影响。
+/// 全程互斥（`AppState.exporting`）：CDP 打印无取消接口，一次只许一趟。
+#[cfg(windows)]
+#[tauri::command]
+async fn export_pdf(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    bg_color: Option<String>,
+) -> Result<(), String> {
+    use base64::Engine as _;
+    if state.exporting.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err("上一次导出尚未完成".into());
+    }
+    let win = app.get_webview_window("main").ok_or_else(|| "找不到主窗口".to_string())?;
+    let params = pdf_print_params_json();
+    let (pr, pg, pb) = bg_color.as_deref().and_then(parse_hex_color).unwrap_or((255, 255, 255));
+    let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
+    // with_webview 把闭包投递到主线程执行（COM 必须在其创建线程），执行完即返回；
+    // completed 回调稍后也在主线程触发，把 CDP 结果 JSON 经 tx 送回。
+    let dispatch = win.with_webview(move |wv| {
+        use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
+        use webview2_com::Microsoft::Web::WebView2::Win32::{COREWEBVIEW2_COLOR, ICoreWebView2Controller2};
+        use windows_core::Interface as _;
+        let controller = wv.controller();
+        let core = match unsafe { controller.CoreWebView2() } {
+            Ok(c) => c,
+            Err(e) => { let _ = tx.send(Err(errstr(e))); return; }
+        };
+        // 黑边框真凶（2026-11-17 二分实测坐实）：tauri.conf 的窗口底色 #080D18 被 wry 设为
+        // WebView2 DefaultBackgroundColor；Chromium printToPDF(printBackground:true) 把这个
+        // 渲染器级衬底逐页铺——页边距环带（无任何元素可画）露出的就是它。CSS 打印规则管不到
+        // 这一层（此前所有 CSS 修复无效的原因）。对策：导出期间临时置白，完成/失败后还原，
+        // 屏幕侧零影响（应用自身始终铺满不露衬底）。
+        let ctl2 = match controller.cast::<ICoreWebView2Controller2>() {
+            Ok(c) => c,
+            Err(e) => { let _ = tx.send(Err(errstr(e))); return; }
+        };
+        let mut orig = COREWEBVIEW2_COLOR { A: 255, R: 255, G: 255, B: 255 };
+        let _ = unsafe { ctl2.DefaultBackgroundColor(&mut orig) };
+        if let Err(e) = unsafe { ctl2.SetDefaultBackgroundColor(COREWEBVIEW2_COLOR { A: 255, R: pr, G: pg, B: pb }) } {
+            let _ = tx.send(Err(format!("设置页面衬底失败：{}", e)));
+            return;
+        }
+        let ctl_h = ctl2.clone();
+        let orig_h = COREWEBVIEW2_COLOR { A: orig.A, R: orig.R, G: orig.G, B: orig.B };
+        let tx_cb = tx.clone(); // 完成回调这一支
+        let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+            move |status: windows_core::Result<()>, result_json: String| -> windows_core::Result<()> {
+                let _ = unsafe { ctl_h.SetDefaultBackgroundColor(orig_h) }; // 打印结束——还原窗口底色
+                let _ = match status {
+                    Ok(()) => tx_cb.send(Ok(result_json)),
+                    Err(e) => tx_cb.send(Err(errstr(e))),
+                };
+                Ok(())
+            },
+        ));
+        let mut mbuf = Vec::new();
+        let mut pbuf = Vec::new();
+        let name = pcstr_in(&mut mbuf, "Page.printToPDF");
+        let args = pcstr_in(&mut pbuf, &params);
+        // 提交失败 = handler 永远不会触发 → 先还原衬底再就地送错，否则外层只能等到断链
+        if let Err(e) = unsafe { core.CallDevToolsProtocolMethod(name, args, &handler) } {
+            let _ = unsafe { ctl2.SetDefaultBackgroundColor(orig) };
+            let _ = tx.send(Err(format!("打印接口调用失败：{}", e)));
+        }
+    });
+    if let Err(e) = dispatch {
+        state.exporting.store(false, std::sync::atomic::Ordering::SeqCst);
+        return Err(format!("无法访问渲染进程：{}", e));
+    }
+    // 等回调（阻塞在 spawn_blocking 线程，不占 async 执行器）
+    let recv = tauri::async_runtime::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(errstr)?;
+    state.exporting.store(false, std::sync::atomic::Ordering::SeqCst);
+    let json = recv.map_err(|_| "导出超时：渲染进程未返回 PDF（请重试）".to_string())??;
+    // CDP 结果 {"data":"<base64>"}；解析失败/无 data 字段一律当错误，把原始片段带回（截断）
+    let val: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|_| format!("PDF 返回解析失败：{}", trunc(&json, 120)))?;
+    let b64 = val.get("data").and_then(|d| d.as_str())
+        .ok_or_else(|| format!("导出失败：渲染器未产出 PDF（{}）", trunc(&json, 120)))?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64).map_err(errstr)?;
+    let p = guarded_path(&path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(dir) = p.parent() { std::fs::create_dir_all(dir).map_err(errstr)?; }
+        std::fs::write(&p, &bytes).map_err(errstr)
+    })
+    .await
+    .map_err(errstr)?
+    .map_err(errstr)
+}
+
+/// 非 Windows 平台占位（本需求仅 Windows）；保持命令签名一致，运行时报错即可。
+#[cfg(not(windows))]
+#[tauri::command]
+async fn export_pdf(_app: AppHandle, _state: State<'_, AppState>, _path: String, _bg_color: Option<String>) -> Result<(), String> {
+    Err("导出 PDF 目前仅在 Windows 平台提供".into())
+}
+
+/// 安全截断（避免把超长 base64 或异常 payload 整段甩进错误串）。
+fn trunc(s: &str, n: usize) -> String {
+    if s.len() <= n { s.to_string() } else { s.chars().take(n).collect::<String>() + "…" }
+}
+
 /// 导出等通用写出（路径由前端 save 对话框确定，FR-13.1）
 #[tauri::command]
 async fn write_file(path: String, content: String) -> Result<(), String> {
@@ -213,6 +368,19 @@ async fn write_file(path: String, content: String) -> Result<(), String> {
         .await
         .map_err(errstr)?
         .map_err(errstr)
+}
+
+/// 导出 HTML 图片随行（FR-13.1，需求方 2026-11-17）：本地按路径复制、远程 Rust 侧下载
+/// （webview CSP 只放行 IPC，前端 fetch 不了任意 https），统一落 <HTML 同级>/images/。
+/// 路径守卫与 write_file 同口径（拒 `..`、父目录存在则 canonical 化）；
+/// 逐图成败在 commands.rs（无 tauri 依赖，可单测）。
+#[tauri::command]
+async fn export_images(
+    html_path: String,
+    items: Vec<commands::ImageRef>,
+) -> Result<Vec<commands::ImageOut>, String> {
+    let p = guarded_path(&html_path)?;
+    Ok(commands::run_export_images(&p, items).await)
 }
 
 /// 导入等通用读文本（不受扩展名白名单限制；路径由前端 open 对话框确定）
@@ -481,7 +649,7 @@ pub fn run() {
                 let _ = db_maint.vacuum_if_bloated();     // 再回收页（含 optimize 释放的）
                 let _ = db_maint.checkpoint();
             });
-            app.manage(AppState { db, pending: Mutex::new(initial.clone()) });
+            app.manage(AppState { db, pending: Mutex::new(initial.clone()), exporting: std::sync::atomic::AtomicBool::new(false) });
 
             use tauri_plugin_deep_link::DeepLinkExt;
             let handle = app.handle().clone();
@@ -568,7 +736,9 @@ pub fn run() {
             write_file,
             read_file,
             resolve_image,
-            resolve_images
+            resolve_images,
+            export_pdf,
+            export_images
         ])
         .run(tauri::generate_context!())
         .expect("Folio 启动失败");

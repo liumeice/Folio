@@ -11,7 +11,7 @@ import Splitter from "./components/Splitter";
 /* 编辑器拆包懒加载（性能 P0-2）：CodeMirror 不再进入入口 bundle，首次进入编辑模式才拉取 */
 const EditorPane = lazy(() => import("./components/EditorPane"));
 import SearchPalette from "./components/SearchPalette";
-import { AboutModal, ContextMenu, CopyPop, DropVeil, HitNav, ImgBox, KeysModal, PropsModal } from "./components/Overlays";
+import { AboutModal, ContextMenu, CopyPop, DropVeil, ExportBusy, HitNav, ImgBox, KeysModal, PropsModal } from "./components/Overlays";
 import SettingsPanel from "./components/SettingsPanel";
 import PickDialog from "./components/PickDialog";
 import AskDialog from "./components/AskDialog";
@@ -237,6 +237,7 @@ export default function App() {
         <PickDialog />
         <AskDialog />
         <CopyPop />
+        <ExportBusy />
         <ToastZone />
       </div>
     </>
