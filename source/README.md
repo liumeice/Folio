@@ -1,7 +1,7 @@
 # Folio · source —— 正式版工程
 
 Tauri 2 + Rust workspace + SolidJS 1.9 + CodeMirror 6 + SQLite FTS5。
-交互契约与验收基线见仓库根 `README.md`、`docs/Folio-PRD-v1.2-20261114.md` 与 `docs/设计变更-文档库与最近打开-20261114.md`（后者修订 PRD v1.2 的 FR-10）。
+交互参考与验收基线见仓库根 `README.md`、`docs/Folio-PRD-v1.4-20261117.md` 与 `docs/设计变更-文档库与最近打开-20261114.md`（该设计已并入 PRD v1.4）。
 
 ## 环境要求
 
@@ -85,7 +85,7 @@ localStorage mock + 内置演示文档，用于 UI 迭代。回退层不是产�
 **2026-11-15 · 全屏设置中心 + 主题/强调色落地**（次日形态改版，见下）：300px 抽屉升级为**全屏设置视图**（`.st-panel`，与 side/center 同层 flex 子项，`settings-open` 时隐藏 side/center/splitter、rail 与标题栏保留，保持挂载不丢编辑器状态；rail ⚙ 进、Esc 退）。
 **2026-11-16 · 设置浮窗化 + 入口迁标题栏**（原型先定稿：浮窗 + 加宽 + ⚙ 迁移 + 撤 rail 钮，冒烟 102/102；随后移植）：`.st-panel` 改为**全屏轻遮罩**（fixed、z-index 170 压 `.ctxmenu`(160) 让位 `#dropveil`(180)，rgba(9,14,24,.42) + 2px 模糊），内层新增 `.st-win` **居中独立浮窗**（`min(1060px,94vw)×min(640px,88vh)`、圆角 12px、投影、`st-pop` 0.18s 弹入；1060 为实测定值，920 会让设置行换行）；**删除** `.body.settings-open` 隐藏 side/center/splitter 的规则——主界面保持可见且挂载，状态栏不再被藏。设置入口=**标题栏 ⚙**（专注模式右边，`TitleBar.tsx`），rail 底部 ⚙ 连同 spacer/监听/选中态同步从 `SidePanels.tsx` 清除。关闭：Esc（ui.tsx 既有分层）/ 点遮罩空白（`SettingsPanel` 根节点 onClick 判 `e.target===e.currentTarget`）/ 再点 ⚙ / 保存并关闭。面板内部＝左分组导航（216px）+ 外观（三张主题预览卡 + 6 枚强调色色板）+ 各分组卡片行 + 抬头「导入·导出（图标钮）/ 撤销更改 / 保存并关闭（主按钮）」+ 底部「恢复默认」；控件规格声明式集中在 `src/lib/settings-spec.ts`（5 组 11 项，可单测 `tests/settings-spec.test.ts`），`SettingsPanel.tsx` 不含数据判断（「界面不许说谎」：未在后端落地的项不摆空控件）。后端 `Settings.theme` 增 `"sepia"`（护眼米色，令牌 `app.css [data-theme="sepia"]`）、`Settings.accent`（前端 `src/lib/accent.ts` 按相对亮度派生 `--accent-dim/-ink/-bg` 写进 **body** 内联，压在 `[data-theme]` 主题块之上；空串=跟随主题内置色）。settings 以 JSON blob 存、结构级 `#[serde(default)]`，加字段无需 schema 迁移；导入/导出配置走 `save/open` 对话框 + `write_file`/`read_file`。标题栏按钮集同步对齐原型（撤 ☾ 主题钮与 ⚙ 排版钮：主题切换归「查看→深色/浅色主题」菜单项，设置入口归 rail 底部 ⚙，「关于」改由「帮助→关于 Folio」进）。
 仍欠：首屏 bundle 拆分（M5，hljs+CM6 一并懒加载分块）、扫描上限 UI 入口、NSIS 企业离线（fixed runtime）、Playwright e2e、
-屏幕阅读器深度支持（P2）、PDF 导出（1.x）。OS 级全局快捷键不引入（PRD D5 决议）。
+屏幕阅读器深度支持（P2）。PDF 导出已落地（页边距底色与大纲书签见 PRD FR-13）。OS 级全局快捷键不引入（PRD D5 决议）。
 
 ## 排障
 

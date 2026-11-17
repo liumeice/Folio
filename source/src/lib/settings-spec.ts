@@ -66,7 +66,7 @@ export const ITEMS: readonly SettingItem[] = [
   },
   {
     key: "accent", group: "appearance", label: "强调色",
-    hint: "六枚强调色纯色，选中即时套用到高亮、描边、链接与主按钮（按亮度自动配前景墨色）。",
+    hint: "十二枚强调色：六枚纯色 + 六枚日夜双档（色板对分圆，浅底取浅档、暗底取暗档）。选中即时套用到高亮、描边、链接与主按钮，前景墨色自动择优。",
     control: { kind: "swatch" },
     get: (s) => s.accent,
     set: (_s, v) => ({ accent: String(v) }),

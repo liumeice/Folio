@@ -55,10 +55,12 @@ function Control(props: { item: SettingItem }) {
     const cur = () => String(val()).toLowerCase();
     return (
       <div class="swatches">
-        <For each={ACCENTS}>{([hex, name]) => (
-          <button type="button" class="swatch" title={name} aria-label={name}
-            classList={{ on: cur() === hex.toLowerCase() }}
-            style={{ background: hex }} onClick={() => apply(hex)}>
+        <For each={ACCENTS}>{(a) => (
+          <button type="button" class="swatch"
+            title={a.tiered ? `${a.name} · 浅 ${a.light} / 暗 ${a.dark}` : a.name} aria-label={a.name}
+            classList={{ on: cur() === a.id.toLowerCase() }}
+            style={{ background: a.tiered ? `linear-gradient(135deg, ${a.light} 0 50%, ${a.dark} 50% 100%)` : a.id }}
+            onClick={() => apply(a.id)}>
             <span class="dot" />
           </button>
         )}</For>

@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { EditorState } from "@codemirror/state";
 import { md } from "../src/lib/mdEditor.ts";
-import { syntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree } from "@codemirror/language";
 import { getStyleTags, tags as t, type Tag } from "@lezer/highlight";
 import { MD_SPEC, MD_CLASS } from "../src/lib/mdstyle.ts";
 
@@ -46,9 +46,18 @@ const SAMPLE = [
  *  行内代码配色被盖掉——实机核对抓到后取消。 */
 const EXEMPT = new Set<Tag>([t.list, t.content]);
 
-function treeTags(state: EditorState): Set<Tag> {
+/** 全树唯一来源：ensureSyntaxTree 完成态直接返回的 Tree。
+ *  不再经 syntaxTree(state) 快照 API——它挑 slot 的时机在并行负载下不确定，
+ *  2026-11-17 实测即便预解析过仍偶发拿回缺尾部构造的半树（FencedCode 失踪案）。 */
+function parsed(): NonNullable<ReturnType<typeof ensureSyntaxTree>> {
+  const tr = ensureSyntaxTree(state, state.doc.length, 2000);
+  assert.ok(tr, "样本文档未被完整解析（ensureSyntaxTree 超时）");
+  return tr;
+}
+
+function treeTags(): Set<Tag> {
   const out = new Set<Tag>();
-  syntaxTree(state).iterate({
+  parsed().iterate({
     enter: (node) => {
       const st = getStyleTags(node);
       if (st) for (const tg of st.tags) out.add(tg);
@@ -57,15 +66,18 @@ function treeTags(state: EditorState): Set<Tag> {
   return out;
 }
 
-function treeNodes(state: EditorState): Set<string> {
+function treeNodes(): Set<string> {
   const out = new Set<string>();
-  syntaxTree(state).iterate({ enter: (n) => { out.add(n.name); } });
+  parsed().iterate({ enter: (n) => { out.add(n.name); } });
   return out;
 }
 
-// 用编辑区的同一个入口造状态：配置一改，这里的断言立刻跟着变（防"测试与 app 两套解析器"漂移）
+// 用编辑区的同一个入口造状态：配置一改，这里的断言立刻跟着变（防"测试与 app 两套解析器"漂移）。
+// syntaxTree() 拿的是「当前快照」——CodeMirror 增量异步解析，多文件并行跑时可能尚未推到文末
+// （2026-11-17 实测：13 文件同跑约 1/3 概率报「样本文档未被完整解析」）。用 ensureSyntaxTree
+// 阻塞到全文解析就绪（2s 预算，实际毫秒级），解析结果进 state 缓存，后续 syntaxTree(state) 即全树。
 const state = EditorState.create({ doc: SAMPLE, extensions: [md()] });
-assert.ok(syntaxTree(state).length > SAMPLE.length - 10, "样本文档未被完整解析");
+assert.ok(parsed().length > SAMPLE.length - 10, "样本文档未被完整解析");
 
 const covered = new Set<Tag>();
 for (const rule of MD_SPEC as { tag?: Tag | readonly Tag[] }[]) {
@@ -75,7 +87,7 @@ for (const rule of MD_SPEC as { tag?: Tag | readonly Tag[] }[]) {
 
 test("A 覆盖度：语法树里的每个 tag 要么被着色，要么确认默认样式不管它", () => {
   const leaked: string[] = [];
-  for (const tg of treeTags(state)) {
+  for (const tg of treeTags()) {
     if (!covered.has(tg) && !EXEMPT.has(tg)) leaked.push(String(tg.name ?? "?"));
   }
   assert.deepEqual(leaked, [], `这些 tag 会被 CodeMirror 默认配色补色：${leaked.join(", ")}`);
@@ -104,7 +116,7 @@ test("B2 层叠顺序：.cmx-plain 必须早于具体类，否则抹掉行内代
 });
 
 test("C 结构装饰与 GFM 构造：节点确实出现在编辑区解析结果里", () => {
-  const names = treeNodes(state);
+  const names = treeNodes();
   for (const n of ["FencedCode", "CodeBlock", "Blockquote", "ListMark", "TaskMarker", "TableHeader", "ATXHeading1"]) {
     assert.ok(names.has(n), `样本文档应产生 ${n} 节点`);
   }

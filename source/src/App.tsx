@@ -31,7 +31,8 @@ export default function App() {
   });
 
   // 强调色覆盖写进 body 内联（压在 [data-theme] 令牌块之上）；空值则清掉内联交回主题内置色。
-  createEffect(() => applyAccent(s.settings().accent));
+  // theme 一并追踪：日夜双档色（朱砂等六枚）随主题切档,单档旧色解析结果恒等不受影响。
+  createEffect(() => applyAccent(s.settings().accent, s.settings().theme));
 
   // 菜单关闭（任何途径）时子菜单一并收起——状态放 ui，复位收敛在这一处
   createEffect(() => { if (!ui.menuOpen()) ui.setThemeSubOpen(false); });

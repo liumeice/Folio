@@ -75,9 +75,9 @@ test("主题三卡：当前值在选项内，逐选项读写一致（含护眼�
 test("强调色色板：get 落在 ACCENTS 内，逐色读写一致", async () => {
   const { ACCENTS } = await import("../src/lib/accent.ts");
   const accent = ITEMS.find((i) => i.control.kind === "swatch")!;
-  const hexes = ACCENTS.map(([h]) => h.toLowerCase());
+  const hexes = ACCENTS.map((a) => a.id.toLowerCase());
   assert.ok(hexes.includes(String(accent.get(S())).toLowerCase()), `默认强调色 ${accent.get(S())} 不在色板`);
-  for (const [hex] of ACCENTS) assert.equal(String(accent.get(S(accent.set(S(), hex)))).toLowerCase(), hex.toLowerCase(), `色 ${hex} 读写不一致`);
+  for (const a of ACCENTS) assert.equal(String(accent.get(S(accent.set(S(), a.id)))).toLowerCase(), a.id.toLowerCase(), `色 ${a.id} 读写不一致`);
 });
 
 test("恢复默认只动排版，且值就是 DEFAULTS；不碰主题/强调色/侧栏/库根", () => {
