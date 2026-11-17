@@ -10,7 +10,12 @@ import { api } from "./api";
 import { DEFAULT_SETTINGS } from "./defaults";
 import type { DocFull, DocMeta, HistEntry, Position, RecentDoc, Settings } from "./types";
 
-import { navForHistEntrySameDoc, type NavRequest } from "./nav";
+import { isTypesetSettled, lineForSec, navForHistEntrySameDoc, navForRestorePos, type NavRequest } from "./nav";
+
+/** 行锚主链所需：文档行数（\r\n 归一后按 \n 计，与 md.ts / folio-core 同口径） */
+function srcLines(src: string): number {
+  return src.replace(/\r\n/g, "\n").split("\n").length;
+}
 import { confirmBox, quitApp } from "./actions";
 import * as ui from "./ui";
 import { dismissSplash } from "./boot";
@@ -155,14 +160,21 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     }
     if (!posSource || mode() === "edit") return;
     const cur = current();
-    const p = posSource();
+    let p = posSource();
     if (!cur || !p) return;
+    // ratio 是布局依赖量：排版未落定时 scrollHeight 是塌陷值，落盘即污染（R6/二轮评审 2.4）。
+    // 未落定期沿用旧 ratio；secLineOff/srcLine 布局无关照常写（方案 §4.3）
+    if (!isTypesetSettled(cur.meta.id)) {
+      const old = positionsMap()[cur.meta.id];
+      if (old && old.updatedAt <= p.updatedAt) p = { ...p, ratio: old.ratio };
+    }
     setPositionsMap((m) => ({ ...m, [cur.meta.id]: p }));
     const h = history[histIdx()];
     if (h && h.docId === cur.meta.id) {
       h.ratio = p.ratio;
       h.sec = p.sec;
       h.secText = p.secText;
+      h.lineFloat = p.srcLine ?? null;   // 同文档历史绝对位置主坐标（布局无关）
     }
     try {
       await api.savePosition(cur.meta.id, p);
@@ -227,7 +239,10 @@ export function StoreProvider(props: ParentProps): JSX.Element {
 
   function positionOf(doc: DocFull): Position | null {
     const p = positionsMap()[doc.meta.id];
-    return p && p.ratio > 0.02 && p.ratio < 0.98 ? p : null;
+    if (!p) return null;
+    // 有行锚即认（塌陷期污染的 ratio 不再拦掉恢复，二轮评审 2.3 补指的老库行则走旧门）
+    const hasLine = (p.secLineOff ?? -1) >= 0 || (p.srcLine != null && p.srcLine > 0);
+    return hasLine || (p.ratio > 0.02 && p.ratio < 0.98) ? p : null;
   }
 
   async function switchTo(doc: DocFull, opts?: { secText?: string | null; record?: boolean }) {
@@ -244,7 +259,9 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     } else {
       const pos = positionOf(doc);
       if (pos) {
-        setNavRequest({ kind: "restore", sec: pos.sec, secText: pos.secText, ratio: pos.ratio, secOff: pos.secOff });
+        // v1.2 主链：章节行偏移（抗标题上方增删）；无锚旧行退回 secOff/ratio 老链（方案 §4.3）
+        setNavRequest(navForRestorePos(pos, doc.outline, srcLines(doc.src))
+          ?? { kind: "restore", sec: pos.sec, secText: pos.secText, ratio: pos.ratio, secOff: pos.secOff });
         toast(`已恢复「${doc.meta.fileName}」上次阅读位置 · ${Math.round(pos.ratio * 100)}%`);
       } else if (!first) {
         setNavRequest({ kind: "top" });
@@ -322,7 +339,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     }
     // 编辑态：大纲点击作用于编辑器（跳源码行），并让 activeSec 立即跟随
     if (mode() === "edit" && ui.getEditorBridge()) {
-      ui.getEditorBridge()!.jumpTo(sec, 0);
+      ui.getEditorBridge()!.jumpToLine(lineForSec(cur.outline, sec) ?? 0);
       setActiveSec(sec);
       return;
     }
@@ -359,17 +376,16 @@ export function StoreProvider(props: ParentProps): JSX.Element {
 
   /* ── 编辑 ── */
   function endEdit() {
-    // 退出编辑：把编辑器当前"章节+行内比例"交接给阅读视图（滚动同步）
-    const ef = ui.getEditorBridge()?.topFrac() ?? null;
+    // 退出编辑：把编辑器当前小数行号交接给阅读视图（v1.2 一把尺；无标题文档同样可交接——R4 闭环）
+    const l = ui.getEditorBridge()?.topLine() ?? null;
     setMode("read");
     setDirty(false);
-    if (ef && ef.sec != null) setNavRequest({ kind: "secFrac", sec: ef.sec, frac: ef.frac });
+    if (l != null) setNavRequest({ kind: "line", line: l });
   }
   function enterEdit() {
     if (!current()) return;
-    // 进入编辑：把阅读视图当前"章节+像素比例"换算成行比例暂存（EditorPane 挂载消费）
-    const vf = ui.getViewBridge()?.secFrac() ?? null;
-    ui.setPendingEditorJump(vf);
+    // 进入编辑：阅读视口的顶行号暂存（EditorPane 挂载消费）
+    ui.setPendingEditorJump(ui.getViewBridge()?.topLine() ?? null);
     setDraftSrc(current()!.src);
     setMode("edit");
     setDirty(false);
@@ -451,11 +467,15 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     clearDraft(cur.meta.path);
     toast("已放弃未保存修改，返回阅读模式");
   }
-  /** 复选框写回等「非用户编辑」的内容变化：原位重渲染，不跳顶 */
+  /** 复选框写回等「非用户编辑」的内容变化：原位重渲染，不跳顶。
+   *  v1.2：主坐标走行锚链（勾选只动一行内容不改行号，line 天然稳）；无锚才退 ratio 老链（二轮评审 2.3） */
   async function applySaved(next: DocFull) {
     const p = posSource ? posSource() : null;
     setDoc(next);
-    if (p && p.ratio > 0.001) {
+    if (!p) return;
+    const lineNav = navForRestorePos(p, next.outline, srcLines(next.src));
+    if (lineNav) setNavRequest(lineNav);
+    else if (p.ratio > 0.001) {
       setNavRequest({ kind: "restore", sec: p.sec, secText: p.secText, ratio: p.ratio, secOff: p.secOff });
     }
   }

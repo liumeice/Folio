@@ -259,6 +259,20 @@ pub fn setup(c: &Connection) -> rusqlite::Result<()> {
         }
         c.pragma_update(None, "user_version", 5)?;
     }
+    if v < 6 {
+        // schema v6（2026-11-17 滚动定位同步方案 §4.3）：positions.sec_line_off = 章节内源码行偏移。
+        // 恢复主坐标：布局无关（ratio/secOff 是布局依赖值，图表初排塌陷期落盘即污染）；
+        // -1=无值（旧行迁移默认），恢复链按 sec 锚点行号 + 偏移 → 旧链 secOff → ratio。
+        // 幂等：pragma_table_info 探测后再 ALTER（仿 v2/v5 防御写法），重放无副作用。
+        let has_off: bool = c
+            .prepare("SELECT 1 FROM pragma_table_info('positions') WHERE name = 'sec_line_off'")
+            .and_then(|mut s| s.exists([]))
+            .unwrap_or(false);
+        if !has_off {
+            c.execute("ALTER TABLE positions ADD COLUMN sec_line_off REAL NOT NULL DEFAULT -1", [])?;
+        }
+        c.pragma_update(None, "user_version", 6)?;
+    }
     Ok(())
 }
 

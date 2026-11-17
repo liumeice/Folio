@@ -79,9 +79,17 @@ pub struct Position {
     pub sec_text: Option<String>,
     /// 锚定：最近标题的 data-sec 序号
     pub sec: Option<i64>,
-    /// 标题内偏移（px）
+    /// 标题内偏移（px；v1.2 起与恢复式子镜像对称：scrollTop-(offsetTop-HEAD_OFFSET)）
     pub sec_off: f64,
+    /// v6（滚动同步方案 §4.3）：章节内源码行偏移，恢复主坐标；-1=无值（旧行）
+    #[serde(default = "no_line_off")]
+    pub sec_line_off: f64,
     pub updated_at: i64,
+}
+
+/// sec_line_off 的「无值」哨兵（Default 派生取 0 会与「章节首行」歧义，构造点务必显式 -1.0）
+pub fn no_line_off() -> f64 {
+    -1.0
 }
 
 /// 搜索命中（块级）。scope=Library 时带文档信息

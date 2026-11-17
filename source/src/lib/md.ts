@@ -343,7 +343,7 @@ const CALLOUT_TYPES = {
 
 const CALLOUT_RE = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]([+-])?(?:[ \t]+(.*))?$/i;
 
-function parseCallout(buf: string[], defs: Defs, nested: boolean): string | null {
+function parseCallout(buf: string[], defs: Defs, nested: boolean, lineAttrs: string, bodyBaseLine: number): string | null {
   if (!buf.length) return null;
   const m = buf[0].trim().match(CALLOUT_RE);
   if (!m) return null;
@@ -352,9 +352,10 @@ function parseCallout(buf: string[], defs: Defs, nested: boolean): string | null
   const fold = m[2] === "-" || m[2] === "+";
   const collapsed = m[2] === "-";
   const title = (m[3] ?? "").trim() || spec.label;
-  const body = buf.length > 1 ? renderBlocks(buf.slice(1).join("\n"), defs, nested) : "";
+  // 正文行与原始行逐行 1:1（仅剥 "> " 前缀），故传 bodyBaseLine 让子块记绝对行号（方案 §4.1(a) 嵌套记账）
+  const body = buf.length > 1 ? renderBlocks(buf.slice(1).join("\n"), defs, nested, bodyBaseLine) : "";
   return (
-    `<div class="callout co-${key}${collapsed ? " folded" : ""}" data-callout="${key}"${fold ? ` data-fold="1"` : ""}>` +
+    `<div class="callout co-${key}${collapsed ? " folded" : ""}" data-callout="${key}"${fold ? ` data-fold="1"` : ""}${lineAttrs}>` +
       `<div class="co-head"${fold ? ` role="button" tabindex="0" aria-expanded="${!collapsed}"` : ""}>` +
         `<svg class="ico ico-14"><use href="#${spec.icon}"/></svg><span>${escapeHtml(title)}</span>` +
         (fold ? `<svg class="ico ico-12 co-chev"><use href="#i-chev-d"/></svg>` : "") +
@@ -413,20 +414,33 @@ function taskMarksIn(code: string): string {
   return n ? '<span class="f-marks">' + '<span data-task="1" hidden></span>'.repeat(n) + "</span>" : "";
 }
 
-function mathBlockHtml(lang: string, code: string, nested: boolean): string {
-  return `<div class="f-block" data-math="block" data-lang="${escapeHtml(lang)}" data-code="${escapeHtml(code)}">${nested ? "" : taskMarksIn(code)}</div>`;
+/* 公式/图表占位块（滚动同步方案 v1.2 §4.2 占位预估高度）：排版前高度≈0 会让首落整个错位、
+ * 补偿层"稳定地保持错误"。按源码行数给 min-height 估算，f-ready/f-error 后由 CSS 归零；
+ * 只影响首落体验，不影响最终精度（终局重放兜底）。lineAttrs=data-line-start/end 记账串。 */
+function mathMinH(lines: number): string {
+  return ` style="min-height:${Math.min(160, Math.max(48, (lines + 2) * 20))}px"`;
+}
+function mermaidMinH(lines: number): string {
+  return ` style="min-height:${Math.min(300, Math.max(120, (lines + 2) * 40))}px"`;
 }
 
-function mermaidBlockHtml(code: string): string {
+function mathBlockHtml(lang: string, code: string, nested: boolean, lineAttrs: string): string {
+  return `<div class="f-block" data-math="block" data-lang="${escapeHtml(lang)}" data-code="${escapeHtml(code)}"${lineAttrs}${mathMinH(code.split("\n").length)}>${nested ? "" : taskMarksIn(code)}</div>`;
+}
+
+function mermaidBlockHtml(code: string, lineAttrs: string): string {
   // 首行 `zenuml` 关键字的块走 @zenuml/core 原生通道（mermaid v11 上游已移除 zenuml 图类型，
   // 2026-11-16 需求方定夺原生支持；路由见 mermaidRender.ts / zenumlRender.ts）
   const zuml = /^\s*zenuml(\b|$)/m.test(code);
-  return `<div class="f-block" data-mermaid="1"${zuml ? ' data-zuml="1"' : ""} data-lang="${zuml ? "zenuml" : "mermaid"}" data-code="${escapeHtml(code)}"></div>`;
+  return `<div class="f-block" data-mermaid="1"${zuml ? ' data-zuml="1"' : ""} data-lang="${zuml ? "zenuml" : "mermaid"}" data-code="${escapeHtml(code)}"${lineAttrs}${mermaidMinH(code.split("\n").length)}></div>`;
 }
 
 /** nested=true：引用块/提示块内的递归渲染——标题不占 data-sec 序号（Rust 的 outline 不认 "> # x"），
- *  任务项不生成 data-task/role=checkbox（Rust toggle_task 不认引用前缀行；CON-01/CON-02） */
-function renderBlocks(src: string, defs: Defs, nested = false): string {
+ *  任务项不生成 data-task/role=checkbox（Rust toggle_task 不认引用前缀行；CON-01/CON-02）。
+ *  baseLine（滚动同步方案 v1.2 §4.1(a)）：本段第一行在原始文档中的绝对行号。"> " 前缀剥离逐行 1:1，
+ *  递归传 baseLine 让引用/Callout 内子块也记**绝对**行号；行号记账与 data-sec/任务序号是两本账，互不污染。
+ *  data-line-start/end（闭区间、0 起）是阅读窗滚动同步的块锚，纯前端记账：不进 Rust、不进导出。 */
+function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): string {
   const lines = src.replace(/\r\n/g, "\n").split("\n");
   // CommonMark 语义：链接定义全文预扫描（引用可以在定义之前出现）。围栏内的行不算定义。
   {
@@ -444,35 +458,73 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
   let i = 0;
   let secN = 0;
   let inFence = false;
-  const listStack: { type: "ul" | "ol"; indent: number }[] = [];
+  const listStack: { type: "ul" | "ol"; indent: number; outIdx: number; start: number; startNum: number }[] = [];
   let para: string[] = [];
+  let paraStart = 0, paraEnd = 0;   // 显式记账：flushPara 输出时机总在消费之后，届时 i 已越前（二轮评审 2.6.2）
+  let paraToLi = false;             // 本段是列表项的后续内容（延续/空行后正文），去向是 <li> 内部还是顶级
+  let blank = false;                // 空行挂起标记：loose list 不在空行处急着关列表，看下一行再定（需求方 2026-11-17 缺陷）
+  let lastListLine = -1;            // 列表当前产出的最后真实内容行（收容器时的 data-line-end 与 start 边界都取它）
+  let openLi: { tagIdx: number; closeIdx: number } | null = null;
 
-  const closeLists = () => {
-    while (listStack.length) {
-      const l = listStack.pop()!;
-      out.push(l.type === "ul" ? "</ul>" : "</ol>");
-    }
+  /** 块锚属性串：起止绝对行号（闭区间） */
+  const LA = (s: number, e: number) =>
+    ` data-line-start="${baseLine + s}" data-line-end="${baseLine + Math.max(s, Math.min(e, lines.length - 1))}"`;
+
+  /** 收列表并回填容器锚：ol 补 start=该容器首项的源编号（即便被真实切断也显示作者编号，双保险） */
+  const popList = (end: number) => {
+    const l = listStack.pop()!;
+    const e = Math.max(l.start, end);
+    out[l.outIdx] = `<${l.type}${l.type === "ol" ? ` start="${l.startNum}"` : ""}${LA(l.start, e)}>`;
+    out.push(l.type === "ul" ? "</ul>" : "</ol>");
+    openLi = null;
+  };
+  const closeLists = (end: number) => { while (listStack.length) popList(end); };
+  /** 非列表内容出现处收表：空行挂起过则以最后内容行为界，否则以当前行前一行；顺带清挂起 */
+  const closeListsHere = () => {
+    if (listStack.length) closeLists(blank ? lastListLine : i - 1);
+    blank = false;
   };
   const flushPara = () => {
     if (para.length) {
       // join("\n")：段内换行保留给行内公式扫描判「跨行 miss」；HTML 折叠空白，渲染结果与 join(" ") 相同
       // 纯图片段（需求补充：多个连续图片横向排列不换行）：整段只有 ![]() 语法 → imgrow flex 行
       const imgOnly = para.every((l) => IMG_LINE_RE.test(l.trim()));
-      out.push((imgOnly ? '<p class="imgrow">' : "<p>") + renderInline(para.join("\n"), defs) + "</p>");
+      if (paraToLi && openLi) {
+        // CommonMark loose/lazy 语义：列表项的后续正文并进该 <li>（此前作为游离 <p> 混进 <ol> 里）；
+        // 行锚尾随正文扩到 paraEnd
+        out[openLi.closeIdx] = ((imgOnly ? '<p class="imgrow">' : "<p>") + renderInline(para.join("\n"), defs) + "</p>") + out[openLi.closeIdx];
+        out[openLi.tagIdx] = out[openLi.tagIdx].replace(/data-line-end="\d+"/, `data-line-end="${baseLine + paraEnd}"`);
+        if (paraEnd > lastListLine) lastListLine = paraEnd;
+      } else {
+        out.push((imgOnly ? `<p class="imgrow"${LA(paraStart, paraEnd)}>` : `<p${LA(paraStart, paraEnd)}>`) + renderInline(para.join("\n"), defs) + "</p>");
+      }
       para = [];
+      paraToLi = false;
     }
   };
   const inline = (s: string) => renderInline(s, defs);
   // 与 Rust folio-core::markdown::is_fence 同口径：只认 ```
   const isFence = isFenceLine;
+  /** loose 项内块级内容（缩进 ≥2 的围栏/$$/引用块）：并进当前 <li>，列表不因此断掉 */
+  const itemBlock = (line: string) => listStack.length > 0 && openLi != null && /^ {2,}/.test(line);
+  const emitBlock = (t: string, sLine: number, eLine: number) => {
+    if (listStack.length && openLi) {
+      out[openLi.closeIdx] = t + out[openLi.closeIdx];
+      out[openLi.tagIdx] = out[openLi.tagIdx].replace(/data-line-end="\d+"/, `data-line-end="${baseLine + eLine}"`);
+      if (eLine > lastListLine) lastListLine = eLine;
+      void sLine;
+    } else out.push(t);
+  };
 
   while (i < lines.length) {
     const line = lines[i];
     if (isFence(line)) {
       flushPara();
-      closeLists();
+      const inItemF = itemBlock(line);
+      if (!inItemF) closeListsHere(); else blank = false;
       inFence = !inFence;
       if (inFence) {
+        const f0 = i;
         const lang = line.trim().slice(3).trim() || "text";
         i++;
         const buf: string[] = [];
@@ -480,16 +532,20 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
           buf.push(lines[i]);
           i++;
         }
+        const fEnd = i < lines.length ? i : lines.length - 1; // 闭围栏所在行；未闭合吃到 EOF
+        const code = buf.join("\n");
         const kind = classifyCodeLang(lang);
         if (kind === "math") {
-          out.push(mathBlockHtml("math", buf.join("\n"), nested));
+          emitBlock(mathBlockHtml("math", code, nested, LA(f0, fEnd)), f0, fEnd);
         } else if (kind === "mermaid") {
-          out.push(mermaidBlockHtml(buf.join("\n")));
+          emitBlock(mermaidBlockHtml(code, LA(f0, fEnd)), f0, fEnd);
         } else {
-          out.push(
-            `<div class="codeblock"><div class="cbh"><span class="lang">${escapeHtml(lang)}</span><span class="sp"></span>` +
+          emitBlock(
+            `<div class="codeblock"${LA(f0, fEnd)}><div class="cbh"><span class="lang">${escapeHtml(lang)}</span><span class="sp"></span>` +
               `<button class="cb-copy" type="button" title="复制代码块"><svg class="ico ico-14"><use href="#i-copy"/></svg>复制</button></div>` +
-              `<pre><code class="language-${escapeHtml(lang.toLowerCase())}">${escapeHtml(buf.join("\n"))}</code></pre></div>`,
+              // <pre> 子锚只记围栏内容行（不含开闭行）：行→像素映射一律以它为精，消掉 header 的固定偏移（方案 §4.1(a)）
+              `<pre${LA(Math.min(f0 + 1, fEnd), Math.max(f0 + 1, fEnd - 1))}><code class="language-${escapeHtml(lang.toLowerCase())}">${escapeHtml(code)}</code></pre></div>`,
+            f0, fEnd,
           );
         }
         if (i < lines.length) i++;
@@ -502,7 +558,8 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
     if (MATH_FENCE_RE.test(line)) {
       // $$…$$ 成块（易错点 #1/#2：行首行尾只含 $$ 才算界行；`a = $$x` 这类内嵌写法不进块态机）
       flushPara();
-      closeLists();
+      if (!itemBlock(line)) closeListsHere(); else blank = false;
+      const d0 = i;
       i++;
       const buf: string[] = [];
       while (i < lines.length && !MATH_FENCE_RE.test(lines[i])) {
@@ -511,21 +568,22 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
         buf.push(ln);
         i++;
       }
+      const dEnd = i < lines.length ? i : lines.length - 1; // 闭界行（未闭合到 EOF）
       // 未闭合的 $$ 吃到 EOF（与 ``` 未闭合同策略）；空块 → data-code="" 由 mathjax.ts 走退化分支
-      out.push(mathBlockHtml("tex", buf.join("\n"), nested));
+      emitBlock(mathBlockHtml("tex", buf.join("\n"), nested, LA(d0, dEnd)), d0, dEnd);
       if (i < lines.length) i++; // 吃掉闭界行
       continue;
     }
     if (/^\s*$/.test(line)) {
-      flushPara();
-      closeLists();
+      flushPara();      // 项内延续正文到此为止（并进 <li>）
+      blank = true;     // 不关列表：下一行若仍是列表项 → 同一 <ol> 继续（loose list）；若否 → 各分支经 closeListsHere 以内容行收口
       i++;
       continue;
     }
     const dm = line.match(DEF_RE);
     if (dm && !/[|>]/.test(line.slice(0, 1))) {
       flushPara();
-      closeLists();
+      closeListsHere();
       defs.set(normLabel(dm[1]), { url: dm[3] ?? dm[4] ?? "", title: dm[5] ?? dm[6] ?? dm[7] ?? "" });
       i++;
       continue;
@@ -535,7 +593,8 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
       // 块内 HTML 不再跑 markdown 内联解析（GFM 同规则）；<script>/on*/javascript: 由净化器拦死。
       // 坐标记账同 $$：Rust 不认识 html 块——块内的 "# " 标题与 "- [ ]" 任务照样计数。
       flushPara();
-      closeLists();
+      closeListsHere();
+      const hb0 = i;
       const buf: string[] = [];
       while (i < lines.length && !/^\s*$/.test(lines[i])) {
         const ln = lines[i];
@@ -544,23 +603,24 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
         i++;
       }
       const code = buf.join("\n");
-      out.push(sanitizeHtml(code) + (nested ? "" : taskMarksIn(code)));
+      // rawblk 包裹层承载块锚（净化输出可能多元素平铺，无单一根可标）；print 分页选择器组已含 .rawblk
+      out.push(`<div class="rawblk"${LA(hb0, i - 1)}>${sanitizeHtml(code)}${nested ? "" : taskMarksIn(code)}</div>`);
       continue;
     }
     const h = headingMatch(line);
     if (h) {
       flushPara();
-      closeLists();
+      closeListsHere();
       const lv = h.level;
       const text = h.text;
       if (nested) {
         // 引用块/提示块内的标题：照常渲染成标题元素，但绝不占用 data-sec 序号、不产出 id——
         // Rust headings() 按原始行判定（"> # x" 不是标题），两侧必须同坐标系（CON-02）
-        out.push(`<h${lv}>${inline(text)}</h${lv}>`);
+        out.push(`<h${lv}${LA(i, i)}>${inline(text)}</h${lv}>`);
       } else {
         secN++;
         out.push(
-          `<h${lv} id="sec-${secN}" data-sec="${secN}" data-sec-text="${escapeHtml(text)}">${inline(text)}</h${lv}>`,
+          `<h${lv} id="sec-${secN}" data-sec="${secN}" data-sec-text="${escapeHtml(text)}"${LA(i, i)}>${inline(text)}</h${lv}>`,
         );
       }
       i++;
@@ -568,8 +628,8 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
     }
     if (/^\s*(---|\*\*\*|___)\s*$/.test(line)) {
       flushPara();
-      closeLists();
-      out.push("<hr>");
+      closeListsHere();
+      out.push(`<hr${LA(i, i)}>`);
       i++;
       continue;
     }
@@ -580,7 +640,8 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
       /-/.test(lines[i + 1])
     ) {
       flushPara();
-      closeLists();
+      closeListsHere();
+      const t0 = i;
       const header = splitRow(line);
       i += 2;
       const rows: string[][] = [];
@@ -588,11 +649,12 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
         rows.push(splitRow(lines[i]));
         i++;
       }
-      let t = '<div class="tw-tbl"><table><thead><tr>';
+      // 表体行与源行逐行 1:1（表头 t0、分隔行 t0+1、第 k 数据行 t0+2+k）；tr 子锚（方案 §4.1(a)）
+      let t = `<div class="tw-tbl"${LA(t0, Math.max(t0 + 1 + rows.length, t0))}><table><thead><tr${LA(t0, t0)}>`;
       header.forEach((c) => (t += "<th>" + inline(c) + "</th>"));
       t += "</tr></thead><tbody>";
-      rows.forEach((r) => {
-        t += "<tr>";
+      rows.forEach((r, k) => {
+        t += `<tr${LA(t0 + 2 + k, t0 + 2 + k)}>`;
         r.forEach((c) => (t += "<td>" + inline(c) + "</td>"));
         t += "</tr>";
       });
@@ -602,14 +664,16 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
     }
     if (/^\s*>/.test(line)) {
       flushPara();
-      closeLists();
+      if (!itemBlock(line)) closeListsHere(); else blank = false;
+      const q0 = i;
       const buf: string[] = [];
       while (i < lines.length && /^\s*>/.test(lines[i])) {
         buf.push(lines[i].replace(/^\s*>\s?/, ""));
         i++;
       }
-      const co = parseCallout(buf, defs, true);
-      out.push(co ?? "<blockquote>" + renderBlocks(buf.join("\n"), defs, true) + "</blockquote>");
+      // 引用行逐行 1:1：整块范围 [q0, i-1]；Callout 正文从第二行起（首行是 [!TYPE] 标记行）
+      const co = parseCallout(buf, defs, true, LA(q0, i - 1), baseLine + q0 + 1);
+      emitBlock(co ?? `<blockquote${LA(q0, i - 1)}>` + renderBlocks(buf.join("\n"), defs, true, baseLine + q0) + "</blockquote>", q0, i - 1);
       continue;
     }
     const li = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
@@ -617,6 +681,9 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
       flushPara();
       const indent = Math.floor(li[1].length / 2);
       const type = /[-*+]/.test(li[2]) ? "ul" : "ol";
+      // 源编号=start 双保险：CommonMark 只有首项编号有意义；即便列表被标题/类型切换真实切断，
+      // 新容器也从作者写的编号起算——"4. xxx" 永远不会再显示成 "1."（需求方 2026-11-17 缺陷）
+      const startNum = type === "ol" ? (parseInt(li[2], 10) || 1) : 1;
       let text = li[3];
       let task: boolean | null = null;
       // \s* 而非 \s+：Rust task_parts 只认 "[x]"/"[ ]" 本身，不强制 ] 后空白（如 "- [ ]x"）。
@@ -626,48 +693,59 @@ function renderBlocks(src: string, defs: Defs, nested = false): string {
         task = tm[1].toLowerCase() === "x";
         text = tm[2];
       }
-      while (listStack.length && listStack[listStack.length - 1].indent > indent) {
-        const l = listStack.pop()!;
-        out.push(l.type === "ul" ? "</ul>" : "</ol>");
-      }
+      blank = false;   // 空行后的列表项：同一列表继续（loose list 正是此前编号恒 1 的成因）
+      while (listStack.length && listStack[listStack.length - 1].indent > indent) popList(lastListLine);
       if (!listStack.length || listStack[listStack.length - 1].indent < indent) {
-        listStack.push({ type, indent });
-        out.push(type === "ul" ? "<ul>" : "<ol>");
+        listStack.push({ type, indent, outIdx: out.length, start: i, startNum });
+        out.push(type === "ul" ? "<ul>" : "<ol>");   // 开标签由 popList 回填 start 与块锚
       } else if (listStack[listStack.length - 1].type !== type) {
-        const l = listStack.pop()!;
-        out.push(l.type === "ul" ? "</ul>" : "</ol>");
-        listStack.push({ type, indent });
+        popList(lastListLine);
+        listStack.push({ type, indent, outIdx: out.length, start: i, startNum });
         out.push(type === "ul" ? "<ul>" : "<ol>");
       }
+      // <li> 三段式输出（开标签/正文/闭标签）：loose 延续正文要插到闭标签前，行锚尾随扩到正文末行
+      const pushLi = (attrs: string, inner: string) => {
+        const tagIdx = out.length;
+        out.push(`<li${attrs}>`);
+        out.push(inner);
+        openLi = { tagIdx, closeIdx: out.length };
+        out.push("</li>");
+      };
       if (task !== null) {
+        const cbx = (clickable: boolean, t: boolean) =>
+          `<span class="cbx${t ? " done" : ""}"` +
+          (clickable
+            ? ` role="checkbox" tabindex="0" aria-checked="${t}" title="点击勾选 / 取消（写回源文件）"`
+            : ` aria-hidden="true" title="引用块内的任务不可勾选（不写回源文件）"`) +
+          `><svg class="ico ico-12"><use href="#i-check"/></svg></span>`;
         if (nested) {
           // 引用块/提示块内的任务：只显示不可勾选（Rust toggle_task 不认引用前缀行，
           // 若给出可点击复选框会按错误序号改写别的行——静默损坏源文件，CON-01）
-          out.push(
-            `<li class="${task ? "done" : "task"}">` +
-              `<span class="cbx${task ? " done" : ""}" aria-hidden="true" title="引用块内的任务不可勾选（不写回源文件）">` +
-              `<svg class="ico ico-12"><use href="#i-check"/></svg></span>` +
-              `<span class="tline">${inline(text)}</span></li>`,
-          );
+          pushLi(` class="${task ? "done" : "task"}"${LA(i, i)}`, cbx(false, task) + `<span class="tline">${inline(text)}</span>`);
         } else {
-          out.push(
-            `<li class="${task ? "done" : "task"}" data-task="1">` +
-              `<span class="cbx${task ? " done" : ""}" role="checkbox" tabindex="0" aria-checked="${task}" title="点击勾选 / 取消（写回源文件）">` +
-              `<svg class="ico ico-12"><use href="#i-check"/></svg></span>` +
-              `<span class="tline">${inline(text)}</span></li>`,
-          );
+          pushLi(` class="${task ? "done" : "task"}"${LA(i, i)} data-task="1"`, cbx(true, task) + `<span class="tline">${inline(text)}</span>`);
         }
       } else {
-        out.push("<li>" + inline(text) + "</li>");
+        pushLi(LA(i, i), inline(text));
       }
+      lastListLine = i;
       i++;
       continue;
     }
+    if (!para.length) {
+      paraStart = i;
+      // 空行后的缩进行=列表项的 loose 续行正文（CC 文档速成篇的"编号正文+缩进段"形态）；
+      // 空行后的顶格非列表内容才是列表边界。lazy 续行（无空行）始终并进当前 <li>。
+      if (blank && !/^ {2,}/.test(line)) closeListsHere();
+      paraToLi = listStack.length > 0;
+    }
+    paraEnd = i;
+    if (listStack.length && i > lastListLine) lastListLine = i;
     para.push(line.trim());
     i++;
   }
   flushPara();
-  closeLists();
+  if (listStack.length) closeLists(blank ? lastListLine : Math.max(lastListLine, lines.length - 1));
   return out.join("\n");
 }
 

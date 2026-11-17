@@ -245,12 +245,15 @@ export function registerSectionNav(h: { dir: (d: number) => void; toTop: () => v
 export function navSection(d: number) { sectionNav?.dir(d); }
 export function navTop() { sectionNav?.toTop(); }
 
-/* ── 阅读 ⇄ 编辑 滚动同步桥（章节+比例坐标系） ── */
-export interface SecFrac { sec: number | null; frac: number }
-export interface ViewBridge { secFrac(): SecFrac | null }
+/* ── 阅读 ⇄ 编辑 滚动同步桥（v1.2：一把尺=小数源码行号 lineFloat；方案 §4.1(c)） ── */
+export interface ViewBridge {
+  /** 视口顶边（SYNC_TOP+epsilon）对应的小数源码行号；锚点表不可用时 null */
+  topLine(): number | null;
+}
 export interface EditorBridge {
-  jumpTo(sec: number | null, frac: number): void;
-  topFrac(): SecFrac | null;
+  /** 精确跳到小数行号：floor 行 scrollIntoView + 下一帧 coordsAtPos 贴顶校正 */
+  jumpToLine(line: number): void;
+  topLine(): number | null;
 }
 let viewBridge: ViewBridge | null = null;
 let editorBridge: EditorBridge | null = null;
@@ -258,11 +261,22 @@ export function registerViewBridge(b: ViewBridge | null) { viewBridge = b; }
 export function getViewBridge() { return viewBridge; }
 export function registerEditorBridge(b: EditorBridge | null) { editorBridge = b; }
 export function getEditorBridge() { return editorBridge; }
-/** 进入编辑时暂存的"从阅读侧带来的位置"，EditorPane 挂载后消费 */
-let pendingEditorJump: SecFrac | null = null;
-export function setPendingEditorJump(sf: SecFrac | null) { pendingEditorJump = sf; }
-export function takePendingEditorJump(): SecFrac | null {
+/** 进入编辑时暂存的"从阅读侧带来的行号"，EditorPane 挂载后消费 */
+let pendingEditorJump: number | null = null;
+export function setPendingEditorJump(line: number | null) { pendingEditorJump = line; }
+export function takePendingEditorJump(): number | null {
   const v = pendingEditorJump; pendingEditorJump = null; return v;
+}
+
+/* 逐块锚点补偿与排版落定标记在 lib/nav.ts（渲染模块只依赖 nav，不经 ui.tsx——ui 含 solid 信号，
+ * node --experimental-strip-types 测试链不解析 .tsx）。 */
+
+/** 导出清洗（方案 §4.5）：块锚/预估高度是阅读窗内部坐标，导出文件一律剥除。
+ *  md.ts 产出的 min-height 恰为占位预估串，按同形状剥；data-sec/data-task 保留（PDF 书签/回写依赖）。 */
+export function cleanExportHtml(html: string): string {
+  return html
+    .replace(/ data-line-start="-?\d+" data-line-end="-?\d+"/g, "")
+    .replace(/ style="min-height:\d+px"/g, "");   // 仅 f-block 占位预估用此形状（md.ts 单点产出）
 }
 export function currentQuery() { return pendingQuery; }
 

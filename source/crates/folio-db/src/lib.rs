@@ -265,11 +265,11 @@ impl Db {
     pub fn save_position(&self, doc_id: i64, p: &Position) -> Result<()> {
         self.with_conn(|c| {
             c.execute(
-                "INSERT INTO positions(doc_id, ratio, sec, sec_text, sec_off, updated_at)
-                 VALUES(?1,?2,?3,?4,?5,?6)
+                "INSERT INTO positions(doc_id, ratio, sec, sec_text, sec_off, sec_line_off, updated_at)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7)
                  ON CONFLICT(doc_id) DO UPDATE SET
-                    ratio=?2, sec=?3, sec_text=?4, sec_off=?5, updated_at=?6",
-                params![doc_id, p.ratio, p.sec, p.sec_text, p.sec_off, p.updated_at],
+                    ratio=?2, sec=?3, sec_text=?4, sec_off=?5, sec_line_off=?6, updated_at=?7",
+                params![doc_id, p.ratio, p.sec, p.sec_text, p.sec_off, p.sec_line_off, p.updated_at],
             )?;
             Ok(())
         })
@@ -278,7 +278,7 @@ impl Db {
     pub fn positions(&self) -> Result<Vec<(i64, Position)>> {
         self.with_conn(|c| {
             let mut st =
-                c.prepare("SELECT doc_id, ratio, sec, sec_text, sec_off, updated_at FROM positions")?;
+                c.prepare("SELECT doc_id, ratio, sec, sec_text, sec_off, sec_line_off, updated_at FROM positions")?;
             let rows = st.query_map([], |r| {
                 Ok((
                     r.get::<_, i64>(0)?,
@@ -287,7 +287,8 @@ impl Db {
                         sec: r.get(2)?,
                         sec_text: r.get(3)?,
                         sec_off: r.get(4)?,
-                        updated_at: r.get(5)?,
+                        sec_line_off: r.get(5)?,
+                        updated_at: r.get(6)?,
                     },
                 ))
             })?;
@@ -620,12 +621,14 @@ mod tests {
         let m = db.upsert_document(&p, "# X\n\ny", true).unwrap();
         db.save_position(
             m.id,
-            &Position { ratio: 0.5, sec: Some(1), sec_text: Some("X".into()), sec_off: 12.0, updated_at: 999 },
+            &Position { ratio: 0.5, sec: Some(1), sec_text: Some("X".into()), sec_off: 12.0, sec_line_off: 7.25, updated_at: 999 },
         )
         .unwrap();
         let ps = db.positions().unwrap();
         assert_eq!(ps.len(), 1);
         assert_eq!(ps[0].1.sec_text.as_deref(), Some("X"));
+        // v6：章节行偏移随 save/load 原样往返（恢复主坐标，方案 §4.3）
+        assert_eq!(ps[0].1.sec_line_off, 7.25);
         let mut s = Settings::default();
         s.theme = "light".into();
         db.set_settings(&s).unwrap();
@@ -724,7 +727,7 @@ mod tests {
             db.record_recent(id, t).unwrap();
             db.save_position(
                 id,
-                &Position { ratio: 0.4, sec: Some(1), sec_text: None, sec_off: 0.0, updated_at: t },
+                &Position { ratio: 0.4, sec: Some(1), sec_text: None, sec_off: 0.0, sec_line_off: -1.0, updated_at: t },
             )
             .unwrap();
         }
@@ -1131,7 +1134,7 @@ mod tests {
             db.upsert_document(poison, "# A", true).unwrap();
             let pid = db.doc_by_path(&poison.to_string_lossy()).unwrap().id;
             db.record_recent(pid, 500).unwrap();
-            db.save_position(pid, &Position { ratio: 0.5, sec: None, sec_text: None, sec_off: 0.0, updated_at: 1 }).unwrap();
+            db.save_position(pid, &Position { ratio: 0.5, sec: None, sec_text: None, sec_off: 0.0, sec_line_off: 42.5, updated_at: 1 }).unwrap();
             // ② 无毒孪生：原位修路径
             let lone = std::path::Path::new("Z:lib\\c.md");
             db.upsert_document(lone, "# C", true).unwrap();

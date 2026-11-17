@@ -6,6 +6,7 @@
  * 失败策略（需求方最终定夺）：对应位置「框起源码 + 标注语法错误」；两条错误路都要拦——
  * ① render() reject；② 不抛异常、把"炸弹 + Syntax error in text"错误图当成功返回。 */
 import { escapeHtml } from "./md.ts";
+import { compensateAnchor } from "./nav.ts";
 
 interface MermaidLike {
   initialize: (conf: Record<string, unknown>) => void;
@@ -52,9 +53,11 @@ export function isMermaidErrorSvg(svg: string): boolean {
 
 function fallback(el: HTMLElement): void {
   // 语法错误退化（需求方最终定夺）：原文位置框起源码 + 标注，尺寸受控（max-height 滚动），绝不炸弹大图
-  el.innerHTML = '<div class="fb-box"><div class="fb-label">⚠ 图表语法错误 · 以下为源码原文</div>' +
-    `<pre class="formula-fallback">${escapeHtml(el.getAttribute("data-code") ?? "")}</pre></div>`;
-  el.classList.add("f-error");
+  compensateAnchor(() => {   // 原地替换即布局推挤事件，经可见锚补偿（滚动同步方案 §4.2）
+    el.innerHTML = '<div class="fb-box"><div class="fb-label">⚠ 图表语法错误 · 以下为源码原文</div>' +
+      `<pre class="formula-fallback">${escapeHtml(el.getAttribute("data-code") ?? "")}</pre></div>`;
+    el.classList.add("f-error");
+  });
 }
 
 /* 全局串行链：初排与主题重渲不许交错——mermaid.render 共享全局状态（parse 前清 diagram），
@@ -97,9 +100,11 @@ async function doRender(
       const { svg } = await m.render(tempId, codeOf(el));
       if (isMermaidErrorSvg(svg)) throw new Error("mermaid 错误回显图");
       if (!el.isConnected) return; // 渲染期间文档已切换：丢弃结果
-      el.innerHTML = svg;
-      el.classList.add("f-ready");
-      el.classList.remove("f-error"); // 重渲成功要能洗掉上一次的退化态
+      compensateAnchor(() => {
+        el.innerHTML = svg;
+        el.classList.add("f-ready");
+        el.classList.remove("f-error"); // 重渲成功要能洗掉上一次的退化态
+      });
     } catch {
       fallback(el);
     } finally {

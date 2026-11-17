@@ -60,18 +60,18 @@ test("已知边界：段落中部的行内 HTML 仍按字面显示（仅块级�
 
 test("连续图片横向排列（需求补充）：纯图片段= imgrow；混文本段/单图不受牵连", () => {
   const row = mdToHtml('![a](x1.png)\n![b](x2.png "题")\n![](x3.png)');
-  assert.ok(row.includes('<p class="imgrow">'), row);
+  assert.ok(row.includes('<p class="imgrow" data-line-start'), row);
   assert.equal((row.match(/<img/g) ?? []).length, 3, "三枚 img 同段");
   assert.ok(row.includes('title="题"'), "title 不丢");
   const mixed = mdToHtml("说明文字\n![a](x1.png)");
   assert.ok(!mixed.includes("imgrow"), "混文本仍普通段：" + mixed);
   const one = mdToHtml("![solo](big.png)");
-  assert.ok(one.includes('<p class="imgrow">') && (one.match(/<img/g) ?? []).length === 1, "单图也走 imgrow（CSS :only-of-type 保旧宽度契约）");
+  assert.ok(one.includes('<p class="imgrow" data-line-start') && (one.match(/<img/g) ?? []).length === 1, "单图也走 imgrow（CSS :only-of-type 保旧宽度契约）");
 });
 
 test("README 徽章形态：套链图片 [![alt](shield)](link) 也算图片行，同段横排", () => {
   const row = mdToHtml('[![Build Status](https://img.shields.io/b/a.svg?x=1)](https://github.com/a)\n[![npm](https://img.shields.io/npm/v/b)](https://npmjs.com/b)\n[![Gem](https://img.shields.io/gem/v/c)](#anchor)');
-  assert.ok(row.includes('<p class="imgrow">'), "三枚套链徽章=一行：" + row);
+  assert.ok(row.includes('<p class="imgrow" data-line-start'), "三枚套链徽章=一行：" + row);
   assert.equal((row.match(/<img/g) ?? []).length, 3);
   assert.equal((row.match(/<a href=/g) ?? []).length, 3, "外层链接保留");
   const mixedText = mdToHtml("[文字链接](https://a.cn) 后面还有话");

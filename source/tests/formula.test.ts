@@ -63,10 +63,11 @@ test("代码段优先于公式", () => {
 
 /* ── 块级公式 / 图表围栏 ── */
 
-test("$$…$$ 成块：占位符存原文，块外文本正常", () => {
+test("$$…$$ 成块：占位符存原文，块外文本正常；v1.2 块锚与预估高度", () => {
   const h = mdToHtml("前文\n\n$$\n\\int_0^1 x\\,dx = \\tfrac{1}{2}\n$$\n\n后文");
-  assert.ok(h.includes('<div class="f-block" data-math="block" data-lang="tex" data-code="\\int_0^1 x\\,dx = \\tfrac{1}{2}">'), h);
-  assert.ok(h.includes("<p>前文</p>") && h.includes("<p>后文</p>"), h);
+  assert.ok(h.includes('<div class="f-block" data-math="block" data-lang="tex" data-code="\\int_0^1 x\\,dx = \\tfrac{1}{2}" data-line-start="2" data-line-end="4"'), h);
+  assert.ok(/ data-line-start="2" data-line-end="4" style="min-height:\d+px">/.test(h), "占位预估高度随行数定标");
+  assert.ok(h.includes('<p data-line-start="0" data-line-end="0">前文</p>') && h.includes('<p data-line-start="6" data-line-end="6">后文</p>'), h);
   assert.ok(!h.includes("tfrac{1}{2}</p>"), "块内容不混进段落");
 });
 

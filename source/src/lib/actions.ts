@@ -237,7 +237,7 @@ export async function exportHtml(s: Store) {
 
   if (!api.isTauriRuntime()) {
     try {
-      const r = await api.saveFileAs(name, wrap(body0));
+      const r = await api.saveFileAs(name, wrap(ui.cleanExportHtml(body0)));
       if (!r) return;
       s.toast(r === "downloaded" ? "已导出 HTML（浏览器下载）" : "已导出 HTML：" + r);
     } catch (e) {
@@ -277,7 +277,7 @@ export async function exportHtml(s: Store) {
       if (nm) { img.setAttribute("src", "images/" + nm); ok++; }
       else kept++;                                            // 落盘失败→保留原始 src 兜底
     }
-    await api.writeFile(target, wrap(holder.innerHTML));
+    await api.writeFile(target, wrap(ui.cleanExportHtml(holder.innerHTML)));
     const tail = refs.length ? `（图 ${ok} 张随行${kept ? `，${kept} 张保留原链` : ""}）` : "";
     ui.showCopied("已导出 HTML" + tail, target);               // 中央浮层（铁律：不贴窗口底沿）
   } catch (e) {

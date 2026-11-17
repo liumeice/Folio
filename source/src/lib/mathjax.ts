@@ -5,6 +5,7 @@
  * 失败策略（需求方 2026-11-16 最终定夺）：原文位置「框起源码 + 标注语法错误」；
  * 单块抛错只退化它自己，整篇零中断；MathJax 缺失同样走可见退化，绝不白屏。 */
 import { escapeHtml } from "./md.ts";
+import { compensateAnchor } from "./nav.ts";
 
 interface MathJaxLike {
   startup?: { promise?: Promise<unknown> };
@@ -31,9 +32,12 @@ function codeOf(el: Element): string {
  *  **保留 [data-task] 记账占位**（丢了它，后续任务序号全体错位） */
 function fallback(el: HTMLElement, code: string): void {
   const marks = [...el.querySelectorAll("[data-task]")].map((n) => n.outerHTML).join("");
-  el.innerHTML = marks + '<div class="fb-box"><div class="fb-label">⚠ 公式语法错误 · 以下为源码原文</div>' +
-    `<pre class="formula-fallback">${escapeHtml(code)}</pre></div>`;
-  el.classList.add("f-error"); // CSS：.f-block.f-error{opacity:1}，退化态直接可见
+  // 原地替换即布局推挤事件：经可见锚补偿（滚动同步方案 §4.2 第一层），用户正在读也不跳
+  compensateAnchor(() => {
+    el.innerHTML = marks + '<div class="fb-box"><div class="fb-label">⚠ 公式语法错误 · 以下为源码原文</div>' +
+      `<pre class="formula-fallback">${escapeHtml(code)}</pre></div>`;
+    el.classList.add("f-error"); // CSS：.f-block.f-error{opacity:1;min-height:0!important}，退化态直接可见
+  });
 }
 
 /** 对 scope 内所有 [data-math] 元素排版（§5.4 契约签名：(scope, codeOf?, isBlockOf?)）。
@@ -63,9 +67,11 @@ export async function typesetMathIn(
         continue;
       }
       const marks = [...el.querySelectorAll("[data-task]")].map((n) => n.outerHTML).join("");
-      el.innerHTML = marks + svg.outerHTML;
-      el.classList.add("f-ready");
-      container.remove?.();
+      compensateAnchor(() => {
+        el.innerHTML = marks + svg.outerHTML;
+        el.classList.add("f-ready");
+        container.remove?.();
+      });
     } catch {
       fallback(el, code);
     }

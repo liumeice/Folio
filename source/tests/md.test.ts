@@ -109,13 +109,13 @@ test("Callout：自定义标题 / 折叠变体 / 未知类型回落引用块", (
   const p = mdToHtml("> [!NOTE]+\n> 展开");
   assert.ok(p.includes('data-fold="1"') && !p.includes("folded\""), p);
   const bad = mdToHtml("> [!SOMETHING]\n> 普通引用");
-  assert.ok(bad.includes("<blockquote>") && bad.includes("[!SOMETHING]"), bad.slice(0, 80));
+  assert.ok(bad.startsWith("<blockquote") && bad.includes("[!SOMETHING]"), bad.slice(0, 80));
 });
 
 test("表格：代码段内的 | 不分列（用户样例）", () => {
   const h = mdToHtml('| Command | Description |\n| - | - |\n| `cat file | claude -p "query"` | 处理管道内容 | `cat logs.txt | claude -p "explain"` |');
   assert.ok(h.includes("<table>"), "仍是表格");
-  const rows = h.match(/<tr>.*?<\/tr>/gs) ?? [];
+  const rows = h.match(/<tr[^>]*>.*?<\/tr>/gs) ?? [];
   assert.equal(rows.length, 2, "表头 1 行 + 数据 1 行");
   assert.equal((rows[1].match(/<td>/g) ?? []).length, 3, "数据行恰好 3 列");
   assert.ok(h.includes("<code>cat file | claude -p &quot;query&quot;</code>"), "代码段完整：\n" + h);
@@ -153,9 +153,28 @@ test("emoji：未知短代码原样保留（GitHub 行为）", () => {
 
 test("Callout：嵌套列表/代码正常渲染，普通 blockquote 不回归", () => {
   const h = mdToHtml("> [!TIP]\n> - 要点一\n> - 要点二");
-  assert.ok(h.includes("<ul>") && h.includes("要点一"), h);
+  assert.ok(/<ul[ >]/.test(h) && h.includes("要点一"), h);
   const q = mdToHtml("> 普通引用文字");
-  assert.ok(q.startsWith("<blockquote>"), q.slice(0, 40));
+  assert.ok(q.startsWith("<blockquote"), q.slice(0, 40));
+});
+
+/* ══════ loose 列表回归（需求方 2026-11-17 缺陷：条目间空行导致每段都显示 1.）══════ */
+
+test("loose 有序列表：空行分条=同一列表；续行正文/项内 callout 并进 <li>；容器 start=源编号", () => {
+  const h = mdToHtml("1. **A**\n\n   正文一\n\n2. **B**\n\n   > [!TIP]\n   > 提示\n\n3. **C**");
+  assert.equal((h.match(/<ol[\s>]/g) ?? []).length, 1, "loose 条目不得断列表：" + h);
+  assert.ok(h.includes('<ol start="1"'), h);
+  assert.ok(/<li data-line-start="0" data-line-end="2">/.test(h), "续行正文并进 li、行锚尾随扩行：" + h);
+  assert.ok(/<li data-line-start="4" data-line-end="7">/.test(h), "项内 TIP callout 并进 li 且扩行");
+  assert.ok(h.includes("提示") && h.includes("<strong>C</strong>"), h);
+});
+
+test("标题切断列表并重新计数；被切断的新列表用作者编号兜底（4. 永远显示 4）", () => {
+  const h = mdToHtml("# 一\n\n1. a\n\n# 二\n\n4. d");
+  assert.equal((h.match(/<ol[\s>]/g) ?? []).length, 2, "标题必然收表：" + h);
+  assert.ok(h.includes('<ol start="1"') && h.includes('<ol start="4"'), "start=该列表首项源编号：" + h);
+  const t = mdToHtml("1. a\n\n2. b\n\n- x\n\n4. d");
+  assert.ok(t.includes('<ol start="4"'), "类型切换切断同样保留作者编号：" + t);
 });
 
 /* ══════ 审查报告 v1.0 整改回归（2026-11-16）══════ */
@@ -188,8 +207,51 @@ test("CON-02：引用块/提示块标题不占 data-sec、id 不重复；缩进�
   assert.equal((h.match(/id="sec-1"/g) ?? []).length, 1, "不得有重复 id");
   assert.equal((h.match(/data-sec=/g) ?? []).length, 4, "Top/Sub/Indented/裸# 四个锚点：" + h);
   assert.ok(h.includes('data-sec="3"') && h.includes('data-sec="4"'), "缩进与空标题占号（与 headings() 一致）");
-  assert.ok(h.includes("<h1>Quoted</h1>"), "引用块标题渲染但无锚点");
-  assert.ok(h.includes("<h1>InCallout</h1>"), "提示块标题同理");
+  assert.ok(h.includes('<h1 data-line-start="2" data-line-end="2">Quoted</h1>'), "引用块标题渲染但无锚点（行锚按 baseLine 记绝对行）");
+  assert.ok(h.includes('<h1 data-line-start="7" data-line-end="7">InCallout</h1>'), "提示块标题同理");
+});
+
+/* ══════ 滚动同步 v1.2：块锚 data-line-start/end 记账回归 ══════ */
+
+test("块锚：标题行号与源行一致；段/围栏/表格/列表各记起止", () => {
+  const h = mdToHtml("# A\n\n正文一段\n第二行\n\n```js\nconst x=1;\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n- 甲\n- 乙");
+  assert.ok(h.includes('<h1 id="sec-1" data-sec="1" data-sec-text="A" data-line-start="0" data-line-end="0">'), h);
+  assert.ok(h.includes('<p data-line-start="2" data-line-end="3">'), "段落记首末行");
+  assert.ok(h.includes('<div class="codeblock" data-line-start="5" data-line-end="7">'), "围栏整体含界行");
+  assert.ok(h.includes('<pre data-line-start="6" data-line-end="6">'), "pre 子锚只含内容行");
+  assert.ok(h.includes('<div class="tw-tbl" data-line-start="9" data-line-end="11">'), "表格起止");
+  assert.ok(/<li data-line-start="13" data-line-end="13">\n甲\n<\/li>/.test(h), "li 逐项行锚（三段式输出）");
+  assert.ok(/<ul data-line-start="13" data-line-end="14">/.test(h), "ul 容器回填起止");
+});
+
+test("块锚：mermaid 围栏起止含界行，预估高度在属性上；未闭合围栏吃到 EOF", () => {
+  const h = mdToHtml("```mermaid\ngraph TD\nA-->B\n```");
+  assert.ok(h.includes('data-line-start="0" data-line-end="3"'), h);
+  assert.ok(/ style="min-height:\d+px"><\/div>/.test(h), h);
+  const open = mdToHtml("段落\n\n```mermaid\ngraph TD");
+  assert.ok(open.includes('data-line-start="2" data-line-end="3"'), "未闭合 → 到末行：" + open);
+});
+
+test("块锚：引用/Callout 内子块经 baseLine 记绝对行；嵌套不占 data-sec", () => {
+  const h = mdToHtml("导言\n\n> [!NOTE]\n> 内段一\n> 内段二\n\n> 普通引用");
+  // 行：0 导言；1 空；2 [!NOTE] 标题行；3-4 body；5 空；6 引用
+  assert.ok(h.includes('<div class="callout co-note" data-callout="note" data-line-start="2" data-line-end="4">'), h);
+  assert.ok(h.includes('<p data-line-start="3" data-line-end="4">'), "callout 内段落=绝对行（baseLine 平移）");
+  assert.ok(h.includes('<blockquote data-line-start="6" data-line-end="6">'), h);
+});
+
+test("块锚：$$ 块内被吞的标题/任务照常占号；rawblk 包裹层记范围", () => {
+  const h = mdToHtml("$$\n# 被吞标题\n$$\n\n<p align=\"center\">徽章</p>\n\n正文");
+  assert.ok(h.includes('<div class="f-block" data-math="block" data-lang="tex" data-code="# 被吞标题" data-line-start="0" data-line-end="2"'), h);
+  assert.ok(h.includes('<div class="rawblk" data-line-start="4" data-line-end="4">'), h);
+  assert.ok(h.includes('<p data-line-start="6" data-line-end="6">正文</p>'), h);
+  assert.ok(!h.includes('data-sec="1"'), "被吞标题不产锚点（占号但无 DOM 锚，与 CON-02 口径一致）");
+});
+
+test("块锚：hr 记零跨度行；空文档零输出不炸", () => {
+  const h = mdToHtml("上\n\n---\n\n下");
+  assert.ok(h.includes('<hr data-line-start="2" data-line-end="2">'), h);
+  assert.equal(mdToHtml(""), "");
 });
 
 test("CON-02：headingMatch 与 Rust 逐条同判", () => {

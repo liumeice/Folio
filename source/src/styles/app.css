@@ -638,7 +638,9 @@ svg{display:block}
  * 占位期 opacity:0 防 FOUC（原文闪现）；渲染成功→f-ready 淡入；失败→f-error 显示 <pre> 源码。
  * 模块在排版前一直保留 f-block 类，成败只加状态类（f-ready/f-error 解除透明门）。 */
 .prose .f-block{opacity:0;transition:opacity .2s ease}
-.prose .f-block.f-ready,.prose .f-block.f-error{opacity:1}
+/* v1.2 滚动同步：md.ts 给占位块内联 min-height 预估（改善首落，方案 §4.2）；
+ * 内联样式权重压过样式表，终态归零必须 !important；导出快照另有 cleanExportHtml 剥属性 */
+.prose .f-block.f-ready,.prose .f-block.f-error{opacity:1;min-height:0 !important}
 .prose .f-block[data-math="block"]{display:block;text-align:center;margin:14px 0;overflow-x:auto}
 .prose .f-block[data-math="inline"]{display:inline-block;vertical-align:-0.2em}
 .prose .f-block[data-mermaid]{display:block;text-align:center;margin:14px 0;overflow-x:auto}
@@ -731,6 +733,6 @@ svg{display:block}
   .codeblock,.codeblock pre,.tw-tbl{overflow:visible}
   .codeblock pre{white-space:pre-wrap;word-break:break-word}
   h1,h2,h3,h4,h5,h6{break-after:avoid-page}
-  .codeblock,blockquote,.callout,.tw-tbl,.f-block,[data-mermaid],tr,img,.fb-box{break-inside:avoid}
+  .codeblock,blockquote,.callout,.tw-tbl,.f-block,[data-mermaid],tr,img,.fb-box,.rawblk{break-inside:avoid}
   p,li{orphans:2;widows:2}
 }

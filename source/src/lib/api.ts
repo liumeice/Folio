@@ -639,7 +639,8 @@ const mock = {
     }
   },
   async positions(): Promise<[number, Position][]> {
-    return Object.entries(this.pos()).map(([k, v]) => [Number(k), v]);
+    // 旧 localStorage 行没有 secLineOff 字段：补 -1（无值）走恢复旧链（与 Rust schema v6 默认同语义）
+    return Object.entries(this.pos()).map(([k, v]) => [Number(k), { ...v, secLineOff: v.secLineOff ?? -1 }]);
   },
   async settings(): Promise<Settings> {
     try {

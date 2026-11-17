@@ -50,7 +50,12 @@ export interface Position {
   sec: number | null;
   secText: string | null;
   secOff: number;
+  /** v1.2 恢复主坐标：章节内源码行偏移（-1=无值；无标题文档时相对第 0 行=绝对行）。
+   *  布局无关，免疫塌陷期 ratio 污染（方案 §4.3）；持久列 positions.sec_line_off（schema v6） */
+  secLineOff: number;
   updatedAt: number;
+  /** 运行期字段（不落库）：视口顶小数源码行号，供 HistEntry.lineFloat 与调试 */
+  srcLine?: number | null;
 }
 
 export interface Settings {
@@ -145,4 +150,6 @@ export interface HistEntry {
   secText: string | null;
   top: number | null;
   ratio: number | null;
+  /** v1.2：同文档历史的绝对位置主坐标=小数源码行号（内存态，不进库） */
+  lineFloat?: number | null;
 }

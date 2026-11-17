@@ -1,6 +1,8 @@
 /* CodeMirror 6 编辑器：行号/语法高亮/软换行原生自带（FR-7.1）。
- * 与 store 联动：onChange → setDraft；同时注册 EditorBridge 供滚动同步与大纲编辑态定位：
- *  jumpTo(sec, frac) —— 章节+比例 → 源码行；topFrac() —— 顶行 → 章节+比例（大纲跟随）。 */
+ * 与 store 联动：onChange → setDraft；同时注册 EditorBridge 供滚动同步与大纲编辑态定位
+ * （v1.2 一把尺：小数源码行号 lineFloat，方案 §4.1(c)(d)）：
+ *  topLine() —— 视口顶 → 小数行号（软换行按可视块折算，非整行吸附）；
+ *  jumpToLine(lineFloat) —— scrollIntoView 贴整行 + 下一帧 coordsAtPos 精确对齐视口顶。 */
 import { Show, onCleanup, onMount } from "solid-js";
 import { basicSetup } from "codemirror";
 import { EditorView } from "@codemirror/view";
@@ -10,7 +12,7 @@ import { mdHighlight } from "../lib/mdstyle";
 import { mdStructural } from "../lib/mdStructural";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
-import { lineForSecFrac, secFracFromTopline } from "../lib/nav";
+import { SYNC_EPSILON } from "../lib/nav";
 
 export default function EditorPane() {
   const s = useStore();
@@ -18,40 +20,42 @@ export default function EditorPane() {
   let view: EditorView | undefined;
   let raf = 0;
 
-  function topFrac(): ui.SecFrac | null {
-    if (!view || !s.current()) return null;
-    // 顶行判定走 DOM ground-truth：posAtCoords 视口顶端下 4px → 文档位置。
-    // （此前用 scrollTop - documentPadding.top 喂 lineBlockAtHeight，坐标系含 padding 与否
-    //  差一手，顶行少算一行 → 大纲高亮恒判成上一章节。）
-    let line0 = view.state.doc.lineAt(view.state.selection.main.head).number - 1;
+  /** 视口顶 → 小数源码行号（二轮评审 2.4：必须小数，整行吸附会让交接精度归零、往返在边界抖）。
+   *  几何全走 CM 文档坐标（documentTop 系）：lineBlockAtHeight 找视口顶所在可视块 →
+   *  归属逻辑行 → 块顶在「该逻辑行全部可视块的文档跨度」内的比例即行内小数。
+   *  软换行的各可视块行高相等，此比例与「块序号+块内比例」等价且免遍历。 */
+  function topLine(): number | null {
+    const v = view;
+    if (!v || !s.current()) return null;
     try {
-      const r = view.scrollDOM.getBoundingClientRect();
-      const cx = view.contentDOM.getBoundingClientRect().left + 8; // x 落在正文列，避开行号槽
-      const pos = view.posAtCoords({ x: cx, y: r.top + 4 }, false);
-      if (pos != null) line0 = view.state.doc.lineAt(pos).number - 1;
-    } catch { /* 几何未就绪时退回光标行 */ }
-    // 与阅读侧 FR-3.2 同判据：滚到底（末章内容不足以上滚到顶）时强制判给最后一个标题
-    const sc = view.scrollDOM;
-    if (sc.scrollHeight - sc.scrollTop - sc.clientHeight < 6) {
-      const last = s.current()!.outline.at(-1);
-      if (last) return { sec: last.sec, frac: 1 };
+      const r = v.scrollDOM.getBoundingClientRect();
+      if (r.width < 2) throw new Error("未挂载");
+      const h = (r.top + SYNC_EPSILON) - v.documentTop;   // 视口顶的文档相对 y
+      const blk = v.lineBlockAtHeight(Math.max(0, h));
+      const ln = v.state.doc.lineAt(blk.from);
+      const first = v.lineBlockAt(ln.from);
+      const last = v.lineBlockAt(ln.to);
+      const endTop = last.top + last.height;
+      const frac = Math.min(1, Math.max(0, (h - first.top) / Math.max(1, endTop - first.top)));
+      return ln.number - 1 + frac;
+    } catch {
+      // 几何未就绪退回光标行（整数精度，下一拍 sync/交接自会校正）
+      return v.state.doc.lineAt(v.state.selection.main.head).number - 1;
     }
-    if (!s.current()!.outline.length) {
-      return { sec: null, frac: view.state.doc.lines > 1 ? line0 / (view.state.doc.lines - 1) : 0 };
-    }
-    return secFracFromTopline(s.current()!.outline, line0);
   }
 
-  function jumpTo(sec: number | null, frac: number) {
-    const cur = s.current();
-    if (!cur || !view) return;
-    const line0 = sec == null
-      ? Math.round(frac * (view.state.doc.lines - 1))     // 无标题文档：全文比例映射
-      : lineForSecFrac(cur.outline, sec, frac);
-    const safe = Math.min(line0 + 1, view.state.doc.lines);
-    const pos = view.state.doc.line(safe).from;
-    view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "start" }) });
-    view.focus();
+  /** 精确跳行：小数部分折算成行内字符偏移后一起交给 scrollIntoView(y:"start")——
+   *  CM 会把**目标字符所在的可视块**贴顶，行内比例与 topLine() 的跨度比例同一几何（同步行高）。 */
+  function jumpToLine(lineFloat: number) {
+    const v = view;
+    if (!v || !s.current()) return;
+    const n = v.state.doc.lines;
+    const line0 = Math.max(0, Math.min(n - 1, Math.floor(lineFloat)));
+    const frac = lineFloat - line0;
+    const ln = v.state.doc.line(line0 + 1);
+    const target = ln.from + Math.min(ln.length, Math.round(frac * ln.length));
+    v.dispatch({ selection: { anchor: target }, effects: EditorView.scrollIntoView(target, { y: "start" }) });
+    v.focus();
   }
 
   // 双 rAF：等 scrollIntoView 的几何应用稳定后再读顶行——单帧读会在滚动生效前
@@ -61,8 +65,15 @@ export default function EditorPane() {
     raf = requestAnimationFrame(() => {
       raf = requestAnimationFrame(() => {
         raf = 0;
-        const sf = topFrac();
-        if (sf) s.setActiveSec(sf.sec);
+        const l = topLine();
+        const cur = s.current();
+        if (l != null && cur) {
+          // 章节判定：行号落在哪个 outline 区间（触底时 topLine 已自然到文末 → 末章）
+          const ol = cur.outline;
+          let sec: number | null = ol.length ? ol[0].sec : null;
+          for (const o of ol) if (l >= o.line) sec = o.sec;
+          s.setActiveSec(sec);
+        }
       });
     });
   }
@@ -89,9 +100,9 @@ export default function EditorPane() {
         }),
       ],
     });
-    ui.registerEditorBridge({ jumpTo, topFrac });
+    ui.registerEditorBridge({ jumpToLine, topLine });
     const pj = ui.takePendingEditorJump();
-    if (pj && (pj.sec != null || pj.frac > 0)) jumpTo(pj.sec, pj.frac);
+    if (pj != null && pj > 0) jumpToLine(pj);
     view.focus();
     syncOutline();
     onCleanup(() => {

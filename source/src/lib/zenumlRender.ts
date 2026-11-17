@@ -5,6 +5,7 @@
  * CSP 仅新增 script-src 'wasm-unsafe-eval'（WebAssembly 编译的规范要求，见 tauri.conf.json）。
  * 首行 `zenuml` 关键字由 md.ts 打上 data-zuml 标记路由到这里；关键字行传给引擎前剥除。 */
 import { escapeHtml } from "./md.ts";
+import { compensateAnchor } from "./nav.ts";
 
 interface ZumlEngine {
   parse: (code: string) => Promise<{ pass: boolean; errorDetails?: { line: number; column: number; msg: string }[] }>;
@@ -18,9 +19,11 @@ function themeFor(themeName?: string): string {
 }
 
 function fallbackBox(el: HTMLElement, reason: string): void {
-  el.innerHTML = `<div class="fb-box"><div class="fb-label">⚠ zenuml 语法错误 · ${escapeHtml(reason)}</div>` +
-    `<pre class="formula-fallback">${escapeHtml(el.getAttribute("data-code") ?? "")}</pre></div>`;
-  el.classList.add("f-error");
+  compensateAnchor(() => {   // 原地替换即布局推挤事件，经可见锚补偿（滚动同步方案 §4.2）
+    el.innerHTML = `<div class="fb-box"><div class="fb-label">⚠ zenuml 语法错误 · ${escapeHtml(reason)}</div>` +
+      `<pre class="formula-fallback">${escapeHtml(el.getAttribute("data-code") ?? "")}</pre></div>`;
+    el.classList.add("f-error");
+  });
 }
 
 let chain: Promise<void> = Promise.resolve();
@@ -72,9 +75,11 @@ async function doRender(scope: HTMLElement, themeName?: string): Promise<void> {
         markup = `<img src="${escapeHtml(uri)}" alt="zenuml 图" style="max-width:100%">`;
       }
       if (!el.isConnected) return;
-      el.innerHTML = markup;
-      el.classList.add("f-ready");
-      el.classList.remove("f-error");
+      compensateAnchor(() => {
+        el.innerHTML = markup;
+        el.classList.add("f-ready");
+        el.classList.remove("f-error");
+      });
     } catch (e) {
       fallbackBox(el, "渲染失败");
     }

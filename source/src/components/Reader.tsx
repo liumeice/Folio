@@ -9,6 +9,11 @@ import { countWords } from "../lib/wordcount";
 import { typesetMathIn } from "../lib/mathjax";
 import { renderMermaid } from "../lib/mermaidRender";
 import { renderZenuml } from "../lib/zenumlRender";
+import {
+  ACTIVE_SEC_ZONE, HEAD_OFFSET, SYNC_EPSILON,
+  lineFromAnchors, pxFromLine, lineOffFromLine,
+  registerAnchorCompensate, markTypesetSettled, type AnchorBlk,
+} from "../lib/nav";
 import type { DocFull } from "../lib/types";
 
 /** 大纲坐标系：只认携带 data-sec 的标题（引用块/提示块内的标题无锚点，见 lib/md.ts CON-02） */
@@ -47,6 +52,91 @@ export default function Reader() {
   let view!: HTMLDivElement;
   let article!: HTMLElement;
 
+  /* ══ 滚动同步坐标设施（方案 v1.2 §4.1/§4.2）══
+   * 一把尺：小数源码行号 lineFloat；阅读窗几何一律经 data-line-start/end 锚点块表换算。 */
+  let layoutEpoch = 0;                            // 排版/主题/尺寸变化 → 锚点表几何失效
+  let lastNav: ReturnType<typeof s.navRequest> = null; // 等待"终局重放"的定位请求
+  let replayRounds = 0;
+  let settleDeadline = 0;
+  let scrollGuardUntil = 0;                       // 程序滚动豁免窗（ms）
+  let pendingImages: Promise<void> = Promise.resolve();
+  let lastTopLine = 0;                            // 视口顶行号（设置变更后原位还原用）
+  let curDoc: DocFull | null = null;              // 补偿路径同步读文档（避开信号）
+  const lineCountCache = new WeakMap<DocFull, number>();
+
+  /** 所有程序写 scrollTop 的唯一通道（applyNav/补偿/重放/设置还原）：
+   *  写后开豁免窗——scroll 事件异步且可能被合并，onScroll 内滚动会滚动续窗（滚动续窗见 onScroll）。 */
+  function programScroll(fn: () => void) {
+    fn();
+    scrollGuardUntil = Date.now() + 100;
+  }
+
+  interface AnchorSet { blks: AnchorBlk[]; els: HTMLElement[]; docLines: number }
+  let anchorsCache: { key: string; set: AnchorSet } | null = null;
+  /** 影响排版几何的设置签名（不含 theme：颜色不改度量，图表变色由补偿层接住）+ 视口宽（侧栏/焦点模式） */
+  function typeSig(): string {
+    const st = s.settings();
+    return [st.serif, st.fsSerif, st.fsSans, st.width, st.lh, st.letterSpacing,
+      st.paraSpacing, st.align, st.codeFs, st.tableDensity, view ? view.clientWidth : 0].join("|");
+  }
+  function anchors(doc: DocFull): AnchorSet | null {
+    if (!view || !article || !article.isConnected) return null;
+    const key = doc.meta.id + "|" + renderSeq + "|" + layoutEpoch + "|" + typeSig();
+    if (anchorsCache && anchorsCache.key === key) return anchorsCache.set;
+    const raw = [...article.querySelectorAll<HTMLElement>("[data-line-start]")];
+    if (!raw.length) return null;
+    const vr = view.getBoundingClientRect();
+    const baseTop = vr.top - view.scrollTop;
+    const pairs = raw.map((el) => {
+      const st = Number(el.getAttribute("data-line-start"));
+      const enRaw = Number(el.getAttribute("data-line-end"));
+      const en = Number.isFinite(enRaw) && enRaw >= st ? enRaw : st;
+      const r = el.getBoundingClientRect();
+      const top = Math.max(0, r.top - baseTop);
+      return { el, blk: { start: st, end: en, top, bottom: Math.max(top, r.bottom - baseTop) } };
+    }).filter((p) => Number.isFinite(p.blk.start));
+    // 二分不变量=按 top 升序（文档序通常成立；防御性同键双排序保持 els 配对）
+    pairs.sort((a, b) => a.blk.top - b.blk.top || a.blk.start - b.blk.start);
+    let n = lineCountCache.get(doc);
+    if (n == null) { n = doc.src.replace(/\r\n/g, "\n").split("\n").length; lineCountCache.set(doc, n); }
+    const set: AnchorSet = { blks: pairs.map((p) => p.blk), els: pairs.map((p) => p.el), docLines: n };
+    anchorsCache = { key, set };
+    return set;
+  }
+  /** 小数行号 → 阅读窗像素并落位 */
+  function scrollToLine(line: number, doc: DocFull) {
+    lastTopLine = line;
+    const A = anchors(doc);
+    if (!A) { programScroll(() => { view.scrollTop = 0; }); return; }
+    const y = pxFromLine(A.blks, line, A.docLines);
+    if (y != null) programScroll(() => { view.scrollTop = y; });
+  }
+  /** 视口顶（SYNC_TOP + 1px 亚像素 epsilon，与编辑侧对称）→ 小数行号 */
+  function topLineOf(doc: DocFull): number | null {
+    const A = anchors(doc);
+    if (!A) return null;
+    return lineFromAnchors(A.blks, view.scrollTop + SYNC_EPSILON, A.docLines);
+  }
+  /** 逐块锚点补偿：包住每次原地 DOM 替换（排版/水合/重渲），块顶位移即时抵消——
+   *  用户正在读也不跳（二轮评审 3.1/3.3）；不受"让路"约束（它抵消移动，不移动内容） */
+  function compensateDom(fn: () => void) {
+    const doc = curDoc;
+    const A = doc && s.mode() === "read" ? anchors(doc) : null;
+    if (!A) { fn(); layoutEpoch++; return; }
+    const y = view.scrollTop;
+    let idx = A.blks.findIndex((b) => b.bottom > y + 1);
+    if (idx < 0) idx = A.blks.length - 1;
+    const el = A.els[idx];
+    if (!el || !el.isConnected) { fn(); layoutEpoch++; return; }
+    const before = el.getBoundingClientRect().top;
+    fn();
+    layoutEpoch++;
+    const dy = el.getBoundingClientRect().top - before;
+    if (Math.abs(dy) >= 1) {
+      programScroll(() => { view.scrollTop = Math.max(0, view.scrollTop + dy); });
+    }
+  }
+
   /* ── 渲染（同文档对象不重刷：编辑⇄阅读互切只需要 nav，不需要重渲染） ── */
   let lastRendered: DocFull | null | undefined;
   let renderSeq = 0; // 防异步图片/高亮落到更新的渲染结果上
@@ -80,6 +170,10 @@ export default function Reader() {
   function render(doc: DocFull) {
     ui.clearHits();           // 旧命中标记随 DOM 消亡，浮动条状态同步清零
     const seq = ++renderSeq;
+    curDoc = doc;
+    anchorsCache = null;      // 新 DOM：锚点表作废
+    lastTopLine = 0;
+    markTypesetSettled(-1);   // 新一版内容尚未排版：ratio 落定门重新关闸（同文档重开也不豁免）
     article.innerHTML = mdToHtml(doc.src);
     const h1 = article.querySelector("h1");
     if (h1) {
@@ -98,7 +192,7 @@ export default function Reader() {
       if (seq !== renderSeq) return;
       const run = () => {
         if (seq !== renderSeq) return;
-        void hydrateImages(doc);
+        pendingImages = hydrateImages(doc); // v1.2：图片水合收编进 typesetDone 组成项（二轮评审 3.2）
         void import("../lib/codehl").then((m) => { if (seq === renderSeq) void m.highlightCodeBlocks(article); });
         void typesetDoc(doc, seq); // 公式 → 图表（内部自守卫；库缺失时各自退化 pre，不惊主流程）
       };
@@ -117,11 +211,13 @@ export default function Reader() {
     void renderZenuml(article, theme);
   }, { defer: true }));
 
-  /* 公式/图表排版链（MathJax + Mermaid 集成 §3.1）：innerHTML 之后才准排版。
-   * 顺序：math 在前、mermaid await math ——mermaid 内部要调 MathJax（math mode 标签），
-   * 且同容器二次 innerHTML 会抹掉首次排版产物（易错点 #9/#10）。
+  /* 公式/图表排版链（MathJax + Mermaid 集成 §3.1；v1.2 升级为显式排版完成信号）：
+   * innerHTML 之后才准排版。顺序：math 在前、mermaid await math ——mermaid 内部要调 MathJax
+   * （math mode 标签），且同容器二次 innerHTML 会抹掉首次排版产物（易错点 #9/#10）。
    * 三道守卫：renderSeq（重渲丢弃）、el.isConnected（模块内，切文档静默中止）、visibilityState
-   * （隐藏页 mermaid 测量文本尺寸需要布局，恢复可见再排——易错点 #4）。 */
+   * （隐藏页 mermaid 测量文本尺寸需要布局，恢复可见再排——易错点 #4）。
+   * 链尾（含图片水合）= typesetDone：标记落定（ratio 门）+ 对 lastNav 做一次终局重放（第一层
+   * 补偿保证过程不跳，这一步保证终点对；采样稳定后再兜一轮，方案 §4.2 第二/三层）。 */
   async function typesetDoc(doc: DocFull, seq: number) {
     await whenVisible();
     if (seq !== renderSeq) return;
@@ -130,6 +226,28 @@ export default function Reader() {
     await renderMermaid(article, undefined, s.settings().theme);
     if (seq !== renderSeq || s.current() !== doc) return;
     await renderZenuml(article, s.settings().theme); // zenuml 原生通道（@zenuml/core，mermaid v11 已不含该类型）
+    await pendingImages;                              // 远程/本地图片尺寸落定（load 迟到由兜底层再收）
+    if (seq !== renderSeq || s.current() !== doc) return;
+    onTypesetSettled(doc, seq);
+    // 第三层兜底：排版链 resolve 后仍可能有迟到尺寸（未测高远程图、字体到达）——采样稳定后再补一次
+    void ui.waitArticleStable(350, 3, 4000).then(() => {
+      if (seq === renderSeq && s.current() === doc) { layoutEpoch++; replayNav(doc); }
+    });
+  }
+
+  function onTypesetSettled(doc: DocFull, seq: number) {
+    if (seq !== renderSeq || s.current() !== doc) return;
+    layoutEpoch++;
+    markTypesetSettled(doc.meta.id);
+    replayNav(doc);
+  }
+
+  /** 终局重放：把最近一次定位请求在"已稳定布局"上再施加一次；最多 2 轮、8s 截止、用户滚过即让路 */
+  function replayNav(doc: DocFull) {
+    if (!lastNav || Date.now() > settleDeadline || replayRounds >= 2) return;
+    if (s.current() !== doc || s.mode() !== "read") return;
+    replayRounds++;
+    navApply(lastNav, doc);
   }
 
   function whenVisible(): Promise<void> {
@@ -161,43 +279,33 @@ export default function Reader() {
     return null;
   }
 
-  function nextHeading(h: HTMLElement): HTMLElement | null {
-    let n: Element | null = h.nextElementSibling;
-    while (n && !/^H[1-6]$/.test(n.tagName)) n = n.nextElementSibling;
-    return n as HTMLElement | null;
-  }
 
+  /** 定位请求入口：登记 lastNav（供排版完成后的终局重放）并立即施加。
+   *  即时首落不等排版完成——过程稳定由逐块补偿层负责，方案 §4.2 二轮评审 3.3 的取舍。 */
   function applyNav(nav: ReturnType<typeof s.navRequest>, doc: DocFull) {
     if (!nav) return;
-    if (nav.kind === "top") { view.scrollTop = 0; return; }
-    if (nav.kind === "secFrac") {
-      // 编辑→阅读交接：章节 + 章节内比例 → 渲染像素（与 lineForSecFrac 同一坐标系）
-      if (nav.sec == null) {
-        const max0 = view.scrollHeight - view.clientHeight;
-        if (max0 > 0) view.scrollTop = nav.frac * max0;
-        return;
-      }
-      const h = headingBy(nav.sec, doc.outline.find((o) => o.sec === nav.sec)?.text ?? null);
-      if (h) {
-        const nx = nextHeading(h);
-        view.scrollTop = nx
-          ? Math.max(0, h.offsetTop + nav.frac * (nx.offsetTop - h.offsetTop))
-          : Math.max(0, h.offsetTop - 70);
-      }
-      return;
-    }
+    lastNav = nav;
+    replayRounds = 0;
+    settleDeadline = Date.now() + 8000;
+    navApply(nav, doc);
+  }
+
+  function navApply(nav: Exclude<ReturnType<typeof s.navRequest>, null>, doc: DocFull) {
+    if (nav.kind === "top") { programScroll(() => { view.scrollTop = 0; }); return; }
+    if (nav.kind === "line") { scrollToLine(nav.line, doc); return; }
     if (nav.kind === "anchor") {
       const h = headingBy(nav.sec, doc.outline.find((o) => o.sec === nav.sec)?.text ?? null);
       if (h) { h.scrollIntoView({ behavior: "smooth", block: "start" }); flash(h); }
       return;
     }
-    // restore：prefer=position → ratio 绝对优先；否则锚点+偏移优先、ratio 兜底（FR-4.1 / FR-5.2）
+    // restore：prefer=position → ratio 绝对优先；否则锚点+偏移优先、ratio 兜底（FR-4.1 / FR-5.2）。
+    // secOff 与保存式子镜像对称（存 scrollTop-(offsetTop-HEAD_OFFSET)，恢复 +(HEAD_OFFSET)，R3 收口）
     const max = view.scrollHeight - view.clientHeight;
     if (nav.prefer !== "position") {
       const h = headingBy(nav.sec, nav.secText);
-      if (h) { view.scrollTop = Math.max(0, h.offsetTop - 70 + (nav.secOff ?? 0)); return; }
+      if (h) { programScroll(() => { view.scrollTop = Math.max(0, h.offsetTop - HEAD_OFFSET + (nav.secOff ?? 0)); }); return; }
     }
-    if (max > 0) view.scrollTop = nav.ratio * max;
+    if (max > 0) programScroll(() => { view.scrollTop = nav.ratio * max; });
   }
 
   function flash(el: HTMLElement) {
@@ -205,6 +313,22 @@ export default function Reader() {
     void el.offsetWidth;
     el.classList.add("flash");
     window.setTimeout(() => el.classList.remove("flash"), 1600);
+  }
+
+  /** 迟到解码防推挤（方案 §4.2 图片路）：attach 时尺寸未定的图（无宽高远程图等），load 后
+   *  若整体已在视口上方，scrollTop 补位移——不补就把用户正在读的内容顶下去。 */
+  function watchLateShift(img: HTMLImageElement) {
+    if (img.complete) return;
+    const pre = img.offsetHeight;
+    const onDone = () => {
+      img.removeEventListener("load", onDone); img.removeEventListener("error", onDone);
+      const dy = img.offsetHeight - pre;
+      if (dy > 0 && view && img.getBoundingClientRect().bottom <= view.getBoundingClientRect().top) {
+        layoutEpoch++;
+        programScroll(() => { view.scrollTop = Math.max(0, view.scrollTop + dy); });
+      }
+    };
+    img.addEventListener("load", onDone); img.addEventListener("error", onDone);
   }
 
   /* ── 本地图片资源水合（FR-2.1）：相对/根绝对路径按文档位置解析 → asset: 协议 ── */
@@ -238,10 +362,13 @@ export default function Reader() {
 
   async function hydrateImages(doc: DocFull) {
     const locals: { img: HTMLImageElement; src: string; key: string }[] = [];
+    // 整段扫描批进一次补偿：缓存命中图的尺寸写回是同步布局改动，批前批后各测一次可见锚（不逐图测，防布局抖动）
+    compensateDom(() => {
     article.querySelectorAll<HTMLImageElement>("img").forEach((img) => {
       const src = img.getAttribute("src") || "";
       if (/^(https?:|data:|blob:|asset:)/i.test(src) || /^https?:\/\/asset\.localhost/i.test(src)) {
         watchImg(img, src);
+        watchLateShift(img);
         return;
       }
       if (!s.isTauri) return; // 浏览器 mock 无本地文件系统，保留原样
@@ -252,10 +379,12 @@ export default function Reader() {
           if (c.w > 0 && c.h > 0) { img.width = c.w; img.height = c.h; }
           img.src = c.url;
           img.dataset.folioLocal = c.path; // FR-13.1 导出随行：src 已被 asset URL 顶掉，磁盘路径留痕于此
+          watchLateShift(img);
         } else markMissing(img, src);
         return;
       }
       locals.push({ img, src, key });
+    });
     });
     if (!locals.length) return;
     const uniq = [...new Set(locals.map((l) => l.src))];
@@ -269,6 +398,7 @@ export default function Reader() {
           ? { url: urls[i]!, path: info[i]![0], w: info[i]![1], h: info[i]![2] }
           : null]),
       );
+      compensateDom(() => {
       for (const l of locals) {
         const r = bySrc.get(l.src) ?? null;
         imgCache.set(l.key, r ? { url: r.url, path: r.path, w: r.w, h: r.h } : null);
@@ -280,10 +410,12 @@ export default function Reader() {
           l.img.title = r.path;
           l.img.dataset.folioLocal = r.path; // FR-13.1 导出随行：src 已被 asset URL 顶掉，磁盘路径留痕于此
           watchImg(l.img, l.src);
+          watchLateShift(l.img);
         } else {
           markMissing(l.img, l.src);
         }
       }
+      });
     } catch {
       for (const l of locals) {
         imgCache.set(l.key, null);
@@ -295,6 +427,11 @@ export default function Reader() {
   /* ── 滚动联动（FR-3.2）与位置源（FR-4.1/4.3） ── */
   let raf = 0;
   function onScroll() {
+    // 让路判定：程序滚动豁免窗内续窗（平滑滚动/补偿连发的 scroll 事件异步到达，窗口太窄会误判）；
+    // 窗外的 scroll 事件才是用户滚动 → 作废终局重放（方案 §4.2；防"补偿滚动判成用户滚动→重放永不执行"）
+    const t = Date.now();
+    if (t <= scrollGuardUntil) scrollGuardUntil = t + 60;
+    else lastNav = null;
     if (s.mode() === "edit") return;
     if (!s.current()) return;
     const max = view.scrollHeight - view.clientHeight;
@@ -305,9 +442,11 @@ export default function Reader() {
   }
 
   function updateActive() {
+    const doc = s.current();
+    if (doc) { const tl = topLineOf(doc); if (tl != null) lastTopLine = tl; }
     const hs = [...article.querySelectorAll<HTMLElement>(HSEC)];
     if (!hs.length) { s.setActiveSec(null); return; }
-    const st = view.scrollTop + 80;
+    const st = view.scrollTop + ACTIVE_SEC_ZONE;   // 大纲判据专用常量，不参与任何交接（R3）
     let active: HTMLElement = hs[0];
     for (const h of hs) if (h.offsetTop <= st) active = h;
     const max = view.scrollHeight - view.clientHeight;
@@ -315,18 +454,27 @@ export default function Reader() {
     s.setActiveSec(Number(active.dataset.sec) || null);
   }
 
-  /* 位置源：Reader 是唯一知道滚动真相的人 */
+  /* 位置源：Reader 是唯一知道滚动真相的人。
+   * v1.2：主坐标 = 章节内行偏移 secLineOff（布局无关，塌陷期采集也真实，R6 防污染）；
+   * srcLine 供历史条目；ratio 是布局依赖值，落盘门在 store.flushPosition（未落定时沿用旧值）。 */
   function currentPosition() {
-    if (!s.current() || s.mode() === "edit") return null;
+    const doc = s.current();
+    if (!doc || s.mode() === "edit") return null;
     const max = view.scrollHeight - view.clientHeight;
     const ratio = max > 0 ? Math.min(1, view.scrollTop / max) : 0;
-    const sec = s.activeSec();
+    const srcLine = topLineOf(doc);
+    const offRes = srcLine != null
+      ? lineOffFromLine(doc.outline, srcLine)
+      : { sec: null as number | null, off: -1 };
+    const sec = offRes.sec ?? s.activeSec();
     const h = sec != null ? article.querySelector<HTMLElement>(`[data-sec="${sec}"]`) : null;
     return {
       ratio,
       sec,
       secText: h?.textContent ?? null,
-      secOff: h ? Math.max(0, view.scrollTop - h.offsetTop) : 0,
+      secOff: h ? Math.max(0, view.scrollTop - (h.offsetTop - HEAD_OFFSET)) : 0,  // 与恢复式子镜像对称
+      secLineOff: offRes.off,
+      srcLine,
       updatedAt: Math.floor(Date.now() / 1000),
     };
   }
@@ -451,29 +599,31 @@ export default function Reader() {
     ui.registerArticle(article);
     ui.registerSectionNav({ dir: jumpSection, toTop });
     s.providePositionSource(currentPosition);
-    // 编辑⇄阅读同步桥：阅读侧"章节+比例"读取（与 updateActive 同判据）
+    // 编辑⇄阅读同步桥（v1.2 一把尺）：视口顶的小数源码行号即交接值
     ui.registerViewBridge({
-      secFrac(): ui.SecFrac | null {
-        if (!s.current() || s.mode() === "edit") return null;
-        const hs = [...article.querySelectorAll<HTMLElement>(HSEC)];
-        if (!hs.length) {
-          // 无标题文档：退化为全文比例（sec=null 时两端按全文几何映射）
-          const max0 = view.scrollHeight - view.clientHeight;
-          return { sec: null, frac: max0 > 0 ? Math.min(1, view.scrollTop / max0) : 0 };
-        }
-        const st = view.scrollTop + 80;
-        let idx = 0;
-        hs.forEach((h, i) => { if (h.offsetTop <= st) idx = i; });
-        const max = view.scrollHeight - view.clientHeight;
-        if (max > 4 && view.scrollTop >= max - 4) idx = hs.length - 1;
-        const h = hs[idx];
-        const nx = hs[idx + 1] as HTMLElement | undefined;
-        return {
-          sec: Number(h.dataset.sec) || null,
-          frac: nx ? Math.min(1, Math.max(0, (view.scrollTop - (h.offsetTop - 70)) / (nx.offsetTop - h.offsetTop))) : 0,
-        };
+      topLine(): number | null {
+        const doc = s.current();
+        if (!doc || s.mode() === "edit") return null;
+        return topLineOf(doc);
       },
     });
+    registerAnchorCompensate(compensateDom);
+    // 高度变化（排版/图片/字体）→ 锚点表失效重建；ResizeObserver 在 jsdom 缺席时静默（探针环境）
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(() => { layoutEpoch++; });
+      ro.observe(article);
+    }
+    // 排印/栏宽变更原位还原（方案 §4.4）：两帧延迟等 App 的 typeVars 落 DOM；还原值用变更前沿在的 lastTopLine
+    createEffect(on(() => typeSig(), (sig, prev) => {
+      if (prev === undefined || sig === prev || s.mode() !== "read") return;
+      layoutEpoch++;
+      const doc = s.current();
+      if (!doc) return;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (s.current() === doc && s.mode() === "read") scrollToLine(lastTopLine, doc);
+      }));
+    }));
     view.addEventListener("scroll", onScroll, { passive: true });
     article.addEventListener("click", onArticleClick);
     article.addEventListener("keydown", (e) => {
@@ -488,6 +638,8 @@ export default function Reader() {
       ui.registerArticle(null);
       ui.registerSectionNav(null);
       ui.registerViewBridge(null);
+      registerAnchorCompensate(null);
+      ro?.disconnect();
     });
   });
 
