@@ -1,7 +1,7 @@
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
-import { newDoc, pickAndOpen, pickFolderAndScan, quitApp, copyDeepLink, exportHtml, exportPdf } from "../lib/actions";
+import { newDoc, pickAndOpen, pickFolderAndScan, quitApp, copyDeepLink, exportHtml, exportPdf, openGuide } from "../lib/actions";
 import { APP_VERSION, IS_DEV } from "../lib/version";
 
 /** theme 字段只给「主题▸」子项：与 settings().theme 相等时打 accent 点（单选可视化） */
@@ -48,6 +48,7 @@ const MENUS: Menu[] = [
     { act: "link", label: "复制深度链接", icon: "i-copy" },
   ] },
   { name: "帮助", items: [
+    { act: "guide", label: "Folio 使用指南", icon: "i-md" },
     { act: "keys", label: "快捷键一览…", kbd: "Ctrl /", icon: "i-md" },
     { sep: true },
     { act: "about", label: "关于 Folio", icon: "i-info" },
@@ -90,6 +91,7 @@ export default function TitleBar() {
         break;
       case "props": ui.setPropsOpen(true); break;
       case "link": copyDeepLink(s); break;
+      case "guide": void openGuide(s); break;
       case "keys": ui.setKeysOpen(true); break;
       case "about": ui.setAboutOpen(true); break;
     }

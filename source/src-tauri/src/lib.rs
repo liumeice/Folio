@@ -628,16 +628,20 @@ pub fn run() {
                     }
                 }
             }
-            // FR-4.5：内置欢迎文档。v3 起它既不是库成员、也不被历史清理回收（builtin 标记），
-            // 所以按「这一条登记在不在」判定，而不是「库是否为空」——后者会让重新安装后不再出现。
-            {
-                let w = data_dir.join("welcome.md");
-                if !w.exists() {
-                    let _ = std::fs::write(&w, include_str!("../../src/assets/welcome.md"));
+            // FR-4.5：内置文档（欢迎页 + 使用指南，后者挂在「帮助」菜单）。v3 起它们既不是库成员、
+            // 也不被历史清理回收（builtin 标记），所以按「这一条登记在不在」判定，而不是「库是否为空」
+            // ——后者会让重新安装后不再出现。文件只在不存时解出，用户在数据目录里的改动不会被覆盖。
+            for (name, content) in [
+                ("welcome.md", include_str!("../../src/assets/welcome.md")),
+                ("guide.md", include_str!("../../src/assets/guide.md")),
+            ] {
+                let p = data_dir.join(name);
+                if !p.exists() {
+                    let _ = std::fs::write(&p, content);
                 }
-                if db.doc_by_path(&w.to_string_lossy()).is_err() {
-                    if let Ok(src) = folio_fs::read_md(&w) {
-                        let _ = db.upsert_builtin_document(&w, &src);
+                if db.doc_by_path(&p.to_string_lossy()).is_err() {
+                    if let Ok(src) = folio_fs::read_md(&p) {
+                        let _ = db.upsert_builtin_document(&p, &src);
                     }
                 }
             }

@@ -438,7 +438,7 @@ const mock = {
       docs = [];
     }
     if (!docs.some((d) => d.path.endsWith("guide.md"))) {
-      docs.unshift({ id: 1, path: "demo/guide.md", fileName: "Folio 使用指南.md", src: guideMd, mtime: Date.now() / 1000 });
+      docs.unshift({ id: 1, path: "demo/guide.md", fileName: "guide.md", src: guideMd, mtime: Date.now() / 1000 });
     }
     if (!docs.some((d) => d.path.endsWith("rust-notes.md"))) {
       docs.push({ id: 2, path: "demo/rust-notes.md", fileName: "Rust 学习笔记.md", src: rustMd, mtime: Date.now() / 1000 - 86400 });

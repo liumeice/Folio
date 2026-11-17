@@ -4,8 +4,8 @@
   ---------------------------------------------------------------
   视觉与布局参考：mdediter 墨页原型（rail + side + center / 菜单栏 / 状态栏）
   对应正式版技术栈：
-    桌面壳   Tauri 2.11 (WebView2 / 单实例 / folio:// 深度链接)
-    后端     Rust 1.90 (workspace, 10 crates)
+    桌面壳   Tauri 2 (WebView2 / 单实例 / folio:// 深度链接)
+    后端     Rust 1.85+ (workspace，4 个业务 crate + Tauri 壳)
     数据库   SQLite + FTS5 (rusqlite)   —— 原型中用 localStorage 模拟
     前端     SolidJS 1.9 + TS 5.8        —— 原型中为原生 JS
     编辑器   CodeMirror 6                —— 原型中为纯文本编辑区
@@ -1137,7 +1137,7 @@ body.settings-open .st-view{display:flex}
   <div class="modal" style="width:440px">
     <div class="modal-h">
       <span class="mark" style="width:32px;height:32px;border-radius:9px;font-size:15px">F</span>
-      <div><div class="mt">Folio <span style="font-size:11px;color:var(--text-3);font-weight:400">v0.1 · 交互原型</span></div>
+      <div><div class="mt">Folio <span style="font-size:11px;color:var(--text-3);font-weight:400">v0.2.1 · 交互原型</span></div>
       <div class="md2">把一堆 .md 当成「书」来读</div></div>
       <span class="sp"></span>
       <span class="x" id="about-close"><svg class="ico ico-14"><use href="#i-x"/></svg></span>
@@ -1147,10 +1147,10 @@ body.settings-open .st-view{display:flex}
         Windows 桌面本地 Markdown 阅读器。阅读状态存于本地 SQLite，不联网、不上传。
       </div>
       <div class="about-stack">
-        <span class="tag">Tauri 2.11</span><span class="tag plain">Rust 1.90</span>
+        <span class="tag">Tauri 2</span><span class="tag plain">Rust 1.85+</span>
         <span class="tag plain">SolidJS 1.9</span><span class="tag plain">TypeScript 5.8</span>
         <span class="tag plain">CodeMirror 6</span><span class="tag plain">SQLite + FTS5</span>
-        <span class="tag plain">Vitest · Playwright</span>
+        <span class="tag plain">cargo test · node:test</span>
       </div>
       <div style="margin-top:16px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-2);font-family:var(--font-mono);font-size:11px;color:var(--text-3)">
         GitHub：<a class="about-repo" href="https://github.com/liumeice/Folio" target="_blank" rel="noopener">github.com/liumeice/Folio</a><br>
@@ -1266,108 +1266,204 @@ body.settings-open .st-view{display:flex}
 <script type="text/markdown" id="doc-guide">
 # Folio 使用指南
 
-Folio 是一款运行于 Windows 桌面的本地 Markdown 阅读器：打开即读、翻页流畅、大纲清晰。它面向需要长期阅读与反复查阅技术文档的人——把一堆 `.md` 当成"书"来管理。
+适用版本：`v0.2.1`
 
-> 本页面即原型内置的示例文档，可用于体验大纲高亮、进度恢复、全文搜索与编辑模式。
+Folio 是一个 Windows 桌面本地 Markdown 阅读器：打开一个文件夹，就可以把里面的 `.md` 当成一本书来读。它重点解决四件事：读得舒服、找得到、记得住读到哪、需要时能顺手改。
 
-## 1. 核心概念
+> 本页是原型内置的示例文档，用于体验大纲、阅读进度、搜索和编辑。原型使用模拟磁盘和 localStorage；正式版使用真实文件系统和 SQLite，具体差异见文末。
 
-Folio 的一切围绕三件事：
+## 1. 先分清两个入口
 
-- **文件夹 / 最近打开**：左栏分两列——「文件夹」按所选文件夹的目录层级列（置顶组浮顶）；「最近打开」独立成列，按打开时间倒序、按天分组（库成员 ≠ 打开历史）
-- **大纲**：从 h1~h6 标题自动生成导航目录，随滚动高亮当前章节
-- **进度记忆**：滚动时静默记录阅读位置，重开文档自动回到原地
+左侧有两个入口，它们负责不同的事情：
 
-阅读状态（进度、排版偏好）存储在本地 SQLite 数据库中，重启后原样恢复。
+### 打开文件夹
 
-## 2. 快速上手
+用于按目录阅读。
 
-### 2.1 打开文档
+- 选择“打开文件夹”后，Folio 会扫描该文件夹及其子目录中的 Markdown。
+- 左侧显示文件夹目录树，可以按层级浏览文档。
+- 同一时间只保留一个打开的文件夹；再次打开新文件夹会替换旧的。
+- 打开文件夹不会修改或移动磁盘上的源文件。
 
-将 `.md` 文件拖入窗口即可开始阅读；也可以按 `Ctrl+O` 从文件对话框选择（原型中两者均真实可用；正式版经 Tauri 原生对话框与文件系统）。首次打开的文档会被自动索引，供全文搜索使用。
+### 最近打开
 
-Windows 系统中注册了 `folio://` 深度链接，浏览器或其他应用里的链接可以直接唤起 Folio 并定位到指定章节（`doc` 为文件标识，`sec` 为标题文本）：
+用于快速回到刚刚读过的文档。
 
-`folio://open?doc=guide&sec=4. 全文搜索`
+- 无论是从目录树打开、单独打开文件，还是通过深链打开，都会留下记录。
+- 按打开时间倒序排列，并按今天、昨天、日期分组。
+- 单独打开一个文件只会进入“最近打开”，不会自动加入当前文件夹目录树。
+- 保存文档不会改变它是否属于当前打开的文件夹。
 
-原型内也支持同一形态的 hash 深链演示：把地址栏改为 `#doc=rust&sec=2. 借用与引用` 后刷新，即直接打开该文档并定位到该节。
+举例：先打开 `D:\notes`，左侧会显示其中的文档；之后再单独打开 `D:\tmp\a.md`，它只会出现在“最近打开”，不会出现在 `D:\notes` 的目录树里。
 
-### 2.2 键盘快捷键
+![Folio 阅读流程示意](data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22860%22%20height%3D%22220%22%20font-family%3D%22Segoe%20UI%2C%20sans-serif%22%3E%0A%3Ctext%20x%3D%2220%22%20y%3D%2226%22%20font-size%3D%2212%22%20fill%3D%22%238794A9%22%3EFOLIO%20READING%20FLOW%3C%2Ftext%3E%0A%3Crect%20x%3D%2220%22%20y%3D%2254%22%20width%3D%22190%22%20height%3D%2276%22%20rx%3D%2210%22%20fill%3D%22none%22%20stroke%3D%22%230D9488%22%20stroke-width%3D%221.5%22%2F%3E%0A%3Ctext%20x%3D%22115%22%20y%3D%2284%22%20text-anchor%3D%22middle%22%20font-size%3D%2214%22%20fill%3D%22%230D9488%22%3E%E6%89%93%E5%BC%80%E6%96%87%E4%BB%B6%E5%A4%B9%3C%2Ftext%3E%0A%3Ctext%20x%3D%22115%22%20y%3D%22106%22%20text-anchor%3D%22middle%22%20font-size%3D%2211%22%20fill%3D%22%238794A9%22%3E%E6%89%AB%E6%8F%8F%20Markdown%3C%2Ftext%3E%0A%3Crect%20x%3D%22250%22%20y%3D%2254%22%20width%3D%22190%22%20height%3D%2276%22%20rx%3D%2210%22%20fill%3D%22none%22%20stroke%3D%22%230D9488%22%20stroke-width%3D%221.5%22%2F%3E%0A%3Ctext%20x%3D%22345%22%20y%3D%2284%22%20text-anchor%3D%22middle%22%20font-size%3D%2214%22%20fill%3D%22%230D9488%22%3E%E5%B7%A6%E4%BE%A7%E7%9B%AE%E5%BD%95%E6%A0%91%3C%2Ftext%3E%0A%3Ctext%20x%3D%22345%22%20y%3D%22106%22%20text-anchor%3D%22middle%22%20font-size%3D%2211%22%20fill%3D%22%238794A9%22%3E%E6%8C%89%E7%9B%AE%E5%BD%95%E6%B5%8F%E8%A7%88%3C%2Ftext%3E%0A%3Crect%20x%3D%22480%22%20y%3D%2254%22%20width%3D%22190%22%20height%3D%2276%22%20rx%3D%2210%22%20fill%3D%22none%22%20stroke%3D%22%230D9488%22%20stroke-width%3D%221.5%22%2F%3E%0A%3Ctext%20x%3D%22575%22%20y%3D%2284%22%20text-anchor%3D%22middle%22%20font-size%3D%2214%22%20fill%3D%22%230D9488%22%3E%E9%98%85%E8%AF%BB%E4%B8%8E%E6%9F%A5%E6%89%BE%3C%2Ftext%3E%0A%3Ctext%20x%3D%22575%22%20y%3D%22106%22%20text-anchor%3D%22middle%22%20font-size%3D%2211%22%20fill%3D%22%238794A9%22%3E%E5%A4%A7%E7%BA%B2%20%2F%20%E6%90%9C%E7%B4%A2%20%2F%20%E8%BF%9B%E5%BA%A6%3C%2Ftext%3E%0A%3Crect%20x%3D%22710%22%20y%3D%2254%22%20width%3D%22130%22%20height%3D%2276%22%20rx%3D%2210%22%20fill%3D%22none%22%20stroke%3D%22%23EA580C%22%20stroke-width%3D%221.5%22%2F%3E%0A%3Ctext%20x%3D%22775%22%20y%3D%2284%22%20text-anchor%3D%22middle%22%20font-size%3D%2214%22%20fill%3D%22%23EA580C%22%3E%E6%8C%89%E9%9C%80%E5%A4%84%E7%90%86%3C%2Ftext%3E%0A%3Ctext%20x%3D%22775%22%20y%3D%22106%22%20text-anchor%3D%22middle%22%20font-size%3D%2211%22%20fill%3D%22%238794A9%22%3E%E7%BC%96%E8%BE%91%20%2F%20%E5%AF%BC%E5%87%BA%3C%2Ftext%3E%0A%3Cline%20x1%3D%22210%22%20y1%3D%2292%22%20x2%3D%22244%22%20y2%3D%2292%22%20stroke%3D%22%238794A9%22%20stroke-width%3D%221.5%22%2F%3E%3Cpolygon%20points%3D%22250%2C92%20242%2C88%20242%2C96%22%20fill%3D%22%238794A9%22%2F%3E%0A%3Cline%20x1%3D%22440%22%20y1%3D%2292%22%20x2%3D%22474%22%20y2%3D%2292%22%20stroke%3D%22%238794A9%22%20stroke-width%3D%221.5%22%2F%3E%3Cpolygon%20points%3D%22480%2C92%20472%2C88%20472%2C96%22%20fill%3D%22%238794A9%22%2F%3E%0A%3Cline%20x1%3D%22670%22%20y1%3D%2292%22%20x2%3D%22704%22%20y2%3D%2292%22%20stroke%3D%22%238794A9%22%20stroke-width%3D%221.5%22%2F%3E%3Cpolygon%20points%3D%22710%2C92%20702%2C88%20702%2C96%22%20fill%3D%22%238794A9%22%2F%3E%0A%3Crect%20x%3D%22250%22%20y%3D%22164%22%20width%3D%22420%22%20height%3D%2234%22%20rx%3D%228%22%20fill%3D%22none%22%20stroke%3D%22%23EA580C%22%20stroke-width%3D%221.2%22%2F%3E%0A%3Ctext%20x%3D%22460%22%20y%3D%22186%22%20text-anchor%3D%22middle%22%20font-size%3D%2212%22%20fill%3D%22%23EA580C%22%3E%E6%9C%80%E8%BF%91%E6%89%93%E5%BC%80%EF%BC%9A%E4%BB%BB%E4%BD%95%E4%B8%80%E6%AC%A1%E6%89%93%E5%BC%80%E9%83%BD%E4%BC%9A%E7%95%99%E4%B8%8B%E8%AE%B0%E5%BD%95%EF%BC%8C%E7%94%A8%E6%9D%A5%E5%BF%AB%E9%80%9F%E5%9B%9E%E5%88%B0%E8%AF%BB%E8%BF%87%E7%9A%84%E6%96%87%E6%A1%A3%3C%2Ftext%3E%0A%3C%2Fsvg%3E)
 
-| 快捷键 | 功能 |
-| --- | --- |
-| `Ctrl+O` | 打开文档 |
-| `Ctrl+F` / `Ctrl+K` | 全文搜索 |
-| `Ctrl+E` | 切换阅读 / 编辑模式 |
-| `Ctrl+S` | 保存编辑（编辑模式下） |
-| `Alt+↑` / `Alt+↓` | 上一章 / 下一章 |
-| `Alt+←` / `Alt+→` | 后退 / 前进（回到当时所在行） |
-| `F3` / `Enter` | 搜索命中的下一处（按住 `Shift` 反向） |
-| `Esc` | 关闭弹层 · 清除高亮 · 退出专注 · 编辑中放弃修改 |
+*图：打开文件夹负责目录，最近打开负责回到读过的文档。*
 
-熟练之后，全程几乎不需要碰鼠标。编辑模式内按 `Home` 等键只作用于光标，不会被全局快捷键劫持。
+## 2. 打开与阅读
 
-### 2.3 排版偏好
+### 打开文档
 
-工具栏的滑杆按钮（或菜单「查看 → 排版设置」）可以调整正文字号、行宽、行高与衬线 / 无衬线字体；两套字体各自记忆字号基线，偏好会被记住，下次打开时原样生效。
+- 把 `.md` 文件拖进窗口即可阅读。
+- 按 `Ctrl+O` 可以多选 `.md`、`.markdown`、`.txt`。
+- 拖入文件夹，或在菜单里选择“打开文件夹…”，可以按目录阅读。
+- 双击系统中的 Markdown 文件，也可以交给 Folio 打开。
 
-## 3. 导航
+### 多页签
 
-### 3.1 大纲
+- 打开多篇文档时，会在标题栏形成多个页签。
+- 再次打开同一路径，只会激活已有页签，不会重复打开。
+- 关闭页签不会删除磁盘文件，也不会删除最近打开记录。
+- `Ctrl+W`、页签上的关闭按钮或鼠标中键都可以关闭当前页签。
 
-左侧面板就是文档大纲——从 Markdown 的 h1~h6 标题自动生成，无需手工维护：
+### 深链
 
-- h1 到 h6 逐级缩进，一眼看清文档结构
-- 滚动联动：读到哪，对应标题自动高亮
-- 点击任意条目，平滑滚动到该章节；条目可用 `Tab` 聚焦、`Enter` 跳转
-- 配合 `Alt+↑/↓` 上一章下一章，长文档不迷路
+正式版支持：
 
-文档被编辑保存后，大纲立即重建，始终与内容一致。
+```text
+folio://open?doc=<文件标识>&sec=<标题文本>
+```
 
-### 3.2 阅读进度
+例如：
 
-Folio 会为**每个文档**分别静默记录进度：锚定最近标题 + 标题内偏移（比例作为兜底），从文件夹列表切走再切回，仍从上次的行继续——就像一本永远记得页码的书。阅读区顶部的细进度条实时显示当前位置。
+```text
+folio://open?doc=guide&sec=4. 全文搜索
+```
+
+外部应用打开深链时，会唤起已经运行的 Folio，并定位到对应章节。原型中可以用同形态的地址栏 hash 演示，例如 `#doc=rust&sec=2. 借用与引用`。
+
+## 3. 大纲与阅读进度
+
+### 大纲
+
+左侧大纲根据 Markdown 的 `h1`–`h6` 自动生成：
+
+- 标题按层级缩进，结构一眼可见。
+- 阅读时自动高亮当前章节。
+- 点击条目跳转到对应标题。
+- `Tab` 可以聚焦条目，`Enter` 或空格执行跳转。
+- 文档保存后，大纲立即重建。
+
+### 阅读进度
+
+Folio 会为每篇文档单独记录阅读位置：
+
+- 优先记住章节标题和章节内偏移。
+- 标题发生变化时，用整篇比例兜底。
+- 切换到其他文档再回来，仍从上次位置继续。
+- 重启应用后，启动时回到最近打开的第一篇文档。
+
+阅读区顶部有细进度条，状态栏显示阅读百分比。
 
 ## 4. 全文搜索
 
-按 `Ctrl+F` 呼出搜索。搜索由 Rust 后端的 **SQLite FTS5** 驱动，毫秒级返回，支持跨文档检索：
+按 `Ctrl+F` 或 `Ctrl+K` 打开搜索。
 
-```text
-SELECT title, snippet(fts, 0, '[', ']', '…', 12)
-FROM fts WHERE fts MATCH '大纲' ORDER BY rank;
-```
+- 正式版支持跨文档搜索，使用 SQLite FTS5 trigram。
+- 少于 3 个字符的查询会自动使用 LIKE 兜底，中文短词也能搜到。
+- 结果按文档和章节分组，点击即跳转。
+- 命中文字会高亮，结果多于一处时显示命中数量。
+- 跳转后可用 `Enter` / `F3` 下一处、`Shift+F3` 上一处。
+- `Esc` 清除高亮并关闭搜索浮条。
 
-原型中这一步由前端模拟，仅检索当前文档，但交互与正式版一致：点击结果即跳转，命中处整篇高亮；跳转后保留浮动条，可用 `Enter` / `F3` 在多处命中间循环，`Esc` 统一清除高亮。
+原型中的搜索只模拟当前文档；正式版搜索全部已登记文档。
 
-> 正式版技术提醒：FTS5 默认 `unicode61` 分词不切中文词，中文检索需 trigram 或外接分词（如 jieba-rs），否则「毫秒级中文全文检索」不成立。
+## 5. 编辑与任务清单
 
-## 5. 编辑模式
+按 `Ctrl+E` 在阅读和编辑之间切换。
 
-按 `Ctrl+E` 切换到编辑模式。编辑器基于 **CodeMirror 6**，提供语法高亮、行号与代码折叠；保存（`Ctrl+S`）后立即重新渲染并回到阅读模式，按 `Esc` 或「放弃修改」则不保存返回。存在未保存修改时，页签橙点与编辑栏提示会同步亮起；切换文档时未保存内容将自动保存并明确提示（提示进入通知队列，不会被其它 toast 吞掉），不会静默丢失。
+- 编辑器支持 Markdown 语法高亮、行号、折叠和软换行。
+- `Ctrl+S` 保存并回到阅读视图。
+- 有未保存修改时，页签会显示脏标记。
+- 切换文档或关闭窗口前，会明确处理未保存内容。
+- 阅读视图中的任务清单可以直接点击勾选，结果会写回源文件。
+- 保存后搜索索引和大纲会同步更新。
 
-阅读视图中的任务清单复选框**可直接勾选**：点击即在源文本里回写 `[ ]` / `[x]`，编辑态与阅读态共享同一份数据。
+原型中使用纯文本编辑区演示交互；正式版使用 CodeMirror 6。
 
-> 原型中以纯文本编辑区代替，正式版由 SolidJS 组件挂载 CodeMirror 6 实例。
+## 6. 外观与设置
 
-## 6. 技术架构
+点击标题栏的设置按钮，或从“查看”菜单进入设置。
 
-| 层 | 技术 |
+可以调整：
+
+- 主题：深色、浅色、护眼米色。
+- 强调色：十二种，包含纯色和日夜双档色。
+- 字体族、正文字号。
+- 行高、字距、段落间距、对齐方式。
+- 页面最大宽度。
+- 代码字号和表格密度。
+
+设置会立即生效并保存，下次打开仍然保留。正式版还支持导入、导出设置、撤销更改和恢复默认。
+
+## 7. 导出
+
+### 导出 HTML
+
+正式版会把当前文档导出为带精简样式的 HTML，并把正文图片放到同级 `images/` 目录：本地图片从磁盘复制，远程图片由后端下载。导出的 HTML 不依赖 Folio 即可打开。
+
+原型只演示菜单入口和提示，不实际生成 HTML 文件。
+
+### 导出 PDF
+
+正式版会把当前阅读视图导出为 A4 PDF：
+
+- 页边距为上下 15mm、左右 12mm。
+- 页面底色跟随当前主题，不再出现固定黑色边框。
+- 标题栏、侧栏、状态栏和浮层不会进入 PDF。
+- 折叠的提示块在打印时展开。
+- `h1`–`h6` 会生成 PDF 大纲书签。
+- 长文档导出前会等待正文和图表渲染稳定，避免只导出半截。
+
+原型通过浏览器打印预览演示版式。PDF 阅读器可能在书签前显示自己的书签图标，那是阅读器界面，不是文档内容。
+
+## 8. 常用快捷键
+
+| 快捷键 | 功能 |
 | --- | --- |
-| 桌面壳 | Tauri 2.11（WebView2，单实例，深度链接 `folio://`） |
-| 后端 | Rust 1.90（workspace，10 个 crate） |
-| 数据库 | SQLite + FTS5（rusqlite） |
-| 前端 | SolidJS 1.9 + TypeScript 5.8 |
-| 编辑器 | CodeMirror 6 |
-| 构建 | Cargo（LTO fat）+ pnpm 10 |
-| 测试 | Vitest + Playwright |
+| `Ctrl+N` | 新建文档 |
+| `Ctrl+O` | 打开文档 |
+| `Ctrl+F` / `Ctrl+K` | 全文搜索 |
+| `Ctrl+E` | 切换阅读 / 编辑 |
+| `Ctrl+S` | 保存编辑 |
+| `Ctrl+W` | 关闭当前页签 |
+| `Ctrl+Q` | 退出 Folio |
+| `Alt+↑` / `Alt+↓` | 上一章 / 下一章 |
+| `Alt+←` / `Alt+→` | 后退 / 前进 |
+| `Home` | 回到顶部 |
+| `F3` / `Shift+F3` | 搜索命中下一处 / 上一处 |
+| `Esc` | 关闭弹层、清除高亮、退出专注或放弃编辑 |
 
-![Folio architecture sketch](data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='860'%20height='230'%20font-family='Segoe%20UI,%20sans-serif'%3E%3Ctext%20x='20'%20y='26'%20font-size='12'%20fill='%238794A9'%3EFOLIO%20ARCHITECTURE%20SKETCH%20-%20demo%20image,%20click%20to%20enlarge%3C/text%3E%3Crect%20x='20'%20y='52'%20width='190'%20height='72'%20rx='10'%20fill='none'%20stroke='%230D9488'%20stroke-width='1.5'/%3E%3Ctext%20x='115'%20y='82'%20text-anchor='middle'%20font-size='14'%20fill='%230D9488'%3ETauri%202.11%3C/text%3E%3Ctext%20x='115'%20y='104'%20text-anchor='middle'%20font-size='11'%20fill='%238794A9'%3EWebView2%20shell%3C/text%3E%3Crect%20x='250'%20y='52'%20width='190'%20height='72'%20rx='10'%20fill='none'%20stroke='%230D9488'%20stroke-width='1.5'/%3E%3Ctext%20x='345'%20y='82'%20text-anchor='middle'%20font-size='14'%20fill='%230D9488'%3ESolidJS%201.9%3C/text%3E%3Ctext%20x='345'%20y='104'%20text-anchor='middle'%20font-size='11'%20fill='%238794A9'%3EUI%20+%20rendering%3C/text%3E%3Crect%20x='480'%20y='52'%20width='190'%20height='72'%20rx='10'%20fill='none'%20stroke='%230D9488'%20stroke-width='1.5'/%3E%3Ctext%20x='575'%20y='82'%20text-anchor='middle'%20font-size='14'%20fill='%230D9488'%3ERust%201.90%3C/text%3E%3Ctext%20x='575'%20y='104'%20text-anchor='middle'%20font-size='11'%20fill='%238794A9'%3Ebackend,%2010%20crates%3C/text%3E%3Crect%20x='710'%20y='52'%20width='130'%20height='72'%20rx='10'%20fill='none'%20stroke='%230D9488'%20stroke-width='1.5'/%3E%3Ctext%20x='775'%20y='82'%20text-anchor='middle'%20font-size='14'%20fill='%230D9488'%3ESQLite%3C/text%3E%3Ctext%20x='775'%20y='104'%20text-anchor='middle'%20font-size='11'%20fill='%238794A9'%3EFTS5%20index%3C/text%3E%3Crect%20x='480'%20y='166'%20width='190'%20height='44'%20rx='10'%20fill='none'%20stroke='%23EA580C'%20stroke-width='1.5'/%3E%3Ctext%20x='575'%20y='193'%20text-anchor='middle'%20font-size='13'%20fill='%23EA580C'%3E.md%20files%20on%20disk%3C/text%3E%3Cline%20x1='210'%20y1='88'%20x2='244'%20y2='88'%20stroke='%238794A9'%20stroke-width='1.5'/%3E%3Cpolygon%20points='250,88%20242,84%20242,92'%20fill='%238794A9'/%3E%3Cline%20x1='440'%20y1='88'%20x2='474'%20y2='88'%20stroke='%238794A9'%20stroke-width='1.5'/%3E%3Cpolygon%20points='480,88%20472,84%20472,92'%20fill='%238794A9'/%3E%3Cline%20x1='670'%20y1='88'%20x2='704'%20y2='88'%20stroke='%238794A9'%20stroke-width='1.5'/%3E%3Cpolygon%20points='710,88%20702,84%20702,92'%20fill='%238794A9'/%3E%3Cline%20x1='575'%20y1='124'%20x2='575'%20y2='160'%20stroke='%23EA580C'%20stroke-width='1.5'/%3E%3Cpolygon%20points='575,166%20571,158%20579,158'%20fill='%23EA580C'%3E%3C/polygon%3E%3C/svg%3E)
+## 9. 原型与正式版的区别
 
-*图：正式版分层示意——原型内置的演示图片，宽图不溢出栏宽，点击可放大。*
+| 项目 | 原型 | 正式版 |
+| --- | --- | --- |
+| 文件来源 | 模拟磁盘和内置文档 | 真实 Windows 文件系统 |
+| 数据存储 | localStorage | SQLite |
+| 搜索 | 当前文档模拟 | FTS5 trigram 跨文档搜索 |
+| 编辑器 | 纯文本编辑区 | CodeMirror 6 |
+| HTML 导出 | 演示入口 | 生成 HTML 和 `images/` 目录 |
+| PDF 导出 | 浏览器打印预览 | A4 PDF + 主题底色 + 大纲书签 |
+| 文件打开 | 模拟选择对话框 | 应用内选择对话框 + 真实磁盘 |
 
-## 7. 小结
+### 技术栈
 
-先把"读"这件事做顺，再谈其它。试着点击左侧大纲，直接跳到你最关心的那一节；或点开「Rust 学习笔记」把任务清单的方框勾上——改动会写回源文本。
+- 桌面壳：Tauri 2 + WebView2
+- 后端：Rust workspace
+- 数据：SQLite + FTS5 trigram
+- 前端：SolidJS + TypeScript + Vite
+- 编辑器：CodeMirror 6
+
+## 10. 现在可以试试
+
+- 点击左侧大纲，跳到任意章节。
+- 按 `Ctrl+F` 搜索“大纲”，再用 `Enter` 循环命中。
+- 按 `Ctrl+E` 改一个字，再按 `Ctrl+S` 保存。
+- 打开“Rust 学习笔记”，勾选一个任务清单。
+- 打开设置，切换主题或强调色，看看阅读区如何变化。
+
+先把“读”这件事做顺，再谈其它。
+
 </script>
 
 <script type="text/markdown" id="doc-rust">

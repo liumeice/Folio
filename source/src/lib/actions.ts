@@ -116,6 +116,16 @@ export async function quitApp(s: Store) {
 // toggleTheme（深/浅二态互斥钮）退役（2026-11-16）：主题三选走「查看→主题▸」子菜单与设置配色卡，
 // 直接 s.saveSettings({ theme:"dark"|"light"|"sepia" })，两入口天然同步（App 的 theme effect）。
 
+/** 「帮助 → Folio 使用指南」：打开内置 guide.md（Rust setup 解到应用数据目录并登记为 builtin）。
+ *  先查登记表（builtin 优先，防同名用户文档抢占）；查不到走 slug 兜底（未命中由 openSlug 自带提示）。
+ *  浏览器回退层的 demo/guide.md 同路径口径，一并命中。 */
+export async function openGuide(s: Store) {
+  const isGuide = (p: string) => /(^|[\\/])guide\.md$/i.test(p);
+  const g = s.docs().find((d) => d.builtin && isGuide(d.path)) ?? s.docs().find((d) => isGuide(d.path));
+  if (g) { await s.openPath(g.path); return; }
+  await s.openSlug("guide");
+}
+
 export function copyDeepLink(s: Store) {
   const cur = s.current();
   if (!cur) { s.toast("未打开文档"); return; }
