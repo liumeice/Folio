@@ -15,6 +15,7 @@ Folio 是一个本地优先的 Markdown 阅读器。你可以直接打开一个�
 | 本地书库 | 打开一个文件夹即可形成书库，左侧按目录树浏览文档 |
 | 阅读优先 | 保留 Markdown 的标题层级、目录、图片、表格、代码块和引用块 |
 | 阅读 / 编辑 | 阅读视图与 CodeMirror 6 编辑器切换，支持保存、自动保存提示和未保存状态 |
+| 右键插入 | 编辑窗右键菜单支持剪切/复制/粘贴/删除/全选，以及表格、标题、代码块、图片、链接、列表与引用；一级/二级菜单按光标位置自动翻转、夹取 |
 | 大纲导航 | 根据 `h1`–`h6` 生成大纲，点击可跳转章节 |
 | 全文搜索 | 支持多文档搜索、命中高亮和结果跳转；中文检索使用 SQLite FTS5 trigram |
 | Markdown 扩展 | 任务清单可直接勾选（改动进未保存状态，按「保存」落盘）；支持 Mermaid、ZenUML、MathJax 和常见代码高亮 |
@@ -74,6 +75,8 @@ source/target/release/bundle/msi/
 
 `prototype/prototype.html` 是交互原型（仅本地保存，不随仓库发布），在本地可直接用浏览器打开，不需要安装 Rust 或 Node.js。
 
+> 编辑窗右键菜单已在正式版实现；`prototype/editor-ctxmenu.html` 保留为独立原型，可直接用浏览器打开，复核编辑动作、格式、块级三行图标，以及剪贴板操作、列表连点插入和表格/代码块子面板。
+
 原型用于确认交互和视觉，不是最终发布版；正式的 Windows 桌面程序在 `source/` 中。
 
 ## 项目结构
@@ -118,4 +121,5 @@ npm run build            # 类型检查与生产构建
 
 - Windows 桌面版正在持续迭代，当前版本为 `0.2.1`。
 - `source/` 是正式产品工程；`prototype/` 是交互参考和回归基线。
+- 编辑窗右键菜单（N-CTX-01）已实现：三行等分图标、剪贴板操作、列表连点插入、表格/标题/代码块子面板，一级与二级菜单会按光标位置翻转/夹取；实现见 `source/src/lib/mdInsert.ts`、`source/src/components/Overlays.tsx`、`source/src/components/EditorPane.tsx`。
 - 项目优先保证本地阅读体验、Markdown 渲染质量和长文档导航。

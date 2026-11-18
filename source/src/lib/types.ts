@@ -149,6 +149,41 @@ export interface DirListing {
   files: FsFile[];
 }
 
+/* ── 源码自动格式化（《Folio 源码自动格式化方案》v1.0；权威实现 crates/folio-core/src/format.rs）── */
+export interface FormatOptions {
+  /** 行尾风格：preserve = 保持原文件 CRLF/LF */
+  eol: "preserve" | "lf" | "crlf";
+  /** 连续空行最多保留几条（默认 1） */
+  maxBlankLines: number;
+  /** `##标题` → `## 标题` */
+  normalizeHeadings: boolean;
+  /** `-item` / `1.item` / `- [x]done` 补空格 */
+  normalizeLists: boolean;
+  /** `>quote` → `> quote` */
+  normalizeQuotes: boolean;
+  /** 围栏语言小写 + 未闭合围栏补闭合 */
+  normalizeFences: boolean;
+  /** 表格单元格首尾空白清理 */
+  trimTableCells: boolean;
+  /** 文件末尾恰好一个换行 */
+  ensureFinalNewline: boolean;
+}
+
+export interface FormatResult {
+  text: string;
+  changed: boolean;
+  /** 变化行数（压缩空行导致行号平移时按同行位比较，仅用于「N 处更改」提示） */
+  changedLines: number;
+  /** 按格式化后文本重算的大纲（行号已更新） */
+  outline: OutlineItem[];
+  secCount: number;
+  wordCount: number;
+  headCount: number;
+  /** 格式化后的标题（首行 "# "，与 folio-db 登记口径一致）；null = 保留原标题 */
+  title: string | null;
+  warnings: string[];
+}
+
 export interface HistEntry {
   docId: number;
   path: string;

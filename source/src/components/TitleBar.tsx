@@ -1,7 +1,7 @@
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
-import { newDoc, pickAndOpen, pickFolderAndScan, quitApp, copyDeepLink, exportHtml, exportPdf, openGuide } from "../lib/actions";
+import { newDoc, pickAndOpen, pickFolderAndScan, quitApp, copyDeepLink, exportHtml, exportPdf, openGuide, formatDocument } from "../lib/actions";
 import { APP_VERSION, IS_DEV } from "../lib/version";
 
 /** theme 字段只给「主题▸」子项：与 settings().theme 相等时打 accent 点（单选可视化） */
@@ -45,6 +45,8 @@ const MENUS: Menu[] = [
     { act: "search", label: "全文搜索…", kbd: "Ctrl F", icon: "i-search" },
     { sep: true },
     { act: "edit", label: "切换编辑模式", kbd: "Ctrl E", icon: "i-type" },
+    // 源码自动格式化（2026-11-18）：结构空白归一，不改代码块内容；结果可 Ctrl+Z 整体撤销
+    { act: "format", label: "源码自动格式化", kbd: "Shift Alt F", icon: "i-format" },
     { sep: true },
     { act: "props", label: "文档信息", icon: "i-info" },
     { act: "link", label: "复制深度链接", icon: "i-copy" },
@@ -87,6 +89,7 @@ export default function TitleBar() {
       case "next-sec": ui.navSection(1); break;
       case "search": ui.setSearchOpen(true); break;
       case "edit": s.toggleEdit(); break;
+      case "format": void formatDocument(s); break;
       case "save": void s.saveSmart(); break;
       case "save-as": void s.saveAs(); break;
       case "props": ui.setPropsOpen(true); break;

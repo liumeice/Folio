@@ -2,6 +2,7 @@
 //! 约定：本 crate 不做任何 IO，供 db / fs / search / app 共同依赖。
 
 pub mod error;
+pub mod format;
 pub mod markdown;
 pub mod models;
 

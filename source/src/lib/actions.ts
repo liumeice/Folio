@@ -2,6 +2,7 @@
 import { api } from "./api";
 import type { ImageRef } from "./api";
 import type { Store } from "./store";
+import type { FormatOptions, FormatResult } from "./types";
 import * as ui from "./ui";
 import { pdfExportName } from "./pdfname";
 
@@ -44,6 +45,96 @@ export async function pickAndOpen(s: Store) {
   s.setSide("outline");   // 2026-11-16：打开文件后自动切到大纲面板（与打开文件夹→文档库对称）
   if (clipped) s.toast("文件较多，本次仅打开前 100 个");
   if (list.length > 1) s.toast(`已打开 ${list.length} 篇文档`);
+}
+
+/* ── 源码自动格式化（《Folio 源码自动格式化方案》v1.0 §5.1，2026-11-18）──
+ * 权威实现在 Rust（crates/folio-core/src/format.rs）；这里只负责触发与应用：
+ *  - 编辑态：一次 CodeMirror 事务就地替换，Ctrl+Z 可整体撤销；
+ *  - 阅读态：先按当前内存正文格式化，确有变化才进入编辑态展示结果（无变化不打扰模式）；
+ *  - 只改内存、绝不写盘（手动保存纪律）；大纲/统计按格式化后文本立即换新。 */
+const FORMAT_OPTIONS: FormatOptions = {
+  eol: "preserve",          // 保持原文件 CRLF/LF
+  maxBlankLines: 1,         // 连续空行压到 1 条
+  normalizeHeadings: true,  // ##标题 → ## 标题
+  normalizeLists: true,     // -item / 1.item / - [x]done 补空格
+  normalizeQuotes: true,    // >quote → > quote
+  normalizeFences: true,    // 围栏语言小写 + 未闭合补闭合
+  trimTableCells: true,     // 表格单元格首尾空白
+  ensureFinalNewline: true, // 文末恰好一个换行
+};
+
+/** 等编辑器挂载（阅读态切编辑是懒加载组件，桥要等 Suspense 落定） */
+function waitEditorBridge(ms = 1500): Promise<ui.EditorBridge | null> {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const tick = () => {
+      const b = ui.getEditorBridge();
+      if (b) return resolve(b);
+      if (Date.now() - t0 >= ms) return resolve(null);
+      setTimeout(tick, 30);
+    };
+    tick();
+  });
+}
+
+/** 并发守卫（评审 P3-3）：快速连按两次 Shift+Alt+F 不产生两个在途请求 */
+let formatBusy = false;
+
+export async function formatDocument(s: Store) {
+  if (formatBusy) { s.toast("正在格式化，请稍候"); return; }
+  formatBusy = true;
+  try {
+    await runFormat(s);
+  } finally {
+    formatBusy = false;
+  }
+}
+
+async function runFormat(s: Store) {
+  const cur = s.current();
+  if (!cur) { s.toast("未打开文档，无可格式化内容"); return; }
+  const docId = cur.meta.id;
+  const inEdit = s.mode() === "edit";
+  const bridge = inEdit ? ui.getEditorBridge() : null;
+  if (inEdit && !bridge) { s.toast("格式化失败：编辑器尚未就绪"); return; }
+  const src = inEdit ? bridge!.docText() : cur.src;
+
+  let r: FormatResult;
+  try {
+    r = await api.formatMarkdown(src, FORMAT_OPTIONS);
+  } catch (e) {
+    s.toast("格式化失败：" + ui.fmtErr(e));
+    return;
+  }
+  if (s.current()?.meta.id !== docId) return;   // 格式化期间已切换文档：结果作废
+  if (!r.changed) {
+    s.toast(r.warnings[0] ?? "文档已是规范格式");
+    return;
+  }
+
+  if (inEdit) {
+    // 格式化期间用户可能继续输入或退出编辑：两者都放弃本次结果，绝不覆盖现场
+    if (s.mode() !== "edit") { s.toast("文档已退出编辑模式，格式化未应用"); return; }
+    const b = ui.getEditorBridge();
+    if (!b) { s.toast("格式化失败：编辑器尚未就绪"); return; }
+    if (b.docText() !== src) { s.toast("文档在格式化期间有新的修改，请重试"); return; }
+    b.replaceAll(r.text);
+  } else {
+    // 阅读态：确有变化才进编辑态——结果可见，且 Ctrl+Z 能整体撤销
+    s.enterEdit();
+    const b = await waitEditorBridge(2500);
+    if (!b) {
+      // 评审 P2-3：编辑器没挂载成功时退回阅读态，不留用户停在未格式化的编辑模式
+      if (s.current()?.meta.id === docId && s.mode() === "edit") s.cancelEdit();
+      s.toast("编辑器未就绪，已返回阅读模式，请稍后重试");
+      return;
+    }
+    if (s.current()?.meta.id !== docId || s.mode() !== "edit") return;
+    b.replaceAll(r.text);
+  }
+  s.applyFormatted(r);
+  const msg = `已格式化：${r.changedLines} 处更改 · Ctrl+S 保存`;
+  s.toast(r.warnings.length ? `${msg}（${r.warnings[0]}）` : msg, 3200);
 }
 
 const leaf = (p: string) => p.split(/[\\/]/).pop() ?? p;

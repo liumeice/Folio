@@ -14,7 +14,8 @@ pub struct Heading {
     pub line: i64,
 }
 
-fn is_fence(line: &str) -> bool {
+/// 围栏判定（format.rs 复用）：只认 ``` 起始；`~~~` 不算——与 md.ts::isFenceLine 同口径。
+pub(crate) fn is_fence(line: &str) -> bool {
     line.trim_start().starts_with("```")
 }
 

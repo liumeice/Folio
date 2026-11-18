@@ -134,6 +134,55 @@ async fn save_doc(path: String, content: String, force: Option<bool>, state: Sta
     spawn_db(&state, move |db| commands::save(db, &path, &content, force.unwrap_or(false))).await
 }
 
+/// 源码格式化结果（与前端 `FormatResult` 一一对应；大纲行号按**格式化后**文本重算）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FormatReply {
+    text: String,
+    changed: bool,
+    changed_lines: usize,
+    outline: Vec<folio_core::OutlineItem>,
+    sec_count: i64,
+    word_count: i64,
+    head_count: i64,
+    /// 与 folio-db::DocUpsert::from_source 同口径的标题（首行 "# "）；无则 null（前端保留旧标题）
+    title: Option<String>,
+    warnings: Vec<String>,
+}
+
+/// 源码自动格式化（《Folio 源码自动格式化方案》§4.2）：
+/// 纯计算进 spawn_blocking，不碰 DB、不写盘——结果由前端应用到编辑器，
+/// 落盘仍走用户显式「保存」（手动保存纪律，程序不做认知外的写盘）。
+#[tauri::command]
+async fn format_markdown(
+    src: String,
+    options: Option<folio_core::format::FormatOptions>,
+) -> Result<FormatReply, String> {
+    let opt = options.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        let r = folio_core::format::format_markdown(&src, &opt);
+        let (word_count, head_count, sec_count) = folio_core::markdown::stats(&r.text);
+        // 标题口径与 folio-db 的登记逻辑一致：首个行首 "# " 行（不跳围栏，保持既有行为）
+        let title = r
+            .text
+            .lines()
+            .find_map(|l| l.trim_start().strip_prefix("# ").map(|s| s.trim().to_string()));
+        FormatReply {
+            outline: commands::outline_of(&r.text),
+            text: r.text,
+            changed: r.changed,
+            changed_lines: r.changed_lines,
+            sec_count,
+            word_count,
+            head_count,
+            title,
+            warnings: r.warnings,
+        }
+    })
+    .await
+    .map_err(errstr)
+}
+
 /// schema v2：置顶开关 / 从库移除（不动磁盘）/ 库根管理
 #[tauri::command]
 async fn set_pinned(id: i64, on: bool, state: State<'_, AppState>) -> Result<(), String> {
@@ -741,6 +790,7 @@ pub fn run() {
             open_doc,
             open_by_slug,
             save_doc,
+            format_markdown,
             toggle_task,
             scan_folder,
             search,

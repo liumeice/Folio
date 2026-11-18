@@ -151,6 +151,9 @@ export default function Reader() {
   createEffect(() => {
     const doc = s.current();
     const nav = s.navRequest();
+    // 编辑态不渲染隐藏的阅读视图（评审 P2-2）：格式化大文档时省掉一次整篇 mdToHtml；
+    // mode 是本 effect 的依赖，endEdit 设回 read 时会重跑并按新正文补渲染。
+    if (s.mode() === "edit") return;
     if (!doc) {
       if (lastRendered !== null) {
         article.innerHTML = EMPTY_HTML;
@@ -460,7 +463,6 @@ export default function Reader() {
   }
 
   /* ── 滚动联动（FR-3.2）与位置源（FR-4.1/4.3） ── */
-  let raf = 0;
   function onScroll() {
     // 让路判定：程序滚动豁免窗内续窗（平滑滚动/补偿连发的 scroll 事件异步到达，窗口太窄会误判）；
     // 窗外的 scroll 事件才是用户滚动 → 作废终局重放（方案 §4.2；防"补偿滚动判成用户滚动→重放永不执行"）
@@ -472,7 +474,8 @@ export default function Reader() {
     const max = view.scrollHeight - view.clientHeight;
     const pct = max > 0 ? Math.min(1, view.scrollTop / max) : 0;
     ui.setReadPct(pct);
-    if (!raf) raf = requestAnimationFrame(() => { raf = 0; updateActive(); });
+    // 高亮与滚动位置同帧：同步算（原 rAF 会让高亮晚一帧；快速滚动时肉眼可见）
+    updateActive();
     s.schedulePosition();
   }
 

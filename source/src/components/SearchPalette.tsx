@@ -83,10 +83,12 @@ export default function SearchPalette() {
     if (s.current()?.meta.id === h.docId) {
       ui.highlightAll(q);
       ui.showHitNav(ui.firstMarkOfSection(h.secAnchor, h.sec));
+      s.revealOutline(h.secAnchor);   // 搜索命中=主动跳转：硬展开目标章节的祖先链
       s.pushHist({ docId: h.docId, path: h.docPath, sec: h.secAnchor, secText: h.sec || null, top: null, ratio: null });
     } else {
       ui.setPendingHighlight(q, { sec: h.secAnchor, text: h.sec || null });
       await s.openPath(h.docPath);
+      s.revealOutline(h.secAnchor);
     }
   }
 

@@ -2,8 +2,8 @@
  * localStorage + 内置示例，保证 UI 可在无 Rust 工具链的环境开发验证。
  * 回退层不是产品特性 —— 正式版一切以 Rust 为准。 */
 import type {
-  DirListing, DocFull, DocMeta, OpenRequest, Position, RecentDoc, RecentReport, ScanReport, SearchHit,
-  SearchQuery, Settings,
+  DirListing, DocFull, DocMeta, FormatOptions, FormatResult, OpenRequest, Position, RecentDoc,
+  RecentReport, ScanReport, SearchHit, SearchQuery, Settings,
 } from "./types";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { RANGE, clampNum } from "./typography";
@@ -43,6 +43,23 @@ async function apiOpenBySlug(slug: string): Promise<DocFull> {
 }
 async function apiSaveDoc(path: string, content: string, force = false): Promise<DocFull> {
   return isTauri ? invoke("save_doc", { path, content, force }) : mock.save(path, content);
+}
+/** 源码自动格式化（权威实现 crates/folio-core/src/format.rs）。
+ *  浏览器回退层刻意不维护第二套规则：原样返回 + 警告，只保证 UI 流程可走。 */
+async function apiFormatMarkdown(src: string, options: FormatOptions): Promise<FormatResult> {
+  if (isTauri) return invoke<FormatResult>("format_markdown", { src, options });
+  const st = statsOf(src);
+  return {
+    text: src,
+    changed: false,
+    changedLines: 0,
+    outline: headingsOf(src),
+    secCount: st.secCount,
+    wordCount: st.wordCount,
+    headCount: st.headCount,
+    title: null,
+    warnings: ["浏览器演示环境不执行格式化"],
+  };
 }
 async function apiSetPinned(id: number, on: boolean): Promise<void> {
   if (isTauri) await invoke("set_pinned", { id, on });
@@ -806,6 +823,7 @@ export const api = {
   openDoc: apiOpenDoc,
   openBySlug: apiOpenBySlug,
   saveDoc: apiSaveDoc,
+  formatMarkdown: apiFormatMarkdown,
   setPinned: apiSetPinned,
   setInLibrary: apiSetInLibrary,
   listRecents: apiListRecents,

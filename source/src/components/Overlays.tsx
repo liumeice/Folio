@@ -8,6 +8,7 @@ import { api, isTauri } from "../lib/api";
 import { revealInFolder, confirmBox, pickFolderAndScan } from "../lib/actions";
 import { APP_VERSION, IS_DEV } from "../lib/version";
 import type { CtxTarget } from "../lib/ui";
+import type { EditorCmd, ListKind, WrapKind } from "../lib/mdInsert";
 
 const KEYMAP: [string, string][] = [
   ["Ctrl O", "打开本地 .md（可多选）"],
@@ -17,8 +18,11 @@ const KEYMAP: [string, string][] = [
   ["Ctrl E", "阅读 ⇄ 编辑（有改动时保存并提示）"],
   ["Ctrl S", "保存（编辑态写回并返回阅读；阅读态提交待保存修改，如任务勾选）"],
   ["Ctrl Shift S", "另存为…（当前内容写到新路径，页签切到新文件，原文件不动）"],
+  ["Ctrl 滚轮 ↑ / ↓", "阅读区正文字号放大 / 缩小（仅正文排版，不缩放应用界面）"],
+  ["Shift Alt F", "源码自动格式化（标题 / 列表 / 引用 / 围栏空格与空行；代码块内容不动）"],
   ["Alt ↑ / Alt ↓", "上一章 / 下一章"],
   ["Alt ← / Alt →", "后退 / 前进（同文档回当时行）"],
+  ["↑ ↓ ← →", "大纲内：移动 / 收起 / 展开（Enter 或空格跳转）"],
   ["Home", "回到顶部（输入焦点内不劫持光标）"],
   ["Esc", "关弹层 → 清高亮 → 退专注 → 编辑中放弃修改"],
   ["Ctrl Q", "退出（有未保存内容需确认）"],
@@ -248,6 +252,248 @@ export function HitNav() {
   );
 }
 
+/* ── 编辑窗右键菜单（方案 N-CTX-01）────────────────────────────
+ * 三条图标行等分铺满；表格/标题/代码走子面板；列表连点不关菜单。
+ * 动作全部经 EditorBridge 回到 CM，文档变更一次事务。 */
+const EDIT_ACTIONS = [
+  ["cut", "剪切", "Ctrl+X", "i-cut", true],
+  ["copy", "复制", "Ctrl+C", "i-copy", true],
+  ["paste", "粘贴", "Ctrl+V", "i-paste", false],
+  ["delete", "删除所选", "Delete", "i-trash", true],
+  ["selectAll", "全选", "Ctrl+A", "i-select-all", false],
+] as const;
+
+const WRAP_ACTIONS = [
+  ["bold", "加粗", "Ctrl+B", "i-bold"],
+  ["italic", "斜体", "Ctrl+I", "i-italic"],
+  ["code", "行内代码", "", "i-code"],
+  ["strike", "删除线", "", "i-strike"],
+  ["link", "链接", "", "i-link"],
+] as const;
+
+const LIST_ACTIONS = [
+  ["ul", "无序列表", "i-list"],
+  ["ol", "有序列表", "i-ol"],
+  ["task", "任务清单", "i-task"],
+  ["quote", "引用", "i-quote"],
+] as const;
+
+const CODE_LANGS = ["", "text", "ts", "js", "py", "rs", "html", "css", "json", "mermaid"];
+
+function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
+  const [hasSel, setHasSel] = createSignal(props.tt.hasSelection);
+  const [openSub, setOpenSub] = createSignal<string | null>(null);
+  const [hover, setHover] = createSignal({ c: 3, r: 3 });
+  let el!: HTMLDivElement;
+
+  const bridge = () => ui.getEditorBridge();
+
+  async function run(cmd: EditorCmd, keep = false) {
+    const b = bridge();
+    if (!b) { ui.setCtxMenu(null); return; }
+    const still = await b.runEditorCommand(cmd);
+    setHasSel(still);
+    if (!keep) {
+      ui.setCtxMenu(null);
+      b.focusEditor();
+    }
+  }
+
+  function clamp() {
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.max(8, Math.min(props.tt.x, window.innerWidth - r.width - 8));
+    const y = Math.max(8, Math.min(props.tt.y, window.innerHeight - r.height - 8));
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+  }
+
+  /** 子菜单相对父项定位：右侧不够向左翻，下方不够向上翻，最后夹在窗口内。
+   *  fixed 定位（相对视口），主菜单超高滚动时也不会被裁切。 */
+  function positionSub(sub: HTMLDivElement | null) {
+    if (!sub) return;
+    const parent = sub.closest<HTMLElement>(".mi");
+    if (!parent) return;
+    const pr = parent.getBoundingClientRect();
+    const r = sub.getBoundingClientRect();
+    const gap = 10;   // 与父项轻微重叠，鼠标从父项移入子菜单不中断 hover
+    let left = pr.right - gap;
+    if (left + r.width > window.innerWidth - 8) left = pr.left - r.width + gap;
+    left = Math.max(8, Math.min(left, window.innerWidth - r.width - 8));
+    let top = pr.top - 6;
+    if (top + r.height > window.innerHeight - 8) top = window.innerHeight - r.height - 8;
+    top = Math.max(8, top);
+    sub.style.left = left + "px";
+    sub.style.top = top + "px";
+  }
+
+  function focusables(): HTMLElement[] {
+    if (!el) return [];
+    return [...el.querySelectorAll<HTMLElement>(".ctool:not(:disabled), .mi[data-ctx]")]
+      .filter((x) => x.offsetParent !== null);
+  }
+
+  function onKey(e: KeyboardEvent) {
+    const handled = ["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter", " ", "Escape", "Home", "End"];
+    if (!handled.includes(e.key)) return;
+    e.stopImmediatePropagation();
+    const cur = document.activeElement as HTMLElement | null;
+    const list = focusables();
+    const move = (n: number) => list[(n + list.length) % Math.max(1, list.length)]?.focus();
+    switch (e.key) {
+      case "Escape":
+        e.preventDefault();
+        ui.setCtxMenu(null);
+        bridge()?.focusEditor();
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        move(Math.max(0, list.indexOf(cur!)) + 1);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        move(Math.max(0, list.indexOf(cur!)) - 1);
+        break;
+      case "ArrowRight": {
+        if (!cur?.dataset.sub) break;
+        e.preventDefault();
+        setOpenSub(cur.dataset.ctx ?? null);
+        queueMicrotask(() => cur.querySelector<HTMLElement>(".sub-drop .mi")?.focus());
+        break;
+      }
+      case "ArrowLeft": {
+        const sub = cur?.closest<HTMLElement>(".sub-drop");
+        if (!sub) break;
+        e.preventDefault();
+        const parent = sub.closest<HTMLElement>(".mi");
+        setOpenSub(null);
+        parent?.focus();
+        break;
+      }
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        if (cur?.dataset.sub && !cur.dataset.default) {
+          setOpenSub(cur.dataset.ctx ?? null);
+          queueMicrotask(() => cur.querySelector<HTMLElement>(".sub-drop .mi")?.focus());
+        } else {
+          cur?.click();
+        }
+        break;
+      case "Home":
+        e.preventDefault();
+        list[0]?.focus();
+        break;
+      case "End":
+        e.preventDefault();
+        list[list.length - 1]?.focus();
+        break;
+    }
+  }
+
+  const menuItem = (icon: string, label: string, runFn: () => void, opts: { sub?: string; default?: boolean } = {}) => (
+    <div class="mi" classList={{ sub: !!opts.sub }}
+      data-ctx={opts.sub ?? label} data-sub={opts.sub ? "1" : undefined}
+      data-default={opts.default ? "1" : undefined}
+      role="menuitem" tabIndex={-1}
+      onMouseEnter={() => setOpenSub(opts.sub ?? null)}
+      onMouseLeave={(e) => {
+        if (!opts.sub) return;
+        const to = e.relatedTarget as Node | null;
+        if (to && (e.currentTarget as HTMLElement).contains(to)) return;
+        setOpenSub(null);
+      }}
+      onClick={(e) => { e.stopPropagation(); runFn(); }}>
+      <svg class="ico ico-14"><use href={"#" + icon} /></svg>
+      <span class="t">{label}</span>
+      <Show when={opts.sub}>
+        <svg class="ico ico-12"><use href="#i-chev-r" /></svg>
+        <Show when={openSub() === opts.sub}>
+        <div class="sub-drop open" ref={(node) => queueMicrotask(() => positionSub(node))}>
+          {opts.sub === "table" ? (
+            <div class="ctx-gridwrap" onClick={(e) => e.stopPropagation()}>
+              <div class="ctx-gridlab">{hover().c} 列 × {hover().r} 行</div>
+              <div class="ctx-grid">
+                <For each={[1, 2, 3, 4, 5, 6]}>{(r) => (
+                  <For each={[1, 2, 3, 4, 5, 6, 7, 8]}>{(c) => (
+                    <span class="cell" classList={{ fill: c <= hover().c && r <= hover().r }}
+                      role="button" aria-label={`${c} 列 × ${r} 行`}
+                      onMouseEnter={() => setHover({ c, r })}
+                      onClick={(e) => { e.stopPropagation(); void run({ kind: "table", cols: c, rows: r }); }} />
+                  )}</For>
+                )}</For>
+              </div>
+            </div>
+          ) : opts.sub === "heading" ? (
+            <For each={[1, 2, 3, 4, 5, 6]}>{(lv) => (
+              <div class="mi" data-ctx={`head-${lv}`} role="menuitem" tabIndex={-1}
+                onClick={(e) => { e.stopPropagation(); void run({ kind: "heading", level: lv }); }}>
+                <span class="t">{`标题 ${lv} 级`}</span>
+              </div>
+            )}</For>
+          ) : (
+            <For each={CODE_LANGS}>{(lang) => (
+              <div class="mi" data-ctx={`lang-${lang || "none"}`} role="menuitem" tabIndex={-1}
+                onClick={(e) => { e.stopPropagation(); void run({ kind: "code", lang }); }}>
+                <span class="t">{lang || "无语言"}</span>
+              </div>
+            )}</For>
+          )}
+        </div>
+        </Show>
+      </Show>
+    </div>
+  );
+
+  return (
+    <div class="ctxmenu editor" ref={(node) => {
+      el = node;
+      queueMicrotask(() => { clamp(); focusables()[0]?.focus(); });
+    }} role="menu" tabIndex={-1}
+      style={{ left: props.tt.x + "px", top: props.tt.y + "px" }}
+      onClick={(e) => e.stopPropagation()} onKeyDown={onKey}>
+      <div class="ctx-tools">
+        <For each={EDIT_ACTIONS}>{(a) => (
+          <button type="button" class="ctool" title={`${a[1]}（${a[2]}）`} aria-label={a[1]}
+            role="menuitem" disabled={a[4] && !hasSel()}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void run({ kind: "clip", action: a[0] })}>
+            <svg class="ico"><use href={"#" + a[3]} /></svg>
+          </button>
+        )}</For>
+      </div>
+      <div class="msep" />
+      <div class="ctx-tools">
+        <For each={WRAP_ACTIONS}>{(a) => (
+          <button type="button" class="ctool" title={`${a[1]}（${a[2] || "需先选中文字"}）`} aria-label={a[1]}
+            role="menuitem" disabled={!hasSel()}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void run({ kind: "wrap", style: a[0] as WrapKind })}>
+            <svg class="ico"><use href={"#" + a[3]} /></svg>
+          </button>
+        )}</For>
+      </div>
+      <div class="msep" />
+      <div class="mgrp">插入块</div>
+      <div class="ctx-tools">
+        <For each={LIST_ACTIONS}>{(a) => (
+          <button type="button" class="ctool" title={a[1]} aria-label={a[1]} role="menuitem"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void run({ kind: "list", list: a[0] as ListKind | "quote" }, a[0] !== "quote")}>
+            <svg class="ico"><use href={"#" + a[2]} /></svg>
+          </button>
+        )}</For>
+      </div>
+      {menuItem("i-table", "表格", () => void run({ kind: "table", cols: 3, rows: 3 }), { sub: "table", default: true })}
+      {menuItem("i-heading", "标题", () => setOpenSub("heading"), { sub: "heading" })}
+      {menuItem("i-code", "代码块", () => void run({ kind: "code", lang: "" }), { sub: "code", default: true })}
+      {menuItem("i-image", "图片", () => void run({ kind: "image" }))}
+      {menuItem("i-link", "链接（新建）", () => void run({ kind: "link" }))}
+      {menuItem("i-hr", "分隔线", () => void run({ kind: "hr" }))}
+    </div>
+  );
+}
+
 export function ContextMenu() {
   const s = useStore();
   async function run(tt: CtxTarget & { kind: "doc" }, item: string) {
@@ -291,24 +537,26 @@ export function ContextMenu() {
   );
   return (
     <Show when={ui.ctxMenu()} keyed>{(tt) => (
-      <div class="ctxmenu" style={{ left: tt.x + "px", top: tt.y + "px" }} onClick={(e) => e.stopPropagation()}>
-        <Show when={tt.kind === "doc"}>{(() => { const d = tt as CtxTarget & { kind: "doc" }; return (<>
-          {/* 文件夹/历史是两套清单：置顶与「从文件夹移除」只对文件夹成员开放，「从最近打开移除」只在历史面板开放 */}
-          <Show when={d.meta.inLibrary}>
-            {item(d.meta.pinned ? "取消置顶" : "置顶", "pin", d, "i-arrow-up")}
-          </Show>
-          {item("打开所在目录", "reveal", d, "i-folder-open")}
-          {item("复制路径", "path", d, "i-copy")}
-          {item("复制深度链接", "link", d, "i-external")}
-          <div class="msep" />
-          <Show when={d.meta.inLibrary}>
-            {item("从文件夹移除", "unlibrary", d, "i-x")}
-          </Show>
-          <Show when={d.from === "recents"}>
-            {item("从最近打开移除", "unrecent", d, "i-x")}
-          </Show>
-        </>); })()}</Show>
-      </div>
+      tt.kind === "editor"
+        ? <EditorCtxMenu tt={tt as CtxTarget & { kind: "editor" }} />
+        : <div class="ctxmenu" style={{ left: tt.x + "px", top: tt.y + "px" }} onClick={(e) => e.stopPropagation()}>
+            {/* 文件夹/历史是两套清单：置顶与「从文件夹移除」只对文件夹成员开放，「从最近打开移除」只在历史面板开放 */}
+            {(() => { const d = tt as CtxTarget & { kind: "doc" }; return (<>
+              <Show when={d.meta.inLibrary}>
+                {item(d.meta.pinned ? "取消置顶" : "置顶", "pin", d, "i-arrow-up")}
+              </Show>
+              {item("打开所在目录", "reveal", d, "i-folder-open")}
+              {item("复制路径", "path", d, "i-copy")}
+              {item("复制深度链接", "link", d, "i-external")}
+              <div class="msep" />
+              <Show when={d.meta.inLibrary}>
+                {item("从文件夹移除", "unlibrary", d, "i-x")}
+              </Show>
+              <Show when={d.from === "recents"}>
+                {item("从最近打开移除", "unrecent", d, "i-x")}
+              </Show>
+            </>); })()}
+          </div>
     )}</Show>
   );
 }

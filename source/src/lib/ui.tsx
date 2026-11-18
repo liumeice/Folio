@@ -2,6 +2,7 @@
  * 命中高亮与浮动条逻辑集中在这里：Reader 注册正文元素，palette 调用。 */
 import { createSignal } from "solid-js";
 import { escapeHtml } from "./md";
+import type { EditorCmd } from "./mdInsert";
 import type { DocMeta } from "./types";
 
 export const [menuOpen, setMenuOpen] = createSignal<string | null>(null);
@@ -80,17 +81,78 @@ export const [hitCount, setHitCount] = createSignal(0);
 export const [hitIdx, setHitIdx] = createSignal(0);
 export const [hitNavVisible, setHitNavVisible] = createSignal(false);
 export const [readPct, setReadPct] = createSignal(0);
+/** 主动跳转时的一次性大纲定位请求：面板收到后把目标行滚入视口。
+ *  与「阅读滚动跟随」区分（2026-11-18 需求修正）：被动滚动只切换高亮，
+ *  不再滚动面板、不再逐项展开分支；只有主动跳转才一次性定位目标行。 */
+export const [olScrollTo, setOlScrollTo] = createSignal<{ sec: number; seq: number } | null>(null);
+let olScrollSeq = 0;
+export function requestOutlineScroll(sec: number) {
+  setOlScrollTo({ sec, seq: ++olScrollSeq });
+}
 
 /* 文档库树的展开状态：Map<目录键, 真展开值>。
  * 没有记录的目录按默认规则（只展开库根）；"全部展开/全部收起"整批写记录。
  * 放 ui 层而不是组件里：切到大纲再切回来不该把用户展开的东西吐掉，但也不属于产品状态。 */
 export const [libExpand, setLibExpand] = createSignal<Map<string, boolean>>(new Map());
 
+/* 大纲树的展开状态（2026-11-18，方案《Folio 大纲折叠实现方案》）。与目录树同款三段优先级：
+ * olExpand   = 用户显式点过的（含「全部展开 / 全部收起」整批写入），优先级最高；
+ * olSoftOpen = 阅读/跳转过程中软展开过的祖先链（不写 overrides，滚过不自动收起）；
+ * 默认       = 只展开第一层（depth 0）。
+ * sec 是按文档顺序编号的瞬时键：切文档或大纲重建时整组清空（键失效比错位诚实）。 */
+export const [olExpand, setOlExpand] = createSignal<Map<number, boolean>>(new Map());
+export const [olSoftOpen, setOlSoftOpen] = createSignal<Set<number>>(new Set());
+
+export function resetOutlineFold() {
+  setOlExpand(new Map<number, boolean>());
+  setOlSoftOpen(new Set<number>());
+}
+
+/** 单个节点显式展开 / 收起 */
+export function setOutlineOpen(sec: number, open: boolean) {
+  setOlExpand((m) => {
+    if (m.get(sec) === open) return m;
+    const n = new Map(m);
+    n.set(sec, open);
+    return n;
+  });
+}
+
+/** 软展开：记入 softOpen；已存在的键不重复写（返回原 Set，避免无谓重渲染） */
+export function softOpenOutline(secs: Iterable<number>) {
+  setOlSoftOpen((s) => {
+    let next: Set<number> | null = null;
+    for (const sec of secs) {
+      if (s.has(sec)) continue;
+      if (!next) next = new Set(s);
+      next.add(sec);
+    }
+    return next ?? s;
+  });
+}
+
+/** 硬展开（主动跳转）：显式写 true，压过用户此前的收起 */
+export function hardOpenOutline(secs: Iterable<number>) {
+  const list = [...secs];
+  if (!list.length) return;
+  setOlExpand((m) => {
+    const n = new Map(m);
+    for (const sec of list) n.set(sec, true);
+    return n;
+  });
+}
+
+/** 全部展开 / 全部收起：整批写 overrides */
+export function setAllOutlineOpen(keys: readonly number[], open: boolean) {
+  setOlExpand(new Map(keys.map((k) => [k, open])));
+}
+
 /* 右键菜单目标（FR-10.2）：只有文档条目有菜单。from 决定可用动作——
  * library=可置顶、可从库移除；recents=可从历史移除。两者都不碰磁盘。
  * （曾经的 kind:"roots" 分支随 v4 单库策略删除：库根管理并入 chip 自身。） */
 export type CtxTarget =
   | { kind: "doc"; from?: "library" | "recents"; x: number; y: number; meta: DocMeta }
+  | { kind: "editor"; x: number; y: number; hasSelection: boolean }
   | null;
 export const [ctxMenu, setCtxMenu] = createSignal<CtxTarget>(null);
 
@@ -268,6 +330,14 @@ export interface EditorBridge {
   topLine(): number | null;
   /** 编辑器实时正文（P1-3）：保存/搜索按需取一次，不再每次按键复制整篇 */
   docText(): string;
+  /** 整篇替换（源码格式化）：一次事务 → Ctrl+Z 可整体撤销；只替换公共首尾之外的中段，尽量保光标 */
+  replaceAll(text: string): void;
+  /** 右键菜单：当前是否有选区（格式/剪切/删除的可用性判定） */
+  hasSelection(): boolean;
+  /** 执行右键菜单命令；返回执行后是否仍有选区（列表连点时刷新置灰态） */
+  runEditorCommand(cmd: EditorCmd): Promise<boolean>;
+  /** 把键盘焦点还给编辑器（菜单动作 / 关闭后） */
+  focusEditor(): void;
 }
 let viewBridge: ViewBridge | null = null;
 let editorBridge: EditorBridge | null = null;

@@ -13,6 +13,11 @@ import { mdStructural } from "../lib/mdStructural";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
 import { SYNC_EPSILON } from "../lib/nav";
+import { commonEditRange } from "../lib/textedit";
+import {
+  codeBlockOp, hrOp, imageOp, linkOp, listOp, prefixLinesOp, tableOp, wrapOp,
+  type EditOp, type EditorCmd,
+} from "../lib/mdInsert";
 
 export default function EditorPane() {
   const s = useStore();
@@ -58,6 +63,169 @@ export default function EditorPane() {
     v.focus();
   }
 
+  /** 整篇替换（源码格式化专用）：
+   *  ① 只替换公共前缀/后缀之间的中段——光标在未变化区域时原样保留；
+   *  ② 单次 dispatch = 一个事务，Ctrl+Z 可把整次格式化一次撤销。 */
+  function replaceAll(text: string) {
+    const v = view;
+    if (!v) return;
+    const r = commonEditRange(v.state.doc.toString(), text);
+    if (!r) return;
+    v.dispatch({ changes: { from: r.from, to: r.to, insert: r.insert } });
+  }
+
+  /* ── 编辑窗右键插入（方案 N-CTX-01）────────────────────────────
+   * 模板纯函数只拿「光标附近的局部窗口」，不 doc.toString() 全文复制（P1-3 纪律）。
+   * 所有命令一次 dispatch：一次 Ctrl+Z 还原；落盘仍走既有手动保存链路。 */
+  function localWindow(kind: "block" | "lines" | "selection", from: number, to: number) {
+    const doc = view!.state.doc;
+    if (kind === "selection") {
+      const base = from;
+      return { src: doc.sliceString(from, to), base, from: 0, to: to - from };
+    }
+    if (kind === "block") {
+      const line = doc.lineAt(Math.max(from, to));
+      const next = line.number < doc.lines ? doc.line(line.number + 1) : null;
+      const base = line.from;
+      const end = next ? next.to : line.to;
+      return {
+        src: doc.sliceString(base, end), base,
+        from: Math.max(0, from - base), to: to - base,
+      };
+    }
+    const a = doc.lineAt(from);
+    let b = doc.lineAt(to);
+    if (to > from && b.from === to && b.to > b.from) b = doc.line(b.number - 1);
+    // 有序列表续号：把选区上方最近的非空行也带进窗口，供 prevOrdered 扫描
+    const first = (() => {
+      for (let n = a.number - 1; n >= 1; n--) {
+        const l = doc.line(n);
+        if (l.text.trim() !== "") return l;
+      }
+      return a;
+    })();
+    const base = first.from;
+    return { src: doc.sliceString(base, b.to), base, from: from - base, to: to - base };
+  }
+
+  function applyOp(op: EditOp, base: number, focus = true) {
+    const v = view;
+    if (!v) return;
+    v.dispatch({
+      changes: { from: base + op.from, to: base + op.to, insert: op.insert },
+      selection: { anchor: base + op.selFrom, head: base + op.selTo },
+      effects: EditorView.scrollIntoView(base + op.selFrom),
+    });
+    if (focus) v.focus();
+  }
+
+  async function runEditorCommand(cmd: EditorCmd): Promise<boolean> {
+    const v = view;
+    if (!v) return false;
+    const main = v.state.selection.main;
+    const from = main.from, to = main.to;
+    switch (cmd.kind) {
+      case "table": {
+        const w = localWindow("block", from, to);
+        applyOp(tableOp(w.src, w.from, w.to, cmd.cols, cmd.rows), w.base);
+        break;
+      }
+      case "code": {
+        if (from !== to) {
+          const w = localWindow("selection", from, to);
+          applyOp(codeBlockOp(w.src, 0, w.to, cmd.lang), w.base);
+        } else {
+          const w = localWindow("block", from, to);
+          applyOp(codeBlockOp(w.src, w.from, w.to, cmd.lang), w.base);
+        }
+        break;
+      }
+      case "heading": {
+        const w = localWindow("lines", from, to);
+        applyOp(prefixLinesOp(w.src, w.from, w.to, "heading", cmd.level), w.base);
+        break;
+      }
+      case "image": {
+        const w = localWindow("block", from, to);
+        applyOp(imageOp(w.src, w.from, w.to), w.base);
+        break;
+      }
+      case "link": {
+        if (from !== to) {
+          const w = localWindow("selection", from, to);
+          applyOp(linkOp(w.src, 0, w.to), w.base);
+        } else {
+          const w = localWindow("block", from, to);
+          applyOp(linkOp(w.src, w.from, w.to), w.base);
+        }
+        break;
+      }
+      case "hr": {
+        const w = localWindow("block", from, to);
+        applyOp(hrOp(w.src, w.from, w.to), w.base);
+        break;
+      }
+      case "wrap": {
+        if (from !== to) {
+          const w = localWindow("selection", from, to);
+          applyOp(wrapOp(w.src, 0, w.to, cmd.style), w.base);
+        }
+        break;
+      }
+      case "list": {
+        if (cmd.list === "quote") {
+          const w = localWindow("lines", from, to);
+          applyOp(prefixLinesOp(w.src, w.from, w.to, "quote"), w.base);
+        } else {
+          const w = localWindow("lines", from, to);
+          // 列表连点：菜单保持展开，不抢焦点
+          applyOp(listOp(w.src, w.from, w.to, cmd.list), w.base, false);
+        }
+        break;
+      }
+      case "clip": {
+        const text = v.state.sliceDoc(from, to);
+        const doc = v.state.doc;
+        if (cmd.action === "selectAll") {
+          v.dispatch({ selection: { anchor: 0, head: v.state.doc.length } });
+          v.focus();
+          return true;
+        }
+        if (cmd.action === "copy") {
+          if (!text) return false;
+          try { await navigator.clipboard.writeText(text); s.toast("已复制"); }
+          catch { s.toast("剪贴板不可用"); }
+          v.focus();
+          return true;
+        }
+        if (cmd.action === "cut") {
+          if (!text) return false;
+          try { await navigator.clipboard.writeText(text); }
+          catch { s.toast("剪贴板不可用"); return false; }
+          if (v.state.doc !== doc) return false;   // 等待期间文档已变：不作废用户输入
+          applyOp({ from, to, insert: "", selFrom: from, selTo: from }, 0);
+          s.toast("已剪切");
+          return false;
+        }
+        if (cmd.action === "delete") {
+          if (!text) return false;
+          applyOp({ from, to, insert: "", selFrom: from, selTo: from }, 0);
+          return false;
+        }
+        // paste
+        let clip: string | null = null;
+        try { clip = await navigator.clipboard.readText(); } catch { /* 权限/非安全上下文 */ }
+        if (clip == null) { s.toast("无法读取剪贴板，请按 Ctrl+V"); return false; }
+        if (!clip) { s.toast("剪贴板为空"); return false; }
+        if (v.state.doc !== doc) return false;
+        applyOp({ from, to, insert: clip, selFrom: from + clip.length, selTo: from + clip.length }, 0);
+        s.toast("已粘贴");
+        return false;
+      }
+    }
+    return !v.state.selection.main.empty;
+  }
+
   // 双 rAF：等 scrollIntoView 的几何应用稳定后再读顶行——单帧读会在滚动生效前
   // 拿到旧位置，把大纲点击刚设好的 activeSec 覆写回上一章节（差一章的根因之二）
   function syncOutline() {
@@ -76,6 +244,37 @@ export default function EditorPane() {
         }
       });
     });
+  }
+
+  function focusEditor() { view?.focus(); }
+  function hasSelection() { return !!view && !view.state.selection.main.empty; }
+
+  /** 右键 mousedown 先记选区：CM/浏览器可能在 contextmenu 前就把选区收成光标 */
+  let savedSel: { from: number; to: number } | null = null;
+  function onMouseDown(e: MouseEvent) {
+    if (e.button !== 2) return;
+    const s = view?.state.selection.main;
+    savedSel = s && !s.empty ? { from: s.from, to: s.to } : null;
+  }
+
+  /** 编辑窗右键：落在选区内保留原选区；落在选区外把光标移到右键点（方案 §2.1） */
+  function onContextMenu(e: MouseEvent) {
+    const v = view;
+    if (!v) return;
+    e.preventDefault();
+    const pos = v.posAtCoords({ x: e.clientX, y: e.clientY });
+    const current = v.state.selection.main;
+    const keep = savedSel ?? (current.empty ? null : { from: current.from, to: current.to });
+    savedSel = null;
+    if (pos != null) {
+      if (keep && pos >= keep.from && pos <= keep.to) {
+        v.dispatch({ selection: { anchor: keep.from, head: keep.to } });
+      } else {
+        v.dispatch({ selection: { anchor: pos } });
+      }
+    }
+    const after = v.state.selection.main;
+    ui.setCtxMenu({ kind: "editor", x: e.clientX, y: e.clientY, hasSelection: !after.empty });
   }
 
   onMount(() => {
@@ -105,13 +304,21 @@ export default function EditorPane() {
       jumpToLine,
       topLine,
       docText: () => view?.state.doc.toString() ?? s.draftSrc(),
+      replaceAll,
+      hasSelection,
+      runEditorCommand,
+      focusEditor,
     });
+    view.contentDOM.addEventListener("mousedown", onMouseDown, true);
+    view.contentDOM.addEventListener("contextmenu", onContextMenu);
     const pj = ui.takePendingEditorJump();
     if (pj != null && pj > 0) jumpToLine(pj);
     view.focus();
     syncOutline();
     onCleanup(() => {
       ui.registerEditorBridge(null);
+      view?.contentDOM.removeEventListener("mousedown", onMouseDown, true);
+      view?.contentDOM.removeEventListener("contextmenu", onContextMenu);
       if (raf) cancelAnimationFrame(raf);
       view?.destroy();
     });

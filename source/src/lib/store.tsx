@@ -8,13 +8,20 @@ import {
 } from "solid-js";
 import { api } from "./api";
 import { DEFAULT_SETTINGS } from "./defaults";
-import type { DocFull, DocMeta, HistEntry, Position, RecentDoc, Settings } from "./types";
+import type { DocFull, DocMeta, FormatResult, HistEntry, Position, RecentDoc, Settings } from "./types";
 
 import { isTypesetSettled, lineForSec, navForHistEntrySameDoc, navForRestorePos, type NavRequest } from "./nav";
+import { ancestorChain, buildOutlineTree } from "./oltree";
 
 /** 行锚主链所需：文档行数（\r\n 归一后按 \n 计，与 md.ts / folio-core 同口径） */
 function srcLines(src: string): number {
   return src.replace(/\r\n/g, "\n").split("\n").length;
+}
+
+/** 大纲签名：切换文档 / 保存 / 格式化后判断是否需要清空折叠状态。
+ *  outline 没变（例如阅读态勾选任务）就不打扰用户已展开的树。 */
+function outlineSig(outline: readonly { sec: number; line: number; text: string }[]): string {
+  return outline.map((o) => `${o.sec}:${o.line}:${o.text}`).join("\u0001");
 }
 import { confirmBox, quitApp } from "./actions";
 import * as ui from "./ui";
@@ -65,8 +72,12 @@ export interface Store {
   openPath(path: string, secText?: string | null): Promise<boolean>;
   openSlug(slug: string, secText?: string | null): Promise<void>;
   requestAnchor(sec: number, record: boolean): void;
+  /** 主动跳转的硬展开：目标章节祖先链写进大纲 overrides（压过用户此前的收起） */
+  revealOutline(sec: number | null | undefined): void;
   enterEdit(): void;
   toggleEdit(): void;
+  /** 仅退回阅读态（不保存 / 不丢弃 / 不动脏标记）：编辑器未能挂载时的退路 */
+  cancelEdit(): void;
   pushHist(e: HistEntry): void;
   setDraft(v: string): void;
   /** 编辑按键轻量通道（P1-3）：只挂脏 + 合并一次防抖快照，不在每次 docChanged 里复制全文 */
@@ -79,6 +90,9 @@ export interface Store {
   saveAs(): Promise<boolean>;
   discard(): void;
   applySaved(next: DocFull): void;
+  /** 源码格式化后的内存更新（不写盘）：正文、大纲、统计与脏标记一次对齐。
+   *  与 applySaved 的区别：大纲/统计按格式化后文本重算，且不触发阅读位置导航。 */
+  applyFormatted(r: FormatResult): void;
   saveSettings(patch: Partial<Settings>): void;
   /** 立即把待写设置落库（滑杆松手 / 设置面板关闭 / 退出前）；返回写入完成 Promise */
   flushSettings(): Promise<void>;
@@ -219,6 +233,15 @@ export function StoreProvider(props: ParentProps): JSX.Element {
 
   function setDoc(doc: DocFull) {
     cancelDraftTimers();   // 切文档：上一文档的防抖快照不得落到新文档状态上
+    const prev = current();
+    // 大纲折叠状态（2026-11-18）：只在大纲真的变化时清空。sec 按顺序编号，
+    // 增删标题后旧键会错位；勾选任务等「正文变、大纲不变」的更新保留用户的树。
+    if (
+      !prev || prev.meta.id !== doc.meta.id
+      || (prev.outline !== doc.outline && outlineSig(prev.outline) !== outlineSig(doc.outline))
+    ) {
+      ui.resetOutlineFold();
+    }
     setCurrent(doc);
     setDraftSrc(doc.src);
     setActiveSec(null);
@@ -310,12 +333,16 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     const secText = opts?.secText ?? null;
     if (secText) {
       setNavRequest({ kind: "restore", sec: null, secText, ratio: 0 });
+      // 深链 / 跨文档历史：按标题文本找到目标 sec，硬展开大纲祖先链
+      revealOutline(doc.outline.find((o) => o.text === secText)?.sec);
     } else {
       const pos = positionOf(doc);
       if (pos) {
         // v1.2 主链：章节行偏移（抗标题上方增删）；无锚旧行退回 secOff/ratio 老链（方案 §4.3）
         setNavRequest(navForRestorePos(pos, doc.outline, srcLines(doc.src))
           ?? { kind: "restore", sec: pos.sec, secText: pos.secText, ratio: pos.ratio, secOff: pos.secOff });
+        // 位置恢复同属「主动跳转」：旧库可能只有 secText，按文本兜一层
+        revealOutline(pos.sec ?? doc.outline.find((o) => o.text === pos.secText)?.sec);
         toast(`已恢复「${doc.meta.fileName}」上次阅读位置 · ${Math.round(pos.ratio * 100)}%`);
       } else if (!first) {
         setNavRequest({ kind: "top" });
@@ -387,9 +414,22 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     }
   }
 
+  /** 主动跳转的硬展开：把目标祖先链写进大纲 overrides（方案 §3）。
+   *  与滚动跟随的软展开分开：这里允许压过用户此前的收起，保证目标行可见、高亮不隐身。 */
+  function revealOutline(sec: number | null | undefined) {
+    if (sec == null) return;
+    const cur = current();
+    if (!cur?.outline.length) return;
+    const chain = ancestorChain(buildOutlineTree(cur.outline), sec);
+    if (chain?.length) ui.hardOpenOutline(chain);
+    // 一次性把目标行滚入大纲视口（被动阅读滚动不再跟随/展开）
+    ui.requestOutlineScroll(sec);
+  }
+
   function requestAnchor(sec: number, record: boolean) {
     const cur = current();
     if (!cur) return;
+    revealOutline(sec);
     if (record) {
       const item = cur.outline.find((o) => o.sec === sec);
       pushHist({ docId: cur.meta.id, path: cur.meta.path, sec, secText: item?.text ?? null, top: null, ratio: null });
@@ -407,6 +447,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     const cur = current();
     if (cur && cur.meta.id === entry.docId) {
       // 同文档：绝对位置优先 → 锚点 → 顶部（FR-5.2，判定逻辑在 nav.ts 并有单测）
+      revealOutline(entry.sec);
       setNavRequest(navForHistEntrySameDoc(entry));
       return;
     }
@@ -447,6 +488,13 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     setDraftSrc(current()!.src);
     setMode("edit");
     // 不能清脏：进编辑前可能已有打勾待存（缓冲此刻即 cur.src，recompute 结果不变）
+    recomputeDirty();
+  }
+  /** 仅退回阅读态：不保存、不丢弃、不动脏标记。
+   *  与 endEdit 的区别是后者会清 dirty（那是保存/放弃链路的语义），
+   *  这里用于「编辑器没挂载成功」的退路——阅读态待存的打勾不能被顺手抹掉。 */
+  function cancelEdit() {
+    setMode("read");
     recomputeDirty();
   }
   function toggleEdit() {
@@ -644,6 +692,31 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     }
   }
 
+  /** 源码格式化后的内存更新（《Folio 源码自动格式化方案》§6）：
+   *  格式化会增删空行，标题行号随之变化——大纲与统计必须按新文本一次换掉，
+   *  否则阅读位置/深链仍落在旧行号上。只改内存，不写盘（手动保存纪律）。 */
+  function applyFormatted(r: FormatResult) {
+    const cur = current();
+    if (!cur) return;
+    cancelDraftTimers();   // 格式化前的防抖快照不得把旧文本写回草稿
+    // 格式化可能增删空行 → sec/行号整体平移：大纲真变了才清空折叠状态
+    if (outlineSig(cur.outline) !== outlineSig(r.outline)) ui.resetOutlineFold();
+    const meta: DocMeta = {
+      ...cur.meta,
+      wordCount: r.wordCount,
+      headCount: r.headCount,
+      secCount: r.secCount,
+      title: r.title ?? cur.meta.title,   // 首行由 "#标题" 变 "# 标题" 时标题即刻跟上
+    };
+    setCurrent({ ...cur, meta, src: r.text, outline: r.outline });
+    setDocs((ds) => ds.map((d) => (d.id === meta.id ? meta : d)));
+    setRecents((rs) => rs.map((ent) => (ent.meta.id === meta.id ? { ...ent, meta } : ent)));
+    setDraftSrc(r.text);
+    recomputeDirty();
+    // 格式化结果同样纳入异常退出找回（与编辑输入同一条 400ms 防抖）
+    draftTimer = window.setTimeout(() => persistDraft(meta.path, r.text), 400);
+  }
+
   /* ── 设置写入（P1-6）：拖动滑杆时内存/CSS 立即变，SQLite 写入合并 250ms ──
    * 此前每个 input 事件都 invoke("set_settings") 一次：拖一次滑杆几十次 IPC+DB 写，
    * 与扫描/搜索争用写锁。现在只保留最后一次快照；松手/关面板/退出时 flush。
@@ -721,7 +794,11 @@ export function StoreProvider(props: ParentProps): JSX.Element {
         setDisk(doc.meta.id, doc.src);
         setDoc(doc);
         const pos = positionOf(doc);
-        if (pos) setNavRequest({ kind: "restore", sec: pos.sec, secText: pos.secText, ratio: pos.ratio, secOff: pos.secOff });
+        if (pos) {
+          // 启动恢复同属主动跳转：硬展开目标章节祖先链，高亮不在收起的树里隐身
+          revealOutline(pos.sec ?? doc.outline.find((o) => o.text === pos.secText)?.sec);
+          setNavRequest({ kind: "restore", sec: pos.sec, secText: pos.secText, ratio: pos.ratio, secOff: pos.secOff });
+        }
         pushHist({ docId: doc.meta.id, path: doc.meta.path, sec: null, secText: null, top: null, ratio: null });
       } catch {
         /* 启动恢复目标已丢失：同规则清出历史（不声张，空态自洽），下次恢复看下一条 */
@@ -774,8 +851,8 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     docs, recents, roots, current, settings, positionsMap,
     mode, dirty, side, focusMode, activeSec, toasts, navRequest, histIdx, histLen: () => history.length, draftSrc,
     tabs, activeTabId, closeTab,
-    refreshDocs, openMeta, openPath, openSlug, requestAnchor,
-    enterEdit, toggleEdit, pushHist, setDraft, markDraftChanged, save, saveSmart, saveAs, discard, applySaved,
+    refreshDocs, openMeta, openPath, openSlug, requestAnchor, revealOutline,
+    enterEdit, toggleEdit, cancelEdit, pushHist, setDraft, markDraftChanged, save, saveSmart, saveAs, discard, applySaved, applyFormatted,
     saveSettings, flushSettings, setSide, toggleFocus, toast, setActiveSec,
     schedulePosition, flushPosition, providePositionSource,
     back, forward, clearNav,

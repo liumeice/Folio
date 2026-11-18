@@ -25,6 +25,26 @@ export default function Icons() {
       <symbol id="i-file" viewBox="0 0 24 24"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4"/></symbol>
       {/* 另存为（2026-11-18）：软盘轮廓 + 出离箭头，线条制式同工具图标集 */}
       <symbol id="i-save-as" viewBox="0 0 24 24"><path d="M6.5 3.5h8l4 4v8"/><path d="M6.5 3.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h4.2"/><path d="M8.5 3.5v4h5"/><path d="M13.5 16.5h7"/><path d="M17.5 13.5l3 3-3 3"/></symbol>
+      {/* 源码自动格式化（2026-11-18）：文本行 + 整理星芒，线条制式同工具图标集 */}
+      <symbol id="i-format" viewBox="0 0 24 24"><path d="M4.5 6.5h15M4.5 11.5h9M4.5 16.5h5.5"/><path d="M17 12.2l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z"/></symbol>
+      {/* 大纲全部展开 / 收起（2026-11-18）：单箭头 + 限位线，两枚包围盒同为 y=8–16，
+          保证并排时视觉高度一致（需求方对照原型确认） */}
+      <symbol id="i-ol-expand" viewBox="0 0 24 24"><path d="M7 8l5 5 5-5"/><path d="M7 16h10"/></symbol>
+      <symbol id="i-ol-collapse" viewBox="0 0 24 24"><path d="M7 16l5-5 5 5"/><path d="M7 8h10"/></symbol>
+      {/* 编辑窗右键插入模板（2026-11-18）：动作 / 格式 / 块级图标 */}
+      <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6.2" cy="7" r="2.4"/><circle cx="6.2" cy="17" r="2.4"/><path d="M8.3 8.4l10.7 8.8M8.3 15.6l10.7-8.8"/></symbol>
+      <symbol id="i-paste" viewBox="0 0 24 24"><path d="M9 4.5H7.2A2.2 2.2 0 0 0 5 6.7v12.1A2.2 2.2 0 0 0 7.2 21h9.6a2.2 2.2 0 0 0 2.2-2.2V6.7a2.2 2.2 0 0 0-2.2-2.2H15"/><rect x="9" y="2.8" width="6" height="3.4" rx="1.1"/></symbol>
+      <symbol id="i-select-all" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5" stroke-dasharray="3.2 2.6"/><path d="M8 12.2l2.8 2.8 5.4-6"/></symbol>
+      <symbol id="i-bold" viewBox="0 0 24 24"><path d="M7.5 5h5.2a3.6 3.6 0 0 1 0 7.2H7.5zM7.5 12.2h6a3.9 3.9 0 0 1 0 7.8h-6z"/></symbol>
+      <symbol id="i-italic" viewBox="0 0 24 24"><path d="M10 5h7M7 19h7M14.5 5l-4.5 14"/></symbol>
+      <symbol id="i-strike" viewBox="0 0 24 24"><path d="M17.2 7.4A5.5 5.5 0 0 0 12.4 5c-2.8 0-4.7 1.5-4.7 3.7 0 2.1 1.7 3.3 4.8 4 3.2.7 4.8 2 4.8 4.1 0 2.4-2 4.2-5.2 4.2-2.4 0-4.3-1-5.4-2.7"/><path d="M4.5 12h15"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M9.8 14.2l4.4-4.4"/><path d="M10.6 7.6l1.7-1.7a3.6 3.6 0 0 1 5.1 5.1l-1.7 1.7"/><path d="M13.4 16.4l-1.7 1.7a3.6 3.6 0 0 1-5.1-5.1l1.7-1.7"/></symbol>
+      <symbol id="i-table" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9 9.5v10M15 9.5v10"/></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17l5-4.6 3.4 3 2.7-2.2 4 3.8"/></symbol>
+      <symbol id="i-hr" viewBox="0 0 24 24"><path d="M4 12h16"/></symbol>
+      <symbol id="i-quote" viewBox="0 0 24 24"><path d="M6 10.5H10v5H6zM14 10.5h4v5h-4z"/><path d="M10 10.5c0-2.8 1.2-4.4 3.4-5.2M18 10.5c0-2.8 1.2-4.4 3.4-5.2"/></symbol>
+      <symbol id="i-ol" viewBox="0 0 24 24"><path d="M10 6.5h10M10 12h10M10 17.5h10"/><path d="M4 5.2l1.2-.7v4"/><path d="M3.4 10.4c0-.8.6-1.3 1.4-1.3.8 0 1.4.5 1.4 1.2 0 1.2-2.8 2-2.8 3.5h2.8"/><path d="M3.6 15.3h2.6l-1.5 1.6c.9 0 1.5.6 1.5 1.4 0 .9-.7 1.5-1.6 1.5-.7 0-1.3-.3-1.6-.8"/></symbol>
+      <symbol id="i-task" viewBox="0 0 24 24"><rect x="3" y="4" width="4" height="4" rx="1"/><path d="M4 6l1 1 1.4-1.7"/><path d="M10 6h10"/><rect x="3" y="10" width="4" height="4" rx="1"/><path d="M4 12l1 1 1.4-1.7"/><path d="M10 12h10"/><rect x="3" y="16" width="4" height="4" rx="1"/><path d="M4 18l1 1 1.4-1.7"/><path d="M10 18h10"/></symbol>
       <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3l2.6 2.6 5-5.2"/></symbol>
       <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11M4.6 6.5h.01M4.6 12h.01M4.6 17.5h.01"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.6l4.4 4.4L19 7.5"/></symbol>

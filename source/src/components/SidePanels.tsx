@@ -7,6 +7,7 @@ import type { DocMeta, RecentDoc } from "../lib/types";
 import { allDirKeys, revealKeys } from "../lib/libtree";
 import { countWords } from "../lib/wordcount";
 import { buildLibTree, flattenAll, isDirOpen, leafName, rootOf, type DirNode, type TreeRow } from "../lib/libtree";
+import { allOutlineFoldKeys, ancestorChain, buildOutlineTree, flattenOutline } from "../lib/oltree";
 
 function dayLabel(mtime: number): string {
   const d = new Date(mtime * 1000);
@@ -368,31 +369,155 @@ function RecentItem(props: { r: RecentDoc }) {
 export function OutlinePanel() {
   const s = useStore();
   let body!: HTMLDivElement;
-  createEffect(() => {
+  const tree = createMemo(() => buildOutlineTree(s.current()?.outline ?? []));
+  const rows = createMemo(() => flattenOutline(tree(), ui.olExpand(), ui.olSoftOpen()));
+  const foldKeys = createMemo(() => allOutlineFoldKeys(tree()));
+
+  /* 当前节落在收起的子树里时，高亮显示在最近可见的上级条目上
+   * （否则当前行不渲染，用户看不到焦点在哪）。主动跳转会硬展开目标分支，
+   * 此时最近可见祖先就是目标本身；被动滚动只切换高亮，不展开。 */
+  const shownActive = createMemo(() => {
     const sec = s.activeSec();
-    if (sec == null) return;
+    if (sec == null) return null;
+    const visible = new Set(rows().map((r) => r.node.item.sec));
+    if (visible.has(sec)) return sec;
+    const chain = ancestorChain(tree(), sec);
+    if (!chain) return null;
+    for (let i = chain.length - 1; i >= 0; i--) {
+      if (visible.has(chain[i])) return chain[i];
+    }
+    return null;
+  });
+
+  /* 主动跳转的一次性定位（2026-11-18 需求修正）：把目标行直接滚入大纲视口。
+   * 被动滚动只切换 active 高亮，不滚面板、不展开分支——避免滚动时逐项跟随/来回滚。
+   * 硬展开由 store.revealOutline 在跳转时完成；这里等行渲染后量几何。 */
+  createEffect(() => {
+    const req = ui.olScrollTo();
+    if (!req) return;
+    const sec = req.sec;
+    ui.setOlScrollTo(null);   // 一次性消费：面板重挂载时不重放旧跳转
     requestAnimationFrame(() => {
-      body?.querySelector(`[data-ol-sec="${sec}"]`)?.scrollIntoView({ block: "nearest" });
+      const row = body?.querySelector<HTMLElement>(`.ol-row[data-ol-sec="${sec}"]`);
+      if (!row) return;
+      // 只有焦点本来就在大纲里时才把键盘焦点移到目标条目；阅读区触发跳转不抢焦点
+      const fromOutline = !!(document.activeElement as HTMLElement | null)?.closest?.(".out-body");
+      const box = body.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      const pad = 12;
+      if (r.top < box.top + pad) body.scrollTop -= box.top + pad - r.top;
+      else if (r.bottom > box.bottom - pad) body.scrollTop += r.bottom - (box.bottom - pad);
+      if (fromOutline) row.querySelector<HTMLElement>(".ol-text")?.focus({ preventScroll: true });
     });
   });
+
+  function focusText(sec: number) {
+    body?.querySelector<HTMLElement>(`.ol-row[data-ol-sec="${sec}"] .ol-text`)?.focus();
+  }
+
+  function toggle(sec: number, open: boolean) {
+    ui.setOutlineOpen(sec, !open);
+    queueMicrotask(() => focusText(sec));   // 重排后 DOM 可能重建，焦点留在原行
+  }
+
+  /* FR-12：↑↓ 移动，← 收起 / 回父级，→ 展开 / 进首个子项，Enter/Space 跳转 */
+  function onKey(e: KeyboardEvent) {
+    const el = e.target as HTMLElement;
+    if (!el.closest(".ol-text")) return;
+    const row = el.closest<HTMLElement>(".ol-row");
+    if (!row) return;
+    // 只吞自己消费的键：Home / Enter 在全局还有「回顶部」「命中下一处」语义，
+    // 大纲内的同名键必须先截住，否则会串台（Ctrl+S 等其余键照常冒泡）。
+    // Solid 的 keydown 走 document 委托，stopPropagation 挡不住同节点上的全局监听，
+    // 必须用 stopImmediatePropagation（CLAUDE.md「Solid 事件委托」同款坑）。
+    if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter", " ", "Home", "End"].includes(e.key)) return;
+    e.stopImmediatePropagation();
+    const sec = Number(row.dataset.olSec);
+    const all = [...body.querySelectorAll<HTMLElement>(".ol-row")];
+    const idx = all.indexOf(row);
+    const expanded = row.getAttribute("aria-expanded");
+    const focusAt = (n: number) => all[n]?.querySelector<HTMLElement>(".ol-text")?.focus();
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        focusAt(Math.min(idx + 1, all.length - 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        focusAt(Math.max(idx - 1, 0));
+        break;
+      case "ArrowRight":
+        e.preventDefault();
+        if (expanded === "false") toggle(sec, false);
+        else focusAt(idx + 1);              // 已展开 → 进第一个子项
+        break;
+      case "ArrowLeft": {
+        e.preventDefault();
+        if (expanded === "true") toggle(sec, true);
+        else {
+          const parent = ancestorChain(tree(), sec)?.at(-1);
+          if (parent != null) focusText(parent);
+        }
+        break;
+      }
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        s.requestAnchor(sec, true);
+        break;
+      case "Home":
+        e.preventDefault();
+        focusAt(0);
+        break;
+      case "End":
+        e.preventDefault();
+        focusAt(all.length - 1);
+        break;
+    }
+  }
+
   return (
     <>
       <div class="out-head">大纲<span class="sp" />
         <span style={{ "font-family": "var(--font-mono)", "font-size": "10.5px" }}>
           {s.current()?.outline.length ?? 0} 条
         </span>
+        <button class="head-btn" title="全部展开" aria-label="全部展开"
+          onClick={() => ui.setAllOutlineOpen(foldKeys(), true)}>
+          <svg class="ico"><use href="#i-ol-expand" /></svg>
+        </button>
+        <button class="head-btn" title="全部收起" aria-label="全部收起"
+          onClick={() => ui.setAllOutlineOpen(foldKeys(), false)}>
+          <svg class="ico"><use href="#i-ol-collapse" /></svg>
+        </button>
       </div>
-      <div class="out-body" ref={body}>
+      <div class="out-body" ref={body} role="tree" aria-label="文档大纲" onKeyDown={onKey}>
         <Show when={s.current()?.outline.length} fallback={
           <div class="ol-empty">打开文档后<br />自动生成大纲</div>
         }>
-          <For each={s.current()!.outline}>{(o) => (
-            <button class={"ol" + (o.level > 1 ? " l" + o.level : "")} classList={{ on: s.activeSec() === o.sec }}
-              data-ol-sec={o.sec} data-line={o.line} title={"h" + o.level + " · " + o.text}
-              onClick={() => s.requestAnchor(o.sec, true)}>
-              <span class="ot">{o.text}</span>
-            </button>
-          )}</For>
+          <For each={rows()}>{(r) => {
+            const it = r.node.item;
+            const active = () => shownActive() === it.sec;
+            return (
+              <div class="ol-row" classList={{ on: active(), d2: r.depth === 2, d3: r.depth >= 3 }}
+                data-ol-sec={it.sec} data-line={it.line}
+                role="treeitem" aria-level={r.depth + 1} aria-selected={active()}
+                aria-expanded={r.hasKids ? r.open : undefined}
+                style={{ "padding-left": `${4 + r.depth * 18}px` }}>
+                <Show when={r.hasKids} fallback={<span class="ol-chev-sp" />}>
+                  <button type="button" class="ol-chev" classList={{ open: r.open }} tabIndex={-1}
+                    title={r.open ? "收起" : "展开"} aria-label={r.open ? "收起" : "展开"}
+                    onClick={(e) => { e.stopPropagation(); toggle(it.sec, r.open); }}>
+                    <svg class="ico"><use href="#i-chev-r" /></svg>
+                  </button>
+                </Show>
+                <button type="button" class="ol-text" title={"h" + it.level + " · " + it.text}
+                  onClick={() => s.requestAnchor(it.sec, true)}>
+                  {it.text}
+                </button>
+              </div>
+            );
+          }}</For>
         </Show>
       </div>
     </>

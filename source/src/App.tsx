@@ -2,7 +2,7 @@ import { createEffect, createSignal, lazy, onCleanup, onMount, Show, Suspense } 
 import { useStore } from "./lib/store";
 import { api } from "./lib/api";
 import * as ui from "./lib/ui";
-import { newDoc, pickAndOpen, quitApp } from "./lib/actions";
+import { newDoc, pickAndOpen, quitApp, formatDocument } from "./lib/actions";
 import Icons from "./components/Icons";
 import TitleBar from "./components/TitleBar";
 import { Rail, LibraryPanel, RecentsPanel, OutlinePanel, PaneBar, CrumbBar, StatusBar } from "./components/SidePanels";
@@ -14,7 +14,7 @@ import SearchPalette from "./components/SearchPalette";
 import { AboutModal, ContextMenu, CopyPop, DropVeil, ExportBusy, HitNav, ImgBox, KeysModal, PropsModal, ScanBusy } from "./components/Overlays";
 import SettingsPanel from "./components/SettingsPanel";
 import AskDialog from "./components/AskDialog";
-import { typeVars } from "./lib/typography";
+import { clampNum, STEP, typeVars } from "./lib/typography";
 import { applyAccent } from "./lib/accent";
 import ToastZone from "./components/Toast";
 
@@ -86,6 +86,45 @@ export default function App() {
     void s.refreshDocs();
   }
 
+  /* ── 阅读区字号缩放（Ctrl + 滚轮，2026-11-18）──
+   * 只改 fsSerif / fsSans（--prose-fs 仅作用于 .prose），界面其余部分不动；
+   * 必须 document 级非 passive 监听：WebView 的 Ctrl+滚轮默认是整页缩放，只在阅读容器上拦
+   * 挡不住指针在侧栏时的整页缩放。阅读态才接管；编辑态保持原行为。 */
+  let wheelAcc = 0;
+  let wheelTimer: number | undefined;
+  function bumpReaderFont(dir: number) {
+    const st = s.settings();
+    const key = st.serif ? "fsSerif" : "fsSans";
+    const cur = st[key];
+    const next = clampNum(key, cur + dir * STEP[key]);
+    if (next === cur) return;
+    // 代码块与正文一起缩放（需求 2026-11-18）：代码字号同向步进；
+    // 表格在 CSS 里用 em 跟随正文，无需在这里改设置。
+    const codeNext = clampNum("codeFs", st.codeFs + dir * STEP.codeFs);
+    s.saveSettings(key === "fsSerif"
+      ? { fsSerif: next, codeFs: codeNext }
+      : { fsSans: next, codeFs: codeNext });
+  }
+  function onWheel(ev: WheelEvent) {
+    if (!ev.ctrlKey) return;
+    // 任何模式下都不让 WebView 整页缩放（Ctrl+滚轮默认行为）；只有阅读态才调正文字号
+    ev.preventDefault();
+    if (s.mode() !== "read" || !s.current()) return;
+    const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? 100 : 1;
+    wheelAcc += ev.deltaY * unit;
+    const steps = Math.trunc(Math.abs(wheelAcc) / 100);
+    if (steps === 0) {
+      if (wheelTimer) window.clearTimeout(wheelTimer);
+      wheelTimer = window.setTimeout(() => { wheelAcc = 0; }, 300);
+      return;
+    }
+    const dir = wheelAcc < 0 ? 1 : -1;   // 向上滚 = 放大
+    wheelAcc = 0;
+    for (let i = 0; i < Math.min(steps, 2); i++) bumpReaderFont(dir);
+    if (wheelTimer) window.clearTimeout(wheelTimer);
+    wheelTimer = window.setTimeout(() => { wheelAcc = 0; }, 300);
+  }
+
   function onKeyDown(ev: KeyboardEvent) {
     const t = ev.target as HTMLElement;
     const typing = t instanceof HTMLTextAreaElement || t instanceof HTMLInputElement || t.isContentEditable;
@@ -103,6 +142,13 @@ export default function App() {
       if (typing && !inEditor) return;
       const cur = s.current();
       if (cur) void s.closeTab(cur.meta.id);
+      return;
+    }
+    // 源码自动格式化（Shift+Alt+F）：必须放在 typing 早退之前——编辑器是 contentEditable，
+    // 否则按键会被当成普通输入吞掉（与 Ctrl+S 同一处埋伏）。
+    if (!mod && ev.altKey && ev.shiftKey && (k === "f" || k === "F")) {
+      ev.preventDefault();
+      void formatDocument(s);
       return;
     }
     if (typing) {
@@ -151,6 +197,8 @@ export default function App() {
   onMount(() => {
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("click", onDocClick);
+    // passive:false —— 只有它才能 preventDefault 掉 WebView 的 Ctrl+滚轮整页缩放
+    document.addEventListener("wheel", onWheel, { passive: false });
     let disposeDrag: (() => void) | undefined;
     if (s.isTauri) {
       void import("@tauri-apps/api/webview").then(async ({ getCurrentWebview }) => {
@@ -183,6 +231,8 @@ export default function App() {
     onCleanup(() => {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("click", onDocClick);
+      document.removeEventListener("wheel", onWheel);
+      if (wheelTimer) window.clearTimeout(wheelTimer);
       disposeDrag?.();
     });
   });

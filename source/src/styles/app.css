@@ -195,14 +195,27 @@ svg{display:block}
 /* ---- outline ---- */
 .out-head{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line);font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);background:var(--bg-side)}
 .out-head .sp{flex:1}
+.head-btn{width:22px;height:22px;display:grid;place-items:center;border-radius:5px;color:var(--text-3);cursor:pointer}
+.head-btn:hover{background:var(--bg-hover);color:var(--text)}
+.head-btn .ico{width:13px;height:13px}
 .out-body{flex:1;overflow:auto;padding:10px 8px}
-.ol{width:100%;text-align:left;display:flex;align-items:center;gap:8px;height:27px;padding:0 8px;border-radius:var(--r-1);font-size:12.5px;color:var(--text-2);cursor:pointer;position:relative}
-.ol:hover{background:var(--bg-hover);color:var(--text)}
-.ol.on{background:var(--accent-bg);color:var(--accent);font-weight:550}
-.ol.on::before{content:"";position:absolute;left:-8px;top:6px;bottom:6px;width:2px;border-radius:2px;background:var(--accent)}
-.ol .ot{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-.ol.l2{padding-left:20px}.ol.l3{padding-left:34px;font-size:12px;color:var(--text-3)}
-.ol.l4,.ol.l5,.ol.l6{padding-left:44px;font-size:11.5px;color:var(--text-3)}
+/* 大纲树（2026-11-18）：行 = 折叠箭头 + 文本按钮；缩进由 depth 内联控制，
+ * 字号/灰阶沿用旧 l{level} 节奏（二级基准、三级 12px、四级以下 11.5px）。
+ * 当前项用 Folio 高亮（accent 底 + 左竖条 + 加粗），需求方已确认。 */
+.ol-row{width:100%;display:flex;align-items:center;height:27px;border-radius:var(--r-1);font-size:12.5px;color:var(--text-2);position:relative}
+.ol-row:hover{background:var(--bg-hover);color:var(--text)}
+.ol-row.d2{font-size:12px;color:var(--text-3)}
+.ol-row.d3{font-size:11.5px;color:var(--text-3)}
+.ol-row.on{background:var(--accent-bg);color:var(--accent)}
+.ol-row.on::before{content:"";position:absolute;left:2px;top:6px;bottom:6px;width:2px;border-radius:2px;background:var(--accent)}
+.ol-row.on .ol-text{font-weight:600}
+.ol-row.on .ol-chev{color:var(--accent)}
+.ol-chev{flex:none;width:18px;height:27px;display:grid;place-items:center;color:var(--text-3);cursor:pointer;border-radius:4px}
+.ol-chev:hover{color:var(--text)}
+.ol-chev .ico{width:12px;height:12px;transition:transform .12s ease}
+.ol-chev.open .ico{transform:rotate(90deg)}
+.ol-chev-sp{flex:none;width:18px;height:27px}
+.ol-text{flex:1;min-width:0;align-self:stretch;text-align:left;padding:0 8px 0 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:27px;font-size:inherit;color:inherit;cursor:pointer}
 .ol-empty{color:var(--text-3);font-size:12.5px;padding:18px 10px;text-align:center;line-height:2}
 
 /* ---- center / reading ---- */
@@ -263,13 +276,16 @@ svg{display:block}
 .prose p.imgrow > a{display:inline-block;vertical-align:middle;max-width:100%;margin:1px 2px}
 .prose p.imgrow > a img{margin:0}
 .prose .tw-tbl{overflow:auto;margin:0 0 20px;border:1px solid var(--line);border-radius:var(--r-3)}
-.prose table{border-collapse:collapse;width:100%;font-family:var(--font-ui);font-size:13px}
-.prose thead th{background:var(--bg-raise);text-align:left;font-weight:600;font-size:11.5px;letter-spacing:.03em;text-transform:uppercase;color:var(--text-3);padding:9px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+/* 表格字号相对正文（2026-11-18）：正文 Ctrl+滚轮 / 设置改字号时表格一起缩放。
+ * .84em ≈ 13px @ 15.5px 正文；表头 .885em ≈ 11.5px（相对表格字号）。 */
+.prose table{border-collapse:collapse;width:100%;font-family:var(--font-ui);font-size:.84em}
+.prose thead th{background:var(--bg-raise);text-align:left;font-weight:600;font-size:.885em;letter-spacing:.03em;text-transform:uppercase;color:var(--text-3);padding:9px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
 .prose tbody td{padding:9px 14px;border-bottom:1px solid var(--line);color:var(--text-2);vertical-align:top}
 .prose tbody tr:last-child td{border-bottom:none}
 .prose tbody tr:hover td{background:var(--bg-hover);color:var(--text)}
 .prose.density-compact thead th,.prose.density-compact tbody td{padding:4px 10px}
-.prose.density-compact table{font-size:12.5px}
+.prose.density-compact table{font-size:.806em}
+.prose.density-compact thead th{font-size:.92em}
 .prose.density-loose thead th,.prose.density-loose tbody td{padding:14px 18px}
 .prose hr{border:none;height:1px;background:var(--line);margin:28px 0}
 .codeblock{margin:0 0 20px;border:1px solid var(--line);border-radius:var(--r-3);overflow:hidden;background:color-mix(in srgb,var(--bg-frame) 45%,var(--bg-view))}
@@ -618,6 +634,26 @@ svg{display:block}
 .ctxmenu{position:fixed;z-index:160;min-width:216px;background:var(--bg-raise);border:1px solid var(--line-hi);
   border-radius:var(--r-3);box-shadow:var(--shadow-pop);padding:5px}
 .ctxmenu .mi{height:27px}
+/* 编辑窗右键菜单（方案 N-CTX-01）：三行图标等分铺满，表格格盘 8×6 */
+.ctxmenu.editor{width:250px;max-height:calc(100vh - 16px);overflow:auto}
+.ctx-tools{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:2px;padding:1px 2px}
+.ctool{height:28px;border:none;border-radius:6px;background:none;color:var(--text-2);
+  display:flex;align-items:center;justify-content:center;cursor:pointer}
+.ctool .ico{width:16px;height:16px;color:var(--text-3)}
+.ctool:hover{background:var(--bg-hover);color:var(--text)}
+.ctool:hover .ico{color:var(--text)}
+.ctool:disabled{opacity:.42;cursor:default;background:none;color:var(--text-3)}
+.ctxmenu .mi.sub{position:relative}
+/* 编辑窗子菜单：JS 按父项位置翻转/夹取后写 left/top（fixed 相对视口，不受菜单滚动裁切）。
+ * 子菜单只在 openSub 命中时渲染；hover 规则与 .open 规则都能显示它，不另设 display 覆盖。 */
+.ctxmenu .sub-drop{position:fixed;left:-9999px;top:-9999px;
+  max-height:calc(100vh - 16px);max-width:calc(100vw - 16px);overflow:auto}
+.ctx-gridwrap{padding:4px}
+.ctx-gridlab{font-size:11px;color:var(--text-2);text-align:center;padding:2px 0 6px;font-family:var(--font-mono)}
+.ctx-grid{display:grid;grid-template-columns:repeat(8,14px);gap:3px}
+.ctx-grid .cell{width:14px;height:14px;border-radius:3px;border:1px solid var(--line-hi);
+  background:transparent;cursor:pointer}
+.ctx-grid .cell.fill{background:color-mix(in srgb,var(--accent) 55%,transparent);border-color:var(--accent)}
 .root-chip{cursor:pointer}
 
 /* ---- 多页签（v1.2）：可关、可切、脏点、中键关闭 ---- */
