@@ -43,8 +43,12 @@ logs/
 backup/
 # backups/  = 单文件 .pre-* 备份（根 19M + source/backups；其文件名无 .bak 后缀，*.bak 挡不住）
 backups/
-# 原型逐轮快照 + prototype.backup.html 基线（5M/39 件）
-prototype/snapshot/
+
+# ---------- 原型目录整体不入仓（2026-11-18 需求方决定） ----------
+# prototype/ 全部内容（原型 html、_smoke 冒烟脚本、探针、icons、snapshot 快照等）只留本地，
+# 不再上传 GitHub。此前已入库的 20 个文件自本次起移出版本库（git rm -r --cached，本地文件保留）。
+# 旧规则 prototype/snapshot/ 与 prototype/_*.png 已被本条整体覆盖，删除。
+prototype/
 
 # ---------- 一次性取证/探针产物（CDP 截图、dump、临时图） ----------
 artifacts/
@@ -53,7 +57,6 @@ source/_*.txt
 source/sync_*.png
 source/final.png
 source/fold.png
-prototype/_*.png
 _webview_shot.png
 
 # ---------- 发号游标（bump-build.cjs 每次构建重写；缺文件时从 ANCHOR 自动重建，忽略安全） ----------
@@ -89,14 +92,15 @@ desktop.ini
 # ---------- 刻意入库、勿加忽略（防手滑） ----------
 # source/public/vendor/**                —— MathJax/Mermaid 离线打包（5.6M），运行时硬依赖，必须入库
 #                                          （已在 .gitattributes 标 linguist-generated，不计语言、折叠 diff）
-# prototype/_smoke/smoke.js / package.json / package-lock.json —— 冒烟脚本本体（其下 backup/ 已被模式盖住）
-# source/_cdp_*.mjs / prototype/_gen*.py —— 探针与生成脚本是复用工具（CLAUDE.md 取证流程引用），入库；
-#                                          它们的输出（png/txt/log）才忽略
-# source/Cargo.lock / source/package-lock.json / prototype/_smoke/package-lock.json
+# source/_cdp_*.mjs —— 探针脚本是复用工具（CLAUDE.md 取证流程引用），入库；
+#                     它们的输出（png/txt/log）才忽略
+# source/Cargo.lock / source/package-lock.json
 #                                        —— 应用类工程锁定依赖，随仓提交
 # source/src-tauri/capabilities/default.json —— 手写权限清单，入库
 # source/src-tauri/icons/icon.png        —— 全套图标唯一源图（见上方说明）
 # 注①：旧注释中「prototype.backup.html / prototype.snapshot-*.html 留档入库」已废止——
 #      git 历史即回滚点，快照目录改入上方忽略区（文件仍在本地，不入仓）。
 # 注②：旧注释「docs/ 全部入库」亦废止（2026-11-16 需求方决定：README 之外的 md 一律不入仓）。
+# 注③：旧注释「prototype/_smoke 冒烟脚本、prototype/_gen*.py 刻意入库」亦废止
+#      （2026-11-18 需求方决定：prototype/ 内容一律不上传 GitHub，见上方整体忽略区）。
 # 安装包（target/release/bundle/{nsis,msi}）随 target/ 一起不入库——发布走 GitHub Release 附件。
