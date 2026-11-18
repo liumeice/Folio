@@ -14,6 +14,8 @@ const IDLE_STATUS = "范围：当前文档 · 芯片可切换全部已登记（F
 const [status, setStatus] = createSignal(IDLE_STATUS);
 let inputEl!: HTMLInputElement;
 let debTimer: number | undefined;
+/** 请求序号守卫（P2-5）：快速输入时旧查询晚到不得覆盖新结果 */
+let querySeq = 0;
 
 export default function SearchPalette() {
   const s = useStore();
@@ -22,25 +24,35 @@ export default function SearchPalette() {
   });
 
   function runQuery(text: string) {
+    const seq = ++querySeq;
     if (!text.trim()) { setHits([]); setStatus(IDLE_STATUS); return; }
+    const scope = ui.searchScope();
+    // 当前文档：只有「眼前正文 ≠ 磁盘」时才随请求传 src（编辑缓冲 / 未保存打勾）。
+    // 干净阅读态不传——Rust 读盘走 OS 缓存，省下一次整篇 IPC 序列化（大文档收益明显）。
+    const src = scope === "current" && (s.mode() === "edit" || s.dirty())
+      ? (s.mode() === "edit" ? (ui.getEditorBridge()?.docText() ?? s.draftSrc()) : (s.current()?.src ?? null))
+      : null;
     void (async () => {
       const t0 = performance.now();
       try {
         const r = await api.search({
           text,
-          scope: ui.searchScope(),
-          docId: ui.searchScope() === "current" ? (s.current()?.meta.id ?? 0) : null,
+          scope,
+          docId: scope === "current" ? (s.current()?.meta.id ?? 0) : null,
           limit: 200,
+          src,
         });
+        if (seq !== querySeq) return;   // 旧请求：结果作废，不覆盖新查询
         setHits(r);
         setSel(0);
         const ms = (performance.now() - t0).toFixed(1);
         const total = r.reduce((a, h) => a + h.count, 0);
-        // UI-11：状态文案不许说谎——当前文档是读盘现算不是 FTS；命中数达 limit 时明示截断
-        const engine = ui.searchScope() === "library" ? "FTS5 全部已登记" : "当前文档（读盘现算）";
+        // UI-11：状态文案不许说谎——当前文档是现算不是 FTS；命中数达 limit 时明示截断
+        const engine = scope === "library" ? "FTS5 全部已登记" : "当前文档";
         const capped = r.length >= 200 ? " · 已达 200 条展示上限" : "";
         setStatus(`${total} 处匹配 · ${ms} ms（${engine}${capped}）`);
       } catch (e) {
+        if (seq !== querySeq) return;
         setStatus("检索失败：" + String(e));
       }
     })();

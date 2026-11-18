@@ -7,7 +7,7 @@
 
 pub mod sections;
 
-pub use sections::{hits_for_doc, sections, Section};
+pub use sections::{hits_for_doc, hits_for_sections, sections, Section};
 
 pub enum Plan {
     /// 走 FTS5 MATCH：已构造好的安全短语（双引号包裹转义后的原查询）

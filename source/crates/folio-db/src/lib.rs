@@ -6,11 +6,84 @@ mod schema;
 use folio_core::{markdown, CoreError, DocMeta, Position, RecentDoc, RecentReport, Result, Settings};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// 写连接 + 只读连接分离（性能评审 P1-1）：
+/// 扫描/保存用写连接，列表/搜索/设置走只读连接；WAL 下读连接不会被写事务挡住，
+/// 大库扫描期间侧栏、设置、位置读取不再排队等同一把锁。
+/// 只读连接显式 `query_only=ON`，任何误走读连接的写会立即报错而不是悄悄分叉。
 pub struct Db {
     conn: Mutex<Connection>,
+    read: Mutex<Connection>,
+}
+
+/// 扫描快照行：调用方在文件系统遍历阶段用它判断「未变/要更新/新增」，避免逐文件回 DB 取 meta。
+#[derive(Debug, Clone)]
+pub struct ScanRow {
+    pub id: i64,
+    pub mtime: i64,
+    pub size: u64,
+    pub in_library: bool,
+    pub builtin: bool,
+}
+
+/// 待写文档（扫描批量入库用）：统计/标题/文件元数据都在锁外算好，
+/// 事务内只做 SQL + FTS 写入，尽量缩短写锁持有时长。
+pub struct DocUpsert {
+    pub path: PathBuf,
+    pub src: String,
+    pub in_library: bool,
+    pub builtin: bool,
+    pub title: String,
+    pub file_name: String,
+    pub dir: String,
+    pub word_count: i64,
+    pub head_count: i64,
+    pub sec_count: i64,
+    pub mtime: i64,
+    pub size: u64,
+}
+
+impl DocUpsert {
+    pub fn new(path: &Path, src: String, in_library: bool, builtin: bool) -> Self {
+        let path_str = path.to_string_lossy().to_string();
+        let file_name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path_str.clone());
+        let dir = path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let (word_count, head_count, sec_count) = markdown::stats(&src);
+        let meta_fs = std::fs::metadata(path).ok();
+        let mtime = meta_fs
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let size = meta_fs.map(|m| m.len()).unwrap_or(0);
+        let title = src
+            .lines()
+            .find_map(|l| {
+                let t = l.trim_start();
+                t.strip_prefix("# ").map(|s| s.trim().to_string())
+            })
+            .unwrap_or_else(|| markdown::slugify(&file_name));
+        DocUpsert {
+            path: path.to_path_buf(),
+            src,
+            in_library,
+            builtin,
+            title,
+            file_name,
+            dir,
+            word_count,
+            head_count,
+            sec_count,
+            mtime,
+            size,
+        }
+    }
 }
 
 /// LIKE 模式转义（% _ \），与 `ESCAPE '\'` 连用；口径同 folio-search::plan 的 LIKE 分支。
@@ -31,8 +104,16 @@ impl Db {
             std::fs::create_dir_all(parent).map_err(|e| CoreError::Db(e.to_string()))?;
         }
         let conn = Connection::open(path).map_err(|e| CoreError::Db(e.to_string()))?;
-        let db = Db { conn: Mutex::new(conn) };
-        db.with_conn(schema::setup)?;
+        // 迁移/建表先在写连接上跑完，再开只读连接——保证读连接从第一眼起看到的就是
+        // WAL 模式与完整 schema，不存在「先以旧 journal 打开、之后才切 WAL」的窗口。
+        schema::setup(&conn).map_err(|e| CoreError::Db(e.to_string()))?;
+        let read = Connection::open(path).map_err(|e| CoreError::Db(e.to_string()))?;
+        let db = Db { conn: Mutex::new(conn), read: Mutex::new(read) };
+        // 读连接只读：防止未来误把写方法接到读连接上造成两套连接分叉；
+        // busy_timeout 让 WAL checkpoint 瞬间的短暂占用自动等待，而不是立刻报 BUSY。
+        db.with_read(|c| {
+            c.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA query_only = ON;")
+        })?;
         Ok(db)
     }
 
@@ -42,6 +123,32 @@ impl Db {
             .lock()
             .map_err(|e| CoreError::Internal(format!("db mutex: {e}")))?;
         f(&guard).map_err(|e| CoreError::Db(e.to_string()))
+    }
+
+    fn with_read<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
+        let guard = self
+            .read
+            .lock()
+            .map_err(|e| CoreError::Internal(format!("db read mutex: {e}")))?;
+        f(&guard).map_err(|e| CoreError::Db(e.to_string()))
+    }
+
+    /// 单事务写：扫描批量入库、库根切换、历史清理都走这里。
+    /// 事务内仍可 `prepare_cached` 复用语句；提交一次 = 一次 fsync 级别的落盘。
+    fn with_tx<T>(
+        &self,
+        f: impl FnOnce(&rusqlite::Transaction) -> rusqlite::Result<T>,
+    ) -> Result<T> {
+        let mut guard = self
+            .conn
+            .lock()
+            .map_err(|e| CoreError::Internal(format!("db mutex: {e}")))?;
+        let tx = guard
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| CoreError::Db(e.to_string()))?;
+        let out = f(&tx).map_err(|e| CoreError::Db(e.to_string()))?;
+        tx.commit().map_err(|e| CoreError::Db(e.to_string()))?;
+        Ok(out)
     }
 
     /// 登记/更新一个文档（绝对路径为自然键；重扫=upsert，slug 稳定不跳）。
@@ -64,78 +171,72 @@ impl Db {
         builtin: bool,
     ) -> Result<DocMeta> {
         let path_str = path.to_string_lossy().to_string();
-        let file_name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| path_str.clone());
-        let dir = path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-        let (word_count, head_count, sec_count) = markdown::stats(src);
-        let meta_fs = std::fs::metadata(path).ok();
-        let mtime = meta_fs
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let size = meta_fs.map(|m| m.len()).unwrap_or(0) as i64;
-        let title = src
-            .lines()
-            .find_map(|l| {
-                let t = l.trim_start();
-                t.strip_prefix("# ").map(|s| s.trim().to_string())
-            })
-            .unwrap_or_else(|| markdown::slugify(&file_name));
-
-        self.with_conn(|c| {
-            let existing: Option<(i64, String)> = c
-                .query_row(
-                    "SELECT id, slug FROM documents WHERE path = ?1 COLLATE NOCASE",
-                    params![path_str],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?;
-            let id = match existing {
-                Some((id, _)) => id,
-                None => {
-                    // PERF-03（最小修复）：slug 冲突只需知道**同族** slug（base、base-2、base-3…），
-                    // 旧实现每登记一篇就把全表 slug 拉进内存——2000 篇首扫 ≈ 200 万行重复读。
-                    // unique_slug 的候选恒为 base 或 base-n，因此按前族过滤与全表收集结果等价。
-                    let base = markdown::slugify(&file_name);
-                    let like = format!("{}-%", escape_like(&base));
-                    let taken: HashSet<String> = {
-                        let mut st = c.prepare("SELECT slug FROM documents WHERE slug = ?1 OR slug LIKE ?2 ESCAPE '\\'")?;
-                        let rows = st.query_map(params![base, like], |r| r.get::<_, String>(0))?;
-                        rows.collect::<rusqlite::Result<_>>()?
-                    };
-                    let slug = markdown::unique_slug(&base, &taken);
-                    c.execute(
-                        "INSERT INTO documents(path, slug, title, dir, file_name, size, mtime,
-                            word_count, head_count, sec_count, in_library, builtin)
-                         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
-                        params![path_str, slug, title, dir, file_name, size, mtime,
-                            word_count, head_count, sec_count, in_library as i64,
-                            builtin as i64],
-                    )?;
-                    c.last_insert_rowid()
-                }
-            };
-            // builtin 只增不减：欢迎页后来被当作普通文件打开，也不许丢它的内置身份
-            c.execute(
-                "UPDATE documents SET title=?1, dir=?2, file_name=?3, size=?4, mtime=?5,
-                    word_count=?6, head_count=?7, sec_count=?8, in_library=?9,
-                    builtin = MAX(builtin, ?10) WHERE id=?11",
-                params![title, dir, file_name, size, mtime,
-                    word_count, head_count, sec_count, in_library as i64,
-                    builtin as i64, id],
-            )?;
-            c.execute("DELETE FROM docs_fts WHERE doc = ?1", params![id.to_string()])?;
-            c.execute(
-                "INSERT INTO docs_fts(title, body, doc) VALUES(?1, ?2, ?3)",
-                params![title, src, id.to_string()],
-            )?;
-            Ok(())
-        })?;
+        // 统计/标题/元数据在写锁外算好；锁内只做 SQL（与扫描批量同一路径）
+        let doc = DocUpsert::new(path, src.to_string(), in_library, builtin);
+        self.with_tx(|c| upsert_prepared(c, &doc))?;
         self.doc_by_path(&path_str)
+    }
+
+    /// 扫描快照：一次读出全部登记行的增量判据（锁外遍历时用）。
+    /// 键 = 小写路径，与扫描侧 `to_string_lossy().to_lowercase()` 同口径。
+    pub fn scan_snapshot(&self) -> Result<std::collections::HashMap<String, ScanRow>> {
+        self.with_read(|c| {
+            let mut st = c.prepare("SELECT id, path, mtime, size, in_library, builtin FROM documents")?;
+            let rows = st.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(1)?.to_lowercase(),
+                    ScanRow {
+                        id: r.get(0)?,
+                        mtime: r.get(2)?,
+                        size: r.get::<_, i64>(3)? as u64,
+                        in_library: r.get::<_, i64>(4)? != 0,
+                        builtin: r.get::<_, i64>(5)? != 0,
+                    },
+                ))
+            })?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        })
+    }
+
+    /// 扫描结果一次事务落库（P1-1）：
+    ///   ① 批量 upsert（新增/更新，语句预编译复用）；
+    ///   ② 未变但此前只是「单开文件」的条目补记库归属；
+    ///   ③ 库根下未扫到的条目一次性 purge。
+    /// 返回移除条数。文件读盘/统计都在调用方锁外完成，事务只持有 SQL 与 FTS 写入所需时间。
+    pub fn apply_scan(
+        &self,
+        root: &Path,
+        writes: &[DocUpsert],
+        mark_in_library: &[i64],
+        scanned: &HashSet<String>,
+    ) -> Result<usize> {
+        self.with_tx(|c| {
+            for d in writes {
+                upsert_prepared(c, d)?;
+            }
+            {
+                let mut st = c.prepare_cached("UPDATE documents SET in_library = 1 WHERE id = ?1")?;
+                for id in mark_in_library {
+                    st.execute(params![id])?;
+                }
+            }
+            let root_str = root.to_string_lossy().into_owned();
+            let rows: Vec<(i64, String)> = {
+                let mut st = c.prepare("SELECT id, path FROM documents WHERE in_library = 1")?;
+                let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let mut removed = 0usize;
+            for (id, path) in rows {
+                let p = path.to_lowercase();
+                if !schema::path_under(&path, &root_str) || scanned.contains(&p) {
+                    continue;
+                }
+                purge_conn(c, id)?;
+                removed += 1;
+            }
+            Ok(removed)
+        })
     }
 
     /// P1-6：WAL checkpoint（TRUNCATE）：回收后清空 -wal 文件；由启动空闲后的后台维护线程调用
@@ -191,7 +292,7 @@ impl Db {
     }
 
     pub fn doc_by_id(&self, id: i64) -> Result<DocMeta> {
-        self.with_conn(|c| {
+        self.with_read(|c| {
             c.query_row("SELECT * FROM documents WHERE id = ?1", params![id], row_to_meta)
                 .optional()
         })?
@@ -199,11 +300,11 @@ impl Db {
     }
 
     fn query_doc(&self, sql: &str, key: &str) -> Result<Option<DocMeta>> {
-        self.with_conn(|c| c.query_row(sql, params![key], row_to_meta).optional())
+        self.with_read(|c| c.query_row(sql, params![key], row_to_meta).optional())
     }
 
     pub fn list_docs(&self) -> Result<Vec<DocMeta>> {
-        self.with_conn(|c| {
+        self.with_read(|c| {
             let mut st = c.prepare("SELECT * FROM documents ORDER BY mtime DESC, id ASC")?;
             let rows = st.query_map([], row_to_meta)?;
             rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -216,21 +317,23 @@ impl Db {
         // CON-05：统一用 schema::path_under（带分隔符边界）。此前手写 `starts_with(prefix)`
         // 会让库根 D:/docs 把 D:/docs2/a.md 误判为库内条目而回收——与 library_membership 两套口径。
         let root_str = root.to_string_lossy().into_owned();
-        let rows: Vec<(i64, String)> = self.with_conn(|c| {
-            let mut st = c.prepare("SELECT id, path FROM documents WHERE in_library = 1")?;
-            let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()
-        })?;
-        let mut removed = 0usize;
-        for (id, path) in rows {
-            let p = path.to_lowercase();
-            if !schema::path_under(&path, &root_str) || scanned.contains(&p) {
-                continue;
+        self.with_tx(|c| {
+            let rows: Vec<(i64, String)> = {
+                let mut st = c.prepare("SELECT id, path FROM documents WHERE in_library = 1")?;
+                let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let mut removed = 0usize;
+            for (id, path) in rows {
+                let p = path.to_lowercase();
+                if !schema::path_under(&path, &root_str) || scanned.contains(&p) {
+                    continue;
+                }
+                purge_conn(c, id)?;
+                removed += 1;
             }
-            self.with_conn(|c| purge_conn(c, id))?;
-            removed += 1;
-        }
-        Ok(removed)
+            Ok(removed)
+        })
     }
 
     /// 圈定候选文档 id：FTS(bm25) 或 LIKE。片段由命令层现读文件装配（单点真相=磁盘）。
@@ -240,7 +343,7 @@ impl Db {
         like: Option<&str>,
         limit: i64,
     ) -> Result<Vec<i64>> {
-        self.with_conn(|c| {
+        self.with_read(|c| {
             if let Some(m) = fts_expr {
                 let mut st = c.prepare(
                     "SELECT CAST(doc AS INTEGER) FROM docs_fts WHERE docs_fts MATCH ?1
@@ -276,7 +379,7 @@ impl Db {
     }
 
     pub fn positions(&self) -> Result<Vec<(i64, Position)>> {
-        self.with_conn(|c| {
+        self.with_read(|c| {
             let mut st =
                 c.prepare("SELECT doc_id, ratio, sec, sec_text, sec_off, sec_line_off, updated_at FROM positions")?;
             let rows = st.query_map([], |r| {
@@ -316,7 +419,7 @@ impl Db {
     /// 「打开单个文件」不再入库，只记进「最近打开」。
     pub fn library_membership(&self, path: &Path) -> Result<bool> {
         let p = path.to_string_lossy().to_string();
-        self.with_conn(|c| {
+        self.with_read(|c| {
             let builtin: i64 = c
                 .query_row(
                     "SELECT builtin FROM documents WHERE path = ?1 COLLATE NOCASE",
@@ -365,7 +468,7 @@ impl Db {
     /// 需求方 2026-11-16：**按规范化路径去重，同一文件只保留最后一次打开**——
     /// 同一物理文件可能有多登记行（毒路径/斜杠形态的历史遗留），列表不许出现重复条目。
     pub fn list_recents(&self) -> Result<Vec<RecentDoc>> {
-        let all: Vec<RecentDoc> = self.with_conn(|c| {
+        let all: Vec<RecentDoc> = self.with_read(|c| {
             let mut st = c.prepare(
                 "SELECT d.*, r.opened_at FROM recents r JOIN documents d ON d.id = r.doc_id
                  ORDER BY r.opened_at DESC, r.doc_id DESC",
@@ -391,7 +494,7 @@ impl Db {
 
     /// 从历史移除一条。返回 true = 该登记行已失去归属（非库非内置），已连带回收。
     pub fn remove_recent(&self, doc_id: i64) -> Result<bool> {
-        self.with_conn(|c| {
+        self.with_tx(|c| {
             c.execute("DELETE FROM recents WHERE doc_id = ?1", params![doc_id])?;
             let orphan: bool = c
                 .query_row(
@@ -412,7 +515,7 @@ impl Db {
     /// 清空打开历史：只删历史行；随后回收「既不在库也非内置」的登记行（连带进度与索引）。
     /// 库成员与内置文档的阅读进度不受影响；磁盘文件永不动。
     pub fn clear_recents(&self) -> Result<RecentReport> {
-        self.with_conn(|c| {
+        self.with_tx(|c| {
             let cleared = c.execute("DELETE FROM recents", [])? as i64;
             let ids: Vec<i64> = {
                 let mut st = c.prepare("SELECT id FROM documents WHERE in_library = 0 AND builtin = 0")?;
@@ -429,7 +532,7 @@ impl Db {
     /// 彻底删除一条登记（历史/进度/索引一并清除）；磁盘文件不动。
     /// 注意：这不是「从库移除」——后者是 `set_in_library(id, false)`。
     pub fn remove_doc(&self, id: i64) -> Result<()> {
-        self.with_conn(|c| purge_conn(c, id))
+        self.with_tx(|c| purge_conn(c, id))
     }
 
     /// 单库策略（v4 决议）：登记新库根之前，先关掉其它所有库根——其成员降级为「仅最近打开」。
@@ -439,7 +542,7 @@ impl Db {
     /// （`commands::scan` 的 unchanged 分支会补 `in_library`），所以本方法必须早于扫描调用。
     pub fn replace_root(&self, path: &str) -> Result<(Option<String>, usize)> {
         let keep = schema::norm_dir(path);
-        self.with_conn(|c| {
+        self.with_tx(|c| {
             let rows: Vec<(i64, String)> = {
                 let mut st = c.prepare("SELECT id, path FROM roots ORDER BY id")?;
                 let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
@@ -488,7 +591,7 @@ impl Db {
     /// 目的：维护 v3 的不变量 `in_library ⇒ 位于某个已登记库根之下`，库树里就不会出现无根可挂的条目。
     /// 仍被其他库根覆盖的条目留在库里。返回出库条数。
     pub fn remove_root(&self, path: &str) -> Result<usize> {
-        self.with_conn(|c| {
+        self.with_tx(|c| {
             c.execute("DELETE FROM roots WHERE path = ?1 COLLATE NOCASE", params![path])?;
             let others: Vec<String> = {
                 let mut st = c.prepare("SELECT path FROM roots")?;
@@ -513,7 +616,7 @@ impl Db {
     }
 
     pub fn list_roots(&self) -> Result<Vec<String>> {
-        self.with_conn(|c| {
+        self.with_read(|c| {
             let mut st = c.prepare("SELECT path FROM roots ORDER BY id")?;
             let rows = st.query_map([], |r| r.get::<_, String>(0))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -521,7 +624,7 @@ impl Db {
     }
 
     pub fn settings(&self) -> Result<Settings> {
-        let raw: Option<String> = self.with_conn(|c| {
+        let raw: Option<String> = self.with_read(|c| {
             c.query_row("SELECT value FROM settings WHERE key = 'settings'", [], |r| r.get(0))
                 .optional()
         })?;
@@ -540,6 +643,58 @@ impl Db {
             Ok(())
         })
     }
+}
+
+/// 单篇写入的唯一 SQL 落点（普通保存与扫描批量共用）：
+/// 事务内可被 `apply_scan` 复用；所有语句走 `prepare_cached`，批量扫描不再逐篇重新编译。
+fn upsert_prepared(c: &Connection, d: &DocUpsert) -> rusqlite::Result<()> {
+    let path_str = d.path.to_string_lossy();
+    let existing: Option<(i64, String)> = c
+        .prepare_cached("SELECT id, slug FROM documents WHERE path = ?1 COLLATE NOCASE")?
+        .query_row(params![path_str.as_ref()], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?;
+    let id = match existing {
+        Some((id, _)) => id,
+        None => {
+            // PERF-03：slug 冲突只需知道同族 slug（base、base-2、base-3…），不拉全表。
+            let base = markdown::slugify(&d.file_name);
+            let like = format!("{}-%", escape_like(&base));
+            let taken: HashSet<String> = {
+                let mut st = c.prepare_cached(
+                    "SELECT slug FROM documents WHERE slug = ?1 OR slug LIKE ?2 ESCAPE '\\'",
+                )?;
+                let rows = st.query_map(params![base, like], |r| r.get::<_, String>(0))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            let slug = markdown::unique_slug(&base, &taken);
+            c.prepare_cached(
+                "INSERT INTO documents(path, slug, title, dir, file_name, size, mtime,
+                    word_count, head_count, sec_count, in_library, builtin)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            )?
+            .execute(params![
+                path_str.as_ref(), slug, d.title, d.dir, d.file_name, d.size as i64, d.mtime,
+                d.word_count, d.head_count, d.sec_count, d.in_library as i64, d.builtin as i64
+            ])?;
+            c.last_insert_rowid()
+        }
+    };
+    // builtin 只增不减：欢迎页后来被当作普通文件打开，也不许丢它的内置身份
+    c.prepare_cached(
+        "UPDATE documents SET title=?1, dir=?2, file_name=?3, size=?4, mtime=?5,
+            word_count=?6, head_count=?7, sec_count=?8, in_library=?9,
+            builtin = MAX(builtin, ?10) WHERE id=?11",
+    )?
+    .execute(params![
+        d.title, d.dir, d.file_name, d.size as i64, d.mtime,
+        d.word_count, d.head_count, d.sec_count, d.in_library as i64,
+        d.builtin as i64, id
+    ])?;
+    let id_str = id.to_string();
+    c.prepare_cached("DELETE FROM docs_fts WHERE doc = ?1")?.execute(params![id_str])?;
+    c.prepare_cached("INSERT INTO docs_fts(title, body, doc) VALUES(?1, ?2, ?3)")?
+        .execute(params![d.title, d.src, id_str])?;
+    Ok(())
 }
 
 /// 回收一条登记的全部痕迹：历史 / 索引 / 进度 / 登记行。磁盘文件不动。

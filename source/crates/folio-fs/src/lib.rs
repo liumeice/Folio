@@ -2,6 +2,7 @@
 //! M0：同步 std::fs（本地文档毫秒级，够用）；文件监听（notify）与增量索引 M1 接。
 
 use folio_core::{CoreError, Result};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -83,6 +84,10 @@ pub fn scan_dir_truncated(root: &Path, max: usize) -> (Vec<PathBuf>, usize) {
     let mut overflow: usize = 0; // 超上限后被丢弃的条目数
     let mut stack = vec![root.to_path_buf()];
     let mut full = false;
+    // P2-8：目录联接/符号链接可能成环。按 canonicalize 后的物理路径去重——
+    // 同一真实目录只下钻一次，环不会反复遍历；无法 canonicalize 的路径退回原路径作键。
+    let mut seen_dirs: HashSet<PathBuf> = HashSet::new();
+    seen_dirs.insert(fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()));
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         for e in entries.flatten() {
@@ -93,7 +98,10 @@ pub fn scan_dir_truncated(root: &Path, max: usize) -> (Vec<PathBuf>, usize) {
                 if !matches!(name.as_str(), "node_modules" | "target" | "dist" | ".git" | "__pycache__")
                     && !name.starts_with('.')
                 {
-                    stack.push(p);
+                    let canon = fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
+                    if seen_dirs.insert(canon) {
+                        stack.push(p);
+                    }
                 }
             } else if is_supported(&p) && !name.starts_with('.') {
                 if full {

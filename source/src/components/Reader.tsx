@@ -62,6 +62,7 @@ export default function Reader() {
   let scrollGuardUntil = 0;                       // 程序滚动豁免窗（ms）
   let pendingImages: Promise<void> = Promise.resolve();
   let lastTopLine = 0;                            // 视口顶行号（设置变更后原位还原用）
+  let lastWordCount = 0;                          // 最近一次渲染的字数（任务勾选 fast path 增量维护）
   let curDoc: DocFull | null = null;              // 补偿路径同步读文档（避开信号）
   const lineCountCache = new WeakMap<DocFull, number>();
 
@@ -104,6 +105,12 @@ export default function Reader() {
     anchorsCache = { key, set };
     return set;
   }
+  /** 仍是同一篇文档？（任务勾选 fast path 会换 DocFull 对象但 DOM 不换；
+   *  异步排版链必须按 id 判活，否则一次勾选就会让在途的公式/图表/图片水合提前中止） */
+  function sameDoc(doc: DocFull): boolean {
+    return s.current()?.meta.id === doc.meta.id;
+  }
+
   /** 小数行号 → 阅读窗像素并落位 */
   function scrollToLine(line: number, doc: DocFull) {
     lastTopLine = line;
@@ -168,6 +175,19 @@ export default function Reader() {
     });
   });
 
+  function subHtml(wc: number, doc: DocFull): string {
+    return '<div class="sub"><svg class="ico"><use href="#i-file-text"/></svg><span>' +
+      wc.toLocaleString() + " 字</span><span>·</span><span>约 " +
+      Math.max(1, Math.round(wc / 400)) + " 分钟</span><span>·</span><span>" +
+      doc.meta.secCount + " 个小节</span><span>·</span><span>更新于 " + fmtDate(doc.meta.mtime) +
+      "</span></div>";
+  }
+  /** 任务勾选 fast path 的 .sub 同步：只换一小段 HTML，不重算整篇字数 */
+  function updateSubStats(wc: number, doc: DocFull) {
+    const sub = article.querySelector(".sub");
+    if (sub) sub.outerHTML = subHtml(wc, doc);
+  }
+
   function render(doc: DocFull) {
     ui.clearHits();           // 旧命中标记随 DOM 消亡，浮动条状态同步清零
     const seq = ++renderSeq;
@@ -180,13 +200,8 @@ export default function Reader() {
     const h1 = article.querySelector("h1");
     if (h1) {
       // 字数/阅读时长按正文口径现算（公式/图表源码不计，需求方 2026-11-17；lib/wordcount.ts 与 Rust stats 同规则）
-      const wc = countWords(doc.src);
-      h1.insertAdjacentHTML("afterend",
-        '<div class="sub"><svg class="ico"><use href="#i-file-text"/></svg><span>' +
-        wc.toLocaleString() + " 字</span><span>·</span><span>约 " +
-        Math.max(1, Math.round(wc / 400)) + " 分钟</span><span>·</span><span>" +
-        doc.meta.secCount + " 个小节</span><span>·</span><span>更新于 " + fmtDate(doc.meta.mtime) +
-        "</span></div>");
+      lastWordCount = countWords(doc.src);
+      h1.insertAdjacentHTML("afterend", subHtml(lastWordCount, doc));
     }
     // P0-3 让路首屏：文字（含 .sub）已进 DOM，图片水合与代码着色挪到下一帧；
     // codehl 模块本身也是动态的（P0-2），highlight.js 不进入口包。
@@ -194,7 +209,7 @@ export default function Reader() {
       if (seq !== renderSeq) return;
       const run = () => {
         if (seq !== renderSeq) return;
-        pendingImages = hydrateImages(doc); // v1.2：图片水合收编进 typesetDone 组成项（二轮评审 3.2）
+        pendingImages = hydrateImages(doc, seq); // v1.2：图片水合收编进 typesetDone 组成项（二轮评审 3.2）
         void import("../lib/codehl").then((m) => { if (seq === renderSeq) void m.highlightCodeBlocks(article); });
         void typesetDoc(doc, seq); // 公式 → 图表（内部自守卫；库缺失时各自退化 pre，不惊主流程）
       };
@@ -224,21 +239,21 @@ export default function Reader() {
     await whenVisible();
     if (seq !== renderSeq) return;
     await typesetMathIn(article);
-    if (seq !== renderSeq || s.current() !== doc) return; // 或 article.contains(el)：容器已换即停
+    if (seq !== renderSeq || !sameDoc(doc)) return; // 或 article.contains(el)：容器已换即停
     await renderMermaid(article, undefined, s.settings().theme);
-    if (seq !== renderSeq || s.current() !== doc) return;
+    if (seq !== renderSeq || !sameDoc(doc)) return;
     await renderZenuml(article, s.settings().theme); // zenuml 原生通道（@zenuml/core，mermaid v11 已不含该类型）
     await pendingImages;                              // 远程/本地图片尺寸落定（load 迟到由兜底层再收）
-    if (seq !== renderSeq || s.current() !== doc) return;
+    if (seq !== renderSeq || !sameDoc(doc)) return;
     onTypesetSettled(doc, seq);
     // 第三层兜底：排版链 resolve 后仍可能有迟到尺寸（未测高远程图、字体到达）——采样稳定后再补一次
     void ui.waitArticleStable(350, 3, 4000).then(() => {
-      if (seq === renderSeq && s.current() === doc) { layoutEpoch++; replayNav(doc); }
+      if (seq === renderSeq && sameDoc(doc)) { layoutEpoch++; replayNav(doc); }
     });
   }
 
   function onTypesetSettled(doc: DocFull, seq: number) {
-    if (seq !== renderSeq || s.current() !== doc) return;
+    if (seq !== renderSeq || !sameDoc(doc)) return;
     layoutEpoch++;
     markTypesetSettled(doc.meta.id);
     replayNav(doc);
@@ -247,7 +262,7 @@ export default function Reader() {
   /** 终局重放：把最近一次定位请求在"已稳定布局"上再施加一次；最多 2 轮、8s 截止、用户滚过即让路 */
   function replayNav(doc: DocFull) {
     if (!lastNav || Date.now() > settleDeadline || replayRounds >= 2) return;
-    if (s.current() !== doc || s.mode() !== "read") return;
+    if (!sameDoc(doc) || s.mode() !== "read") return;
     replayRounds++;
     navApply(lastNav, doc);
   }
@@ -336,7 +351,23 @@ export default function Reader() {
   }
 
   /* ── 本地图片资源水合（FR-2.1）：相对/根绝对路径按文档位置解析 → asset: 协议 ── */
+  const IMG_CACHE_MAX = 300;
   const imgCache = new Map<string, { url: string; path: string; w: number; h: number } | null>(); // null = 未找到（P2-3：尺寸随 url 一起缓存）
+  /* P2-7：缓存上限 + LRU。长时间打开大量含图文档时，按「文档路径|src」累积的 URL/尺寸
+   * 不能无界增长；命中即刷新插入序，超限淘汰最久未用。 */
+  function imgCacheGet(key: string) {
+    const v = imgCache.get(key);
+    if (v !== undefined) { imgCache.delete(key); imgCache.set(key, v); }
+    return v;
+  }
+  function imgCacheSet(key: string, val: { url: string; path: string; w: number; h: number } | null) {
+    if (imgCache.has(key)) imgCache.delete(key);
+    else if (imgCache.size >= IMG_CACHE_MAX) {
+      const oldest = imgCache.keys().next().value;
+      if (oldest !== undefined) imgCache.delete(oldest);
+    }
+    imgCache.set(key, val);
+  }
   function markMissing(img: HTMLImageElement, src: string) {
     img.classList.add("img-missing");
     img.title = "本地资源未找到：" + src;
@@ -364,7 +395,7 @@ export default function Reader() {
     }
   }
 
-  async function hydrateImages(doc: DocFull) {
+  async function hydrateImages(doc: DocFull, seq: number) {
     const locals: { img: HTMLImageElement; src: string; key: string }[] = [];
     // 整段扫描批进一次补偿：缓存命中图的尺寸写回是同步布局改动，批前批后各测一次可见锚（不逐图测，防布局抖动）
     compensateDom(() => {
@@ -377,7 +408,7 @@ export default function Reader() {
       }
       if (!s.isTauri) return; // 浏览器 mock 无本地文件系统，保留原样
       const key = doc.meta.path + "|" + src;
-      const c = imgCache.get(key);
+      const c = imgCacheGet(key);
       if (c !== undefined) {
         if (c) {
           if (c.w > 0 && c.h > 0) { img.width = c.w; img.height = c.h; }
@@ -396,7 +427,7 @@ export default function Reader() {
       // P1-7：整篇文档一次 IPC 批量解析磁盘路径与尺寸（P2-3）；asset URL 转换是本地纯计算（P2-7 缓存）
       const info = await api.resolveImages(doc.meta.path, uniq);
       const urls = await api.toAssetSrcs(info.map((r) => (r ? r[0] : null)));
-      if (s.current() !== doc) return; // 文档已切换，旧结果不再应用
+      if (seq !== renderSeq || !sameDoc(doc)) return; // 文档已切换/已重渲，旧结果不再应用
       const bySrc = new Map<string, { url: string; path: string; w: number; h: number } | null>(
         uniq.map((u, i) => [u, info[i] && urls[i]
           ? { url: urls[i]!, path: info[i]![0], w: info[i]![1], h: info[i]![2] }
@@ -405,7 +436,7 @@ export default function Reader() {
       compensateDom(() => {
       for (const l of locals) {
         const r = bySrc.get(l.src) ?? null;
-        imgCache.set(l.key, r ? { url: r.url, path: r.path, w: r.w, h: r.h } : null);
+        imgCacheSet(l.key, r ? { url: r.url, path: r.path, w: r.w, h: r.h } : null);
         if (r) {
           if (r.w > 0 && r.h > 0 && !l.img.getAttribute("width")) {
             l.img.width = r.w; l.img.height = r.h; // P2-3：先占位后加载，消除到达回流
@@ -422,7 +453,7 @@ export default function Reader() {
       });
     } catch {
       for (const l of locals) {
-        imgCache.set(l.key, null);
+        imgCacheSet(l.key, null);
         markMissing(l.img, l.src);
       }
     }
@@ -559,7 +590,26 @@ export default function Reader() {
        * 页签橙点即反馈；落盘统一走「保存」/Ctrl+S。 */
       const flipped = flipTaskInSrc(doc.src, nth);
       if (flipped == null) { s.toast("勾选失败：序号越界，未在源文本找到该任务行"); return; }
-      s.applySaved({ ...doc, src: flipped });
+      /* P1-4：勾选只改当前 <li> 的一个状态位，不整篇 mdToHtml + innerHTML 重渲染。
+       * DOM 先原地改好，再把新 DocFull 登记为 lastRendered——Reader 的渲染 effect 看到
+       * doc === lastRendered 就直接跳过 render()；滚动复位仍由 applySaved 的 pixel 导航负责。 */
+      const nowDone = !li.classList.contains("done");
+      li.classList.toggle("done", nowDone);
+      li.classList.toggle("task", !nowDone);
+      const cbxEl = li.querySelector<HTMLElement>(".cbx");
+      if (cbxEl) {
+        cbxEl.classList.toggle("done", nowDone);
+        cbxEl.setAttribute("aria-checked", String(nowDone));
+      }
+      const next: DocFull = { ...doc, src: flipped };
+      lastRendered = next;
+      curDoc = next;
+      // 任务标记从 "[ ]"→"[x]" 净增 1 个非空白字符（反之 -1），.sub 字数同步无需重扫全文
+      lastWordCount = Math.max(0, lastWordCount + (nowDone ? 1 : -1));
+      updateSubStats(lastWordCount, next);
+      const prevSec = s.activeSec();
+      s.applySaved(next);
+      s.setActiveSec(prevSec);   // applySaved→setDoc 会清空 activeSec；勾选不该让大纲高亮闪断
       return;
     }
 
@@ -625,7 +675,7 @@ export default function Reader() {
       const doc = s.current();
       if (!doc) return;
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (s.current() === doc && s.mode() === "read") scrollToLine(lastTopLine, doc);
+        if (sameDoc(doc) && s.mode() === "read") scrollToLine(lastTopLine, doc);
       }));
     }));
     view.addEventListener("scroll", onScroll, { passive: true });

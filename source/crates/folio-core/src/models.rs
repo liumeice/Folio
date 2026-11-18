@@ -135,6 +135,10 @@ pub struct SearchQuery {
     /// scope=Current 时的文档 id
     pub doc_id: Option<i64>,
     pub limit: Option<i64>,
+    /// scope=Current 且前端持有当前正文（含未保存打勾/编辑缓冲）时直传：
+    /// 省一次读盘，并且搜索的是用户眼前的文本而不是磁盘旧版。
+    /// 缺省 = 读盘（浏览器 mock/旧前端仍工作）。
+    pub src: Option<String>,
 }
 
 /// 排版/界面偏好。fs 分字体基线；width/lh 对阅读区生效。

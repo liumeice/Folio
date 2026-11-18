@@ -95,12 +95,17 @@ export default function EditorPane() {
         EditorView.contentAttributes.of({ spellcheck: "false" }),
         EditorView.contentAttributes.of({ autocorrect: "off", autocapitalize: "off" }),
         EditorView.updateListener.of((u) => {
-          if (u.docChanged) s.setDraft(u.state.doc.toString());
+          // P1-3：按键热路径不再 toString + 全文比较；只挂脏，正文快照由 store 防抖取一次
+          if (u.docChanged) s.markDraftChanged();
           if (u.viewportChanged || u.selectionSet) syncOutline();
         }),
       ],
     });
-    ui.registerEditorBridge({ jumpToLine, topLine });
+    ui.registerEditorBridge({
+      jumpToLine,
+      topLine,
+      docText: () => view?.state.doc.toString() ?? s.draftSrc(),
+    });
     const pj = ui.takePendingEditorJump();
     if (pj != null && pj > 0) jumpToLine(pj);
     view.focus();

@@ -123,6 +123,10 @@ export function registerArticle(el: HTMLElement | null) {
 /* ── 导出 PDF（FR-13.2）：在途互斥标记（同时驱动中央浮层）与打印前的正文就绪检查 ── */
 export const [exportBusy, setExportBusy] = createSignal(false);
 
+/* ── 打开文件夹扫描进行中浮层（需求方 2026-11-18 样例定稿「仅顶部小卡」）──
+ * 值为正在扫描的目录路径；null=不在扫描。扫描走 Rust 后台线程，期间仅顶部小卡反馈，侧栏不动。 */
+export const [scanBusy, setScanBusy] = createSignal<string | null>(null);
+
 /** 阅读正文是否还有未达终态的图占位（mermaid/zenuml 渲染在途）→ 导出要拒绝，否则会拍到占位框 */
 export function articlePendingFigures(): boolean {
   return !!articleEl?.querySelector("[data-mermaid]:not(.f-ready):not(.f-error)");
@@ -262,6 +266,8 @@ export interface EditorBridge {
   /** 精确跳到小数行号：floor 行 scrollIntoView + 下一帧 coordsAtPos 贴顶校正 */
   jumpToLine(line: number): void;
   topLine(): number | null;
+  /** 编辑器实时正文（P1-3）：保存/搜索按需取一次，不再每次按键复制整篇 */
+  docText(): string;
 }
 let viewBridge: ViewBridge | null = null;
 let editorBridge: EditorBridge | null = null;

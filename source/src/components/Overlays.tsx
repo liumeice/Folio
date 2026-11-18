@@ -1,5 +1,5 @@
 /* 快捷键一览 / 关于 / 文档信息 / 排版弹层 / 命中浮动条 / 图片放大 / 拖放遮罩 */
-import { For, Show } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
 import { escapeHtml } from "../lib/md";
@@ -130,6 +130,35 @@ export function ExportBusy() {
       <div class="exporting" role="status"><span class="spin" aria-hidden="true" />正在导出 PDF…</div>
     </Show>
   );
+}
+
+/* 打开文件夹扫描进行中浮层（需求方 2026-11-18 样例定稿「仅顶部小卡」）：
+ * 与导出中同位同族，胶囊圆角、圈字间距；转圈=纯合成层动画（JS 忙也转），
+ * 秒表=JS 心跳（主线程真被占住会顿住——正是"还活着/真卡了"的判针）。侧栏不做任何效果。 */
+export function ScanBusy() {
+  const [elapsed, setElapsed] = createSignal(0);
+  let timer = 0;
+  createEffect(on(ui.scanBusy, (dir) => {
+    window.clearInterval(timer);
+    if (dir == null) { setElapsed(0); return; }
+    const t0 = Date.now();
+    setElapsed(0);
+    timer = window.setInterval(() => setElapsed((Date.now() - t0) / 1000), 100);
+  }));
+  onCleanup(() => window.clearInterval(timer));
+  return (
+    <Show when={ui.scanBusy()} keyed>{(dir) => (
+      <div class="scanning" role="status">
+        <span class="spin" aria-hidden="true" />
+        <span>正在扫描文件夹「{leafOf(dir)}」…</span>
+        <span class="el">{elapsed().toFixed(1)}s</span>
+      </div>
+    )}</Show>
+  );
+}
+function leafOf(p: string): string {
+  const s = p.replace(/[\\/]+$/, "");
+  return s.split(/[\\/]/).pop() || s;
 }
 
 export function PropsModal() {

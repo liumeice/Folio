@@ -69,6 +69,8 @@ export interface Store {
   toggleEdit(): void;
   pushHist(e: HistEntry): void;
   setDraft(v: string): void;
+  /** 编辑按键轻量通道（P1-3）：只挂脏 + 合并一次防抖快照，不在每次 docChanged 里复制全文 */
+  markDraftChanged(): void;
   /** 保存。返回 false = 未保存成功（取消对话框/写盘失败），调用方（如 closeTab）必须据此中止后续动作 */
   save(customMsg?: string, force?: boolean): Promise<boolean>;
   /** Ctrl+S/菜单「保存」入口：模式自适应（§6.4），干净时如实提示 */
@@ -78,9 +80,12 @@ export interface Store {
   discard(): void;
   applySaved(next: DocFull): void;
   saveSettings(patch: Partial<Settings>): void;
+  /** 立即把待写设置落库（滑杆松手 / 设置面板关闭 / 退出前）；返回写入完成 Promise */
+  flushSettings(): Promise<void>;
   setSide(v: SideView): void;
   toggleFocus(): void;
-  toast(text: string): void;
+  /** 顶部瞬时通知；ms=停留时长（默认 2600；短确认类可给 1000） */
+  toast(text: string, ms?: number): void;
   setActiveSec(n: number | null): void;
   schedulePosition(): void;
   flushPosition(): Promise<void>;
@@ -139,21 +144,22 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     setDirty((mode() === "edit" ? draftSrc() : c.src) !== disk);
   }
 
-  /* ── toast 队列（N1）：同屏最多 2 条，其余排队 ── */
-  const queue: string[] = [];
+  /* ── toast 队列（N1）：同屏最多 2 条，其余排队；默认停留 2600ms，可按条指定
+   *（扫描完成统计通知 1000ms——需求方 2026-11-18：结果一句话扫完即走，别挡视线）── */
+  const queue: { text: string; ms: number }[] = [];
   function pump() {
     if (queue.length === 0 || toasts().length >= 2) return;
-    const text = queue.shift()!;
-    const item = { id: ++toastSeq, text };
+    const q = queue.shift()!;
+    const item = { id: ++toastSeq, text: q.text };
     setToasts((t) => [...t, item]);
     window.setTimeout(() => {
       setToasts((t) => t.filter((x) => x.id !== item.id));
       window.setTimeout(pump, 180);
-    }, 2600);
+    }, q.ms);
   }
-  function toast(text: string) {
-    if (toasts().some((t) => t.text === text) || queue.includes(text)) return;
-    queue.push(text);
+  function toast(text: string, ms = 2600) {
+    if (toasts().some((t) => t.text === text) || queue.some((q) => q.text === text)) return;
+    queue.push({ text, ms });
     pump();
   }
 
@@ -212,6 +218,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   }
 
   function setDoc(doc: DocFull) {
+    cancelDraftTimers();   // 切文档：上一文档的防抖快照不得落到新文档状态上
     setCurrent(doc);
     setDraftSrc(doc.src);
     setActiveSec(null);
@@ -279,6 +286,19 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     return hasLine || (p.ratio > 0.02 && p.ratio < 0.98) ? p : null;
   }
 
+  /** 打开后的「最近打开」内存增量更新（P1-5）：不再为每次打开重拉 docs/recents/roots 三张全量表。
+   *  Rust 侧 open_doc 已落历史行；这里把同 id/同规范化路径的旧条目去掉并按当前时刻置顶，
+   *  面板看到的顺序与下次冷启动一致。草稿路径不写历史（与 Rust record=false 同口径）。 */
+  function touchRecent(meta: DocMeta) {
+    if (ui.isDraftPath(meta.path)) return;
+    const at = Math.floor(Date.now() / 1000);
+    const norm = (p: string) => p.toLowerCase().replace(/\\/g, "/");
+    setRecents((rs) => [
+      { meta, openedAt: at },
+      ...rs.filter((r) => r.meta.id !== meta.id && norm(r.meta.path) !== norm(meta.path)),
+    ]);
+  }
+
   async function switchTo(doc: DocFull, opts?: { secText?: string | null; record?: boolean }) {
     await flushPosition(); // 落盘「离开处」的位置（N4）
     // 手动保存模式下阅读态也可能挂脏（打勾）：不保存就切走 = 丢改动，故脏必存，模式无关（§6.4）
@@ -305,7 +325,10 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     if (opts?.record !== false) {
       pushHist({ docId: doc.meta.id, path: doc.meta.path, sec: null, secText, top: null, ratio: null });
     }
-    void refreshDocs();
+    // P1-5：docs 由 setDoc 增量 upsert，roots 不变，历史由 touchRecent 增量置顶——
+    // 打开/切页签不再触发 list_docs + list_recents + list_roots 三次全量查询。
+    // 历史导航（record:false）在 Rust 侧同样会刷新 opened_at，这里一并跟随。
+    touchRecent(doc.meta);
     // 草稿找回（FR-7.7）：存在"晚于文件 mtime"的未保存草稿 → 询问恢复
     const dr = getDraft(doc.meta.path);
     if (dr && dr.at > doc.meta.mtime * 1000 + 1500 && dr.text !== doc.src) {
@@ -412,6 +435,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   function endEdit() {
     // 退出编辑：把编辑器当前小数行号交接给阅读视图（v1.2 一把尺；无标题文档同样可交接——R4 闭环）
     const l = ui.getEditorBridge()?.topLine() ?? null;
+    cancelDraftTimers();
     setMode("read");
     setDirty(false);
     if (l != null) setNavRequest({ kind: "line", line: l });
@@ -434,6 +458,19 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     }
   }
   let draftTimer: number | undefined;
+  let draftSyncTimer: number | undefined;
+  function cancelDraftTimers() {
+    if (draftTimer !== undefined) { window.clearTimeout(draftTimer); draftTimer = undefined; }
+    if (draftSyncTimer !== undefined) { window.clearTimeout(draftSyncTimer); draftSyncTimer = undefined; }
+  }
+  /** 当前编辑正文：保存/另存为必须取编辑器实时文本，不能等防抖快照（否则 Ctrl+S 会写旧文） */
+  function editText(): string {
+    if (mode() === "edit") {
+      const t = ui.getEditorBridge()?.docText();
+      if (t != null) return t;
+    }
+    return draftSrc();
+  }
   function setDraft(v: string) {
     setDraftSrc(v);
     const cur = current();
@@ -443,6 +480,18 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       window.clearTimeout(draftTimer);
       draftTimer = window.setTimeout(() => persistDraft(cur.meta.path, v), 400);
     }
+  }
+  /** P1-3：按键热路径只做两件事——脏标记立即亮、全文快照合并到 250ms 后取一次。
+   *  此前每个 docChanged 都 toString() + 全文比较 + 400ms 后整篇写 localStorage，
+   *  600KB 文档连续输入时每键都在复制/比较整篇。 */
+  function markDraftChanged() {
+    if (!dirty()) setDirty(true);
+    window.clearTimeout(draftSyncTimer);
+    draftSyncTimer = window.setTimeout(() => {
+      draftSyncTimer = undefined;
+      const t = ui.getEditorBridge()?.docText();
+      if (t != null) setDraft(t);
+    }, 250);
   }
   async function save(customMsg?: string, force = false): Promise<boolean> {
     const cur = current();
@@ -455,8 +504,9 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       const res = { path, name: path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path };
       const draftId = cur.meta.id, draftPath = cur.meta.path;
       try {
-        await api.writeFile(res.path, draftSrc());
+        await api.writeFile(res.path, editText());
         const next = await api.openDoc(res.path);
+        cancelDraftTimers();
         clearDraft(draftPath); ui.clearDraftPath(draftPath);
         // CON-04：草稿已写入目标 ⇒ 先清脏标记再切换。此前 dirty 仍为 true，
         // switchTo 的"切前自动保存"会对草稿路径二次写盘 + 重登 documents 行，
@@ -475,7 +525,8 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       }
     }
     try {
-      const next = await api.saveDoc(cur.meta.path, draftSrc(), force);
+      const next = await api.saveDoc(cur.meta.path, editText(), force);
+      cancelDraftTimers();               // 防抖快照/草稿写入不得在保存后再把旧文本写回 localStorage
       setDisk(next.meta.id, next.src);   // 写盘成功 ⇒ 磁盘现状前移，脏自然归零
       if (mode() === "edit") {
         setDoc(next);
@@ -503,6 +554,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   function discard() {
     const cur = current();
     if (!cur) return;
+    cancelDraftTimers();   // 丢弃后待触发的快照/草稿写入必须一起作废
     setDraftSrc(cur.src);
     endEdit();
     clearDraft(cur.meta.path);
@@ -539,7 +591,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     const cur = current();
     if (!cur) return false;
     if (ui.isDraftPath(cur.meta.path)) return await save(); // 草稿的另存为=首次保存（既有链路）
-    const content = mode() === "edit" ? draftSrc() : cur.src;
+    const content = mode() === "edit" ? editText() : cur.src;
     const dir = cur.meta.path.replace(/[\\/][^\\/]*$/, "");
     const path = await api.pickSaveDoc(cur.meta.fileName, dir || (roots()[0] ?? null));
     if (!path) return false;
@@ -592,10 +644,32 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     }
   }
 
+  /* ── 设置写入（P1-6）：拖动滑杆时内存/CSS 立即变，SQLite 写入合并 250ms ──
+   * 此前每个 input 事件都 invoke("set_settings") 一次：拖一次滑杆几十次 IPC+DB 写，
+   * 与扫描/搜索争用写锁。现在只保留最后一次快照；松手/关面板/退出时 flush。
+   * 写入串行化，保证后一次 flush 不会先于前一次落库（极端快速开关面板时顺序不反）。 */
+  let settingsTimer: number | undefined;
+  let pendingSettings: Settings | null = null;
+  let settingsWrite: Promise<void> = Promise.resolve();
+  function flushSettings(): Promise<void> {
+    if (settingsTimer !== undefined) { window.clearTimeout(settingsTimer); settingsTimer = undefined; }
+    const next = pendingSettings;
+    pendingSettings = null;
+    if (!next) return settingsWrite;
+    settingsWrite = settingsWrite
+      .then(() => api.setSettings(next))
+      .catch(() => undefined);
+    return settingsWrite;
+  }
   function saveSettings(patch: Partial<Settings>) {
     const next = { ...settings(), ...patch };
     setSettings(next);
-    void api.setSettings(next).catch(() => undefined);
+    pendingSettings = next;
+    if (settingsTimer !== undefined) window.clearTimeout(settingsTimer);
+    settingsTimer = window.setTimeout(() => {
+      settingsTimer = undefined;
+      flushSettings();
+    }, 250);
   }
 
   /** 三份清单一起刷：库面板 / 最近打开 / 库根 chips 各自的数据源，一次往返成套（失败不打扰）。
@@ -671,7 +745,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       /* ignore */
     }
     void listenTauriOpen();
-    window.addEventListener("beforeunload", () => void flushPosition());
+    window.addEventListener("beforeunload", () => { void flushPosition(); flushSettings(); });
     // 调试通道（FR-8.3 对应物）：#doc=<slug>[&sec=<标题>] 实时定位（正式版生产用 folio://）
     window.addEventListener("hashchange", () => {
       const raw = location.hash.replace(/^#/, "");
@@ -701,8 +775,8 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     mode, dirty, side, focusMode, activeSec, toasts, navRequest, histIdx, histLen: () => history.length, draftSrc,
     tabs, activeTabId, closeTab,
     refreshDocs, openMeta, openPath, openSlug, requestAnchor,
-    enterEdit, toggleEdit, pushHist, setDraft, save, saveSmart, saveAs, discard, applySaved,
-    saveSettings, setSide, toggleFocus, toast, setActiveSec,
+    enterEdit, toggleEdit, pushHist, setDraft, markDraftChanged, save, saveSmart, saveAs, discard, applySaved,
+    saveSettings, flushSettings, setSide, toggleFocus, toast, setActiveSec,
     schedulePosition, flushPosition, providePositionSource,
     back, forward, clearNav,
     isTauri: api.isTauriRuntime(),

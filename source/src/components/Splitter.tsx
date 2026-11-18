@@ -29,8 +29,20 @@ export default function Splitter() {
     document.querySelector(".win")?.classList.add("resizing");
 
     const at = (cx: number) => Math.min(Math.max(from + (cx - start), SIDE_MIN), max);
-    const move = (ev: PointerEvent) => { applySide(at(ev.clientX)); };
+    // P2-1：pointermove 可能高于刷新率；合并到 rAF，每帧最多写一次 CSS 变量。
+    // 拖动期间 Reader 的 ResizeObserver 只会自增 layoutEpoch，锚点表要到下一次滚动/采样才重建，
+    // 因此这里不需要额外暂停锚点重建。
+    let moveRaf = 0;
+    let lastX = start;
+    const move = (ev: PointerEvent) => {
+      lastX = ev.clientX;
+      if (!moveRaf) moveRaf = requestAnimationFrame(() => {
+        moveRaf = 0;
+        if (dragging) applySide(at(lastX));
+      });
+    };
     const up = (ev: PointerEvent) => {
+      if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
       detach?.();
       detach = null;
       dragging = false;

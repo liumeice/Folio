@@ -66,8 +66,22 @@ pub fn hits_for_doc(
     query: &str,
     limit: usize,
 ) -> Vec<SearchHit> {
+    hits_for_sections(doc_id, doc_path, doc_title, &sections(src), query, limit)
+}
+
+/// 已分节文本的命中装配（性能评审 P1-2）：命令层可缓存 `sections`，
+/// 连续输入/重复查询不再逐候选文件读盘 + 重新分节。片段构造仍按当前 query 现算，
+/// 不改变「单点真相=磁盘（或调用方提供的当前缓冲）」与命中口径。
+pub fn hits_for_sections(
+    doc_id: i64,
+    doc_path: &str,
+    doc_title: &str,
+    sections: &[Section],
+    query: &str,
+    limit: usize,
+) -> Vec<SearchHit> {
     let mut hits: Vec<SearchHit> = Vec::new();
-    for sec in sections(src) {
+    for sec in sections {
         if hits.len() >= limit {
             break;
         }
@@ -126,6 +140,21 @@ mod tests {
         assert!(hits[0].is_heading);
         assert_eq!(hits[0].sec, "大纲");
         assert!(!hits[1].is_heading);
+    }
+
+    #[test]
+    fn hits_for_sections_matches_hits_for_doc() {
+        // 缓存路径（已分节）与现读路径必须给出一致的命中（P1-2 缓存不得改变结果）
+        let src = "# 大纲\n\n这里讲大纲和大纲。\n\n## 第二节\n\n大纲又来了\n";
+        let direct = hits_for_doc(1, "p.md", "doc", src, "大纲", 10);
+        let cached = hits_for_sections(1, "p.md", "doc", &sections(src), "大纲", 10);
+        assert_eq!(direct.len(), cached.len());
+        for (a, b) in direct.iter().zip(cached.iter()) {
+            assert_eq!(
+                (a.sec.as_str(), a.sec_anchor, a.count, a.is_heading, a.snippet.as_str()),
+                (b.sec.as_str(), b.sec_anchor, b.count, b.is_heading, b.snippet.as_str())
+            );
+        }
     }
 
     #[test]

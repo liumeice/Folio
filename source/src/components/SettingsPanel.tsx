@@ -98,7 +98,8 @@ function Control(props: { item: SettingItem }) {
       <div class="st-ctlrow">
         <input type="range" class="st-slider" aria-label={props.item.label}
           min={d().min} max={d().max} step={d().step} value={num()}
-          onInput={(e) => apply(Number(e.currentTarget.value))} />
+          onInput={(e) => apply(Number(e.currentTarget.value))}
+          onChange={() => s.flushSettings()} />
         <span class="st-value">{shown()}</span>
       </div>
     );
@@ -126,6 +127,7 @@ export default function SettingsPanel() {
   // on() 限定追踪源 + untrack() 取值：只有面板从关到开才抓一次真快照。
   createEffect(on(ui.settingsOpen, (open) => {
     if (open) baseline = untrack(() => ({ ...s.settings() }));
+    else s.flushSettings();   // 任何关闭路径（确定/取消/Esc/遮罩）都把待写设置落库
   }));
 
   function goGroup(gid: string) {
@@ -148,6 +150,7 @@ export default function SettingsPanel() {
    * 不弹 toast：窗子一关、界面回退本身就是反馈，取消类操作零打扰（§5.3）。 */
   function onCancel() {
     if (baseline) s.saveSettings(baseline);
+    s.flushSettings();       // 回滚也必须立即落库，不能等防抖
     ui.setSettingsOpen(false);
   }
 
@@ -184,7 +187,7 @@ export default function SettingsPanel() {
             <button type="button" class="st-action" title="恢复打开设置前的选择并关闭" onClick={onCancel}>
               <svg class="ico ico-14"><use href="#i-x" /></svg>取消
             </button>
-            <button type="button" class="st-action primary" title="确定并关闭 (Esc)" onClick={() => ui.setSettingsOpen(false)}>
+            <button type="button" class="st-action primary" title="确定并关闭 (Esc)" onClick={() => { s.flushSettings(); ui.setSettingsOpen(false); }}>
               <svg class="ico ico-14"><use href="#i-check" /></svg>确定
             </button>
           </span>

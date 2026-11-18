@@ -29,6 +29,9 @@ pub(crate) fn path_under(file: &str, dir: &str) -> bool {
 pub fn setup(c: &Connection) -> rusqlite::Result<()> {
     c.pragma_update(None, "journal_mode", "WAL")?;
     c.pragma_update(None, "synchronous", "NORMAL")?;
+    // 多实例/杀毒软件短暂持锁时等待而不是立刻 "database is locked"；
+    // 批量扫描事务化后写锁持有时间更短，5s 足够让并发写入排队而不是报错。
+    c.pragma_update(None, "busy_timeout", 5000)?;
     // P1-6：WAL 自动 checkpoint 降到 256 页（约 1MB），空闲时 -wal 不再无限膨胀
     c.pragma_update(None, "wal_autocheckpoint", 256)?;
     let v: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -272,6 +275,15 @@ pub fn setup(c: &Connection) -> rusqlite::Result<()> {
             c.execute("ALTER TABLE positions ADD COLUMN sec_line_off REAL NOT NULL DEFAULT -1", [])?;
         }
         c.pragma_update(None, "user_version", 6)?;
+    }
+    if v < 7 {
+        // schema v7（性能评审 P2-6）：list_docs 的 `ORDER BY mtime DESC, id ASC` 原先要
+        // SCAN documents + TEMP B-TREE 排序；数据量上来后每次 refreshDocs 都付一次全表排序。
+        // 索引与查询同序，排序可直接沿索引走。幂等：IF NOT EXISTS。
+        c.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_documents_mtime ON documents(mtime DESC, id ASC);
+             PRAGMA user_version = 7;",
+        )?;
     }
     Ok(())
 }

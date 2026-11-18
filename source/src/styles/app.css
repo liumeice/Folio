@@ -724,6 +724,15 @@ svg{display:block}
 .exporting .spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line-hi);
   border-top-color:var(--accent);animation:exp-spin .8s linear infinite}
 @keyframes exp-spin{to{transform:rotate(360deg)}}
+/* 打开文件夹扫描进行中浮层（需求方 2026-11-18 样例定稿「仅顶部小卡」）：
+ * 与导出中同位同族；差异=胶囊圆角 16px、转圈与文字间距 12px、尾部等宽秒表。侧栏不加效果。 */
+.scanning{position:fixed;top:calc(var(--h-title) + 10px);left:50%;transform:translateX(-50%);z-index:212;
+  display:inline-flex;align-items:center;gap:12px;padding:8px 18px;border-radius:16px;background:var(--bg-raise);
+  border:1px solid var(--line-hi);box-shadow:var(--shadow-pop);color:var(--text-2);font-size:12.5px;pointer-events:none}
+.scanning .spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line-hi);
+  border-top-color:var(--accent);animation:exp-spin .8s linear infinite}
+.scanning .el{font-variant-numeric:tabular-nums;color:var(--text-3);font-family:var(--font-mono);font-size:11.5px}
+@media (prefers-reduced-motion:reduce){.scanning .spin{animation-duration:2.4s}}
 
 /* 打印介质 = PDF 版式唯一真相（CDP printToPDF 按 @media print 渲染，屏幕规则一概不带上）：
  * ① 拆滚动链——.view 的 overflow:auto 不放开，正文会被裁成只剩视口高度；
@@ -743,7 +752,7 @@ svg{display:block}
   #root{position:static!important;inset:auto!important;height:auto!important;max-height:none!important;overflow:visible!important;background:transparent!important}
   .win,.body,.center{display:block!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;background:transparent!important}
   .tbar,.rail,.side,.splitter,.pane-bar,.crumb-bar,.status,.pgbar,.editor-wrap,
-  .overlay,.st-panel,.ctxmenu,.toast-zone,.copypop,.exporting,.hitnav,#dropveil{display:none!important}
+  .overlay,.st-panel,.ctxmenu,.toast-zone,.copypop,.exporting,.scanning,.hitnav,#dropveil{display:none!important}
   /* 黑边框真凶（2026-11-17 实测）：#boot-splash 是 position:fixed 的全屏深色层——Chromium 打印把
    * fixed 元素逐页重复渲染；揭幕未完成（5s 兜底窗口内）时导出，每页都会铺一层 #080D18。
    * 揭幕后它也只从 DOM 移除、不保证时序，打印介质下必须显式隐藏。 */

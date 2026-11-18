@@ -75,6 +75,20 @@ function prepTree(n: DirNode): void {
 export function buildLibTree(roots: string[], libDocs: DocMeta[]): DirNode[] {
   const tops = new Map<string, DirNode>();
   const rawByKey = new Map<string, string>();
+  /* P2-2：同层目录查找从 `node.dirs.find`（O(n)）改为每节点一张 Map（O(1)）。
+   * 深目录 + 同层大量文件夹时，旧实现每建一段路径都线性扫一遍兄弟节点。 */
+  const childIndex = new WeakMap<DirNode, Map<string, DirNode>>();
+  const childOf = (node: DirNode, key: string, name: string, depth: number): DirNode => {
+    let idx = childIndex.get(node);
+    if (!idx) { idx = new Map(); childIndex.set(node, idx); }
+    let child = idx.get(key);
+    if (!child) {
+      child = mkDir(key, name, depth);
+      idx.set(key, child);
+      node.dirs.push(child);
+    }
+    return child;
+  };
   const loose = mkDir("*", "其他库条目", 0);
   for (const d of libDocs) {
     const r = rootOf(d.dir, roots);
@@ -86,10 +100,7 @@ export function buildLibTree(roots: string[], libDocs: DocMeta[]): DirNode[] {
     const rel = normSlashes(d.dir.slice(r.raw.length)).replace(/^\/+/, "");
     for (const seg of rel ? rel.split("/") : []) {
       const key = node.key + "/" + seg.toLowerCase();
-      const had: DirNode | undefined = node.dirs.find((x) => x.key === key);
-      const child: DirNode = had ?? mkDir(key, seg, node.depth + 1);
-      if (!had) node.dirs.push(child);
-      node = child;
+      node = childOf(node, key, seg, node.depth + 1);
     }
     node.files.push(d);
   }

@@ -72,6 +72,7 @@ export async function pickFolderAndScan(s: Store) {
     });
     if (!ok) return;
   }
+  ui.setScanBusy(dir);   // 扫描进行中顶部小卡（需求方 2026-11-18 定稿「仅顶部小卡」；扫描走 Rust 后台线程，动画不停）
   try {
     const r = await api.scanFolder(dir);
     s.saveSettings({ libraryRoot: dir });
@@ -81,17 +82,20 @@ export async function pickFolderAndScan(s: Store) {
     const truncNote = r.truncated
       ? `：已登记前 ${r.total - r.truncated} 篇，还有 ${r.truncated} 篇未索引（可在设置调高扫描上限）`
       : "";
+    // 扫描成功通知停留 1s（需求方 2026-11-18）：刚完成大扫描，视线要回到内容上，一句话扫过即可
     if (r.prevRoot) {
       s.toast(`已切换到文件夹「${leaf(r.root)}」（${r.total} 篇${truncNote ? "，部分未索引" : ""}）；「${leaf(r.prevRoot)}」的 `
-        + `${r.prevDemoted} 篇没有删除，可在「最近打开」里继续读`);
+        + `${r.prevDemoted} 篇没有删除，可在「最近打开」里继续读`, 1000);
     } else if (cur && sameDir(cur, dir)) {
       s.toast(`重新扫描「${leaf(dir)}」：新增 ${r.inserted} · 更新 ${r.updated} · 未变 ${r.unchanged}`
-        + ` · 移除 ${r.removed}` + (r.skipped ? ` · 读取失败跳过 ${r.skipped}` : "") + truncNote);
+        + ` · 移除 ${r.removed}` + (r.skipped ? ` · 读取失败跳过 ${r.skipped}` : "") + truncNote, 1000);
     } else {
-      s.toast(`已打开文件夹「${leaf(dir)}」：共 ${r.total} 篇文档${truncNote}`);
+      s.toast(`已打开文件夹「${leaf(dir)}」：共 ${r.total} 篇文档${truncNote}`, 1000);
     }
   } catch (e) {
     s.toast("扫描失败：" + ui.fmtErr(e));
+  } finally {
+    ui.setScanBusy(null);   // 统计通知（成功口径含篇数/失败原因）此刻接管，小卡退场
   }
 }
 
@@ -99,6 +103,7 @@ export async function quitApp(s: Store) {
   // UI-02 全链路：先同步等待阅读位置落盘（此前只在 beforeunload 里 void 异步刷，关窗时未必写完），
   // 再做脏检查。标题栏 ✕ / 菜单退出 / Alt+F4（经 Rust CloseRequested 广播）现在共用这一条路径。
   try { await s.flushPosition(); } catch { /* 位置写盘失败不拦退出 */ }
+  await s.flushSettings();   // 设置滑杆的防抖写入在退出前必须落地
   if (s.dirty()) {
     // 三钮形态（需求方 2026-11-18）：「取消」= 关对话框回主界面；「放弃保存」= 不写盘直接退；
     // 「保存退出」= 先落盘再退。Esc / ✕ / 点遮罩空白恒=取消，零副作用。

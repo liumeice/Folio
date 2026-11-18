@@ -1,7 +1,7 @@
 //! 命令层纯逻辑（无 tauri 依赖，可单测的形态；IO 全部 spawn_blocking 进这里）。
 use folio_core::markdown;
 use folio_core::{DocFull, OutlineItem, Position, Result, ScanReport, SearchHit, SearchQuery, SearchScope};
-use folio_db::Db;
+use folio_db::{Db, DocUpsert};
 use folio_fs as fs;
 use folio_search::{plan, Plan};
 use std::collections::{HashMap, HashSet};
@@ -50,6 +50,87 @@ fn cache_put(key: String, stamp: (i64, u64, bool), src: String, outline: Vec<Out
         }
         g.insert(key, (OPEN_SEQ.fetch_add(1, Ordering::Relaxed), OpenedDoc { stamp, src, outline }));
     }
+}
+
+/* ── 搜索分节缓存（性能评审 P1-2）──
+ * 全库搜索先由 FTS/LIKE 圈定候选文档，再逐篇读盘 + 分节 + 算片段。连续输入时同一批候选会被
+ * 反复读取；这里按「路径 + mtime + size」缓存已分节结果（分节只依赖正文，命中片段仍按当前
+ * query 现算）。写入路径（save / scan）显式作废，外部改文件由每次查询的 metadata 戳兜住。
+ * 上限 16 篇 / 约 8MB 正文，超限按最久未用淘汰——搜索是辅助功能，不值得无界占内存。 */
+const SEARCH_CACHE_DOCS: usize = 16;
+const SEARCH_CACHE_BYTES: usize = 8 * 1024 * 1024;
+struct CachedSections {
+    mtime: i64,
+    size: u64,
+    bytes: usize,
+    tick: u64,
+    sections: Arc<Vec<folio_search::Section>>,
+}
+static SEARCH_SEQ: AtomicU64 = AtomicU64::new(0);
+static SEARCH_CACHE: OnceLock<Mutex<HashMap<String, CachedSections>>> = OnceLock::new();
+fn search_cache() -> &'static Mutex<HashMap<String, CachedSections>> {
+    SEARCH_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 作废分节缓存：`Some(path)` = 单篇（保存后）；`None` = 全清（扫描后）。
+/// 保存/扫描是仅有的正文写入口，缓存不需要额外的全局版本号。
+pub fn invalidate_search_cache(path: Option<&str>) {
+    if let Ok(mut g) = search_cache().lock() {
+        match path {
+            Some(p) => {
+                g.remove(&p.to_lowercase());
+            }
+            None => g.clear(),
+        }
+    }
+}
+
+fn cached_sections(meta: &folio_core::DocMeta) -> Option<Arc<Vec<folio_search::Section>>> {
+    let key = meta.path.to_lowercase();
+    let path = Path::new(&meta.path);
+    let mtime = fs::mtime_secs(path);
+    let size = fs::file_size(path);
+    if mtime <= 0 {
+        return None; // 无可靠戳（特殊路径/文件已消失）→ 调用方走现读
+    }
+    if let Ok(mut g) = search_cache().lock() {
+        if let Some(e) = g.get_mut(&key) {
+            if e.mtime == mtime && e.size == size {
+                e.tick = SEARCH_SEQ.fetch_add(1, Ordering::Relaxed);
+                return Some(e.sections.clone());
+            }
+        }
+    }
+    let src = fs::read_md(path).ok()?;
+    let secs = Arc::new(folio_search::sections(&src));
+    let bytes = src.len();
+    if bytes <= SEARCH_CACHE_BYTES {
+        if let Ok(mut g) = search_cache().lock() {
+            let mut total: usize = g.values().map(|e| e.bytes).sum();
+            while (g.len() >= SEARCH_CACHE_DOCS || total + bytes > SEARCH_CACHE_BYTES) && !g.is_empty() {
+                let oldest = g.iter().min_by_key(|(_, e)| e.tick).map(|(k, _)| k.clone());
+                match oldest {
+                    Some(k) => {
+                        if let Some(e) = g.remove(&k) {
+                            total = total.saturating_sub(e.bytes);
+                        }
+                    }
+                    None => break,
+                }
+            }
+            g.insert(
+                key,
+                CachedSections {
+                    mtime,
+                    size,
+                    bytes,
+                    tick: SEARCH_SEQ.fetch_add(1, Ordering::Relaxed),
+                    sections: secs.clone(),
+                },
+            );
+        }
+    }
+    Some(secs)
 }
 
 /// unix 秒。与 documents.mtime / positions.updated_at / recents.opened_at 同一单位口径。
@@ -128,6 +209,7 @@ pub fn save(db: &Arc<Db>, path: &str, content: &str, force: bool) -> Result<DocF
         }
     }
     fs::write_md(&p, content)?;
+    invalidate_search_cache(Some(path)); // 正文已变：该篇的搜索分节缓存立刻作废
     // v3：保存不许改变库成员身份。旧代码硬写 true，会把「仅最近打开」的文件悄悄塞进库。
     // 有登记行 → 沿用其归属；新文件（理论上不会走到）→ 按库根判定。
     let in_library = db
@@ -185,6 +267,11 @@ pub fn scan(db: &Arc<Db>, root: &str) -> Result<ScanReport> {
     // 旧实现 found 被 max 截停，skipped=found−scanned 恒为 0，"超出上限"提示是句空话）
     let limit = db.settings()?.scan_limit.unwrap_or(SCAN_LIMIT);
     let (found, overflow) = fs::scan_dir_truncated(&rootp, limit);
+    // P1-1：先取一次登记快照，再把「读盘 + 统计」全部放在 DB 锁外完成；
+    // 最后 apply_scan 单事务落库，避免逐文件 autocommit 与逐文件重新 prepare。
+    let snapshot = db.scan_snapshot()?;
+    let mut writes: Vec<DocUpsert> = Vec::new();
+    let mut mark_in_library: Vec<i64> = Vec::new();
     let mut inserted = 0usize;
     let mut updated = 0usize;
     let mut unchanged = 0usize;
@@ -194,32 +281,32 @@ pub fn scan(db: &Arc<Db>, root: &str) -> Result<ScanReport> {
         let disk_mtime = fs::mtime_secs(p);
         let disk_size = fs::file_size(p);
         // 增量：mtime+size 与登记一致 → 跳过重读重算（NFR-4）
-        if let Ok(existing) = db.doc_by_path(&key) {
+        if let Some(existing) = snapshot.get(&key) {
             if existing.mtime == disk_mtime && existing.size == disk_size {
                 // 内容没变但此前只是「单开文件」（在历史里、不在库里）：扫描=入库，补记归属即可，
                 // 不必重读正文重算 FTS。否则用户登记了目录却看不到里面的文件进库。
                 if !existing.in_library && !existing.builtin {
-                    db.set_in_library(existing.id, true)?;
+                    mark_in_library.push(existing.id);
                 }
                 scanned.insert(key);
                 unchanged += 1;
                 continue;
             }
-            let existed = true;
             let Ok(src) = fs::read_md(p) else { continue };
-            db.upsert_document(p, &src, true)?;
+            writes.push(DocUpsert::new(p, src, true, false));
             scanned.insert(key);
-            if existed { updated += 1 } else { inserted += 1 }
+            updated += 1;
         } else {
             let Ok(src) = fs::read_md(p) else { continue };
-            db.upsert_document(p, &src, true)?;
+            writes.push(DocUpsert::new(p, src, true, false));
             scanned.insert(key);
             inserted += 1;
         }
     }
     // skipped 语义收敛为"发现但读失败"；截断量单列 truncated，不再混在一个数里
     let skipped = found.len().saturating_sub(scanned.len());
-    let removed = db.sync_library(&rootp, &scanned)?;
+    let removed = db.apply_scan(&rootp, &writes, &mark_in_library, &scanned)?;
+    invalidate_search_cache(None); // 扫描可能更新/删除了正文：短查询片段缓存整体作废
     Ok(ScanReport {
         root: root.to_string(), total: found.len() + overflow, inserted, updated, removed, skipped, unchanged,
         prev_root, prev_demoted, truncated: overflow,
@@ -235,9 +322,16 @@ pub fn search(db: &Arc<Db>, q: &SearchQuery) -> Result<Vec<SearchHit>> {
         SearchScope::Current => {
             let Some(id) = q.doc_id else { return Ok(Vec::new()) };
             let meta = db.doc_by_id(id)?;
-            let Ok(src) = fs::read_md(Path::new(&meta.path)) else {
-                // 索引在、文件没了：静默空结果（正式版这里应顺手清索引）
-                return Ok(Vec::new());
+            // 前端持有当前正文时优先用它：零读盘，且包含未保存的任务勾选/编辑缓冲
+            let src: String = match q.src.as_deref() {
+                Some(s) => s.to_string(),
+                None => {
+                    let Ok(s) = fs::read_md(Path::new(&meta.path)) else {
+                        // 索引在、文件没了：静默空结果（正式版这里应顺手清索引）
+                        return Ok(Vec::new());
+                    };
+                    s
+                }
             };
             hits = folio_search::hits_for_doc(meta.id, &meta.path, &meta.title, &src, &q.text, limit as usize);
         }
@@ -251,9 +345,16 @@ pub fn search(db: &Arc<Db>, q: &SearchQuery) -> Result<Vec<SearchHit>> {
                     break;
                 }
                 let Ok(meta) = db.doc_by_id(id) else { continue };
-                let Ok(src) = fs::read_md(Path::new(&meta.path)) else { continue };
                 let room = limit as usize - hits.len();
-                hits.extend(folio_search::hits_for_doc(meta.id, &meta.path, &meta.title, &src, &q.text, room));
+                // 分节缓存命中 → 不再读盘/重新分节；miss 时现读（单点真相仍是磁盘，戳由 metadata 校验）
+                if let Some(secs) = cached_sections(&meta) {
+                    hits.extend(folio_search::hits_for_sections(
+                        meta.id, &meta.path, &meta.title, &secs, &q.text, room,
+                    ));
+                } else {
+                    let Ok(src) = fs::read_md(Path::new(&meta.path)) else { continue };
+                    hits.extend(folio_search::hits_for_doc(meta.id, &meta.path, &meta.title, &src, &q.text, room));
+                }
             }
         }
     }

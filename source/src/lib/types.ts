@@ -94,6 +94,8 @@ export interface SearchQuery {
   scope: SearchScope;
   docId: number | null;
   limit?: number;
+  /** scope=current 时可直传眼前正文（阅读 src 或编辑缓冲），省一次读盘且搜的是未保存内容 */
+  src?: string | null;
 }
 
 export interface SearchHit {
