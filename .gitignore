@@ -50,6 +50,15 @@ backups/
 # 旧规则 prototype/snapshot/ 与 prototype/_*.png 已被本条整体覆盖，删除。
 prototype/
 
+# ---------- docs/ 与根 assets/ 整体不入仓（2026-11-18 需求方决定） ----------
+# docs/（PRD/UI 规范/架构图/报告）与根 assets/（测试语料、临时取证）只留本地，不上传 GitHub。
+# 模式带前导斜杠 = 只匹配根目录一层，不会波及 source/src/assets/。
+# 此前已入库的 docs/folio-architecture.drawio(.png) 与 assets/* 共 6 个文件自本次起移出版本库
+# （git rm -r --cached，本地文件保留）。
+# 注意：source/src/assets/（guide/rust-notes/welcome 三枚 md）是构建输入，不在忽略范围，照常入库！
+/docs/
+/assets/
+
 # ---------- 一次性取证/探针产物（CDP 截图、dump、临时图） ----------
 artifacts/
 source/_*.png
