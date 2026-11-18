@@ -22,8 +22,8 @@ const MENUS: Menu[] = [
   { name: "查看", items: [
     { act: "focus", label: "专注模式（Esc 退出）", icon: "i-panel-l" },
     { act: "library", label: "文件夹面板", icon: "i-open-folder" },
-    { act: "recents", label: "最近打开面板", icon: "i-history" },
-    { act: "outline", label: "大纲面板", icon: "i-list" },
+    { act: "recents", label: "最近打开面板", icon: "i-recent" },
+    { act: "outline", label: "大纲面板", icon: "i-outline" },
     { sep: true },
     // 原「深色 / 浅色主题」二态互斥项退役（2026-11-16）→ 主题子菜单三选（当前项打点）
     { act: "theme-sub", label: "主题", icon: "i-contrast", sub: [

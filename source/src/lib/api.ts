@@ -307,6 +307,49 @@ async function apiPickFile(): Promise<string | null> {
     el.click();
   });
 }
+/* 打开文件（原生多选窗）。2026-11-17 起恢复 Windows 原生系统对话框，替代应用内 PickDialog。 */
+async function apiPickFiles(): Promise<string[]> {
+  if (isTauri) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const r = await open({
+      multiple: true,
+      filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
+    });
+    return Array.isArray(r) ? r : typeof r === "string" ? [r] : [];
+  }
+  return new Promise((res) => {
+    const el = document.createElement("input");
+    el.type = "file";
+    el.multiple = true;
+    el.accept = ".md,.markdown,.txt";
+    el.onchange = async () => {
+      const fs = Array.from(el.files ?? []);
+      if (!fs.length) return res([]);
+      const ids: string[] = [];
+      for (const f of fs) {
+        const id = "browser://" + f.name;
+        mock.put(id, f.name, await f.text());
+        ids.push(id);
+      }
+      res(ids);
+    };
+    el.click();
+  });
+}
+
+/** 新建文档首次保存的原生「另存为」窗；同名覆盖确认由系统对话框自身承担。 */
+async function apiPickSaveDoc(defaultName: string, dir: string | null): Promise<string | null> {
+  if (isTauri) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const path = await save({
+      defaultPath: (dir ? dir.replace(/[\\/]+$/, "") + "\\" : "") + defaultName,
+      filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
+    });
+    return typeof path === "string" ? path : null;
+  }
+  return "browser://" + defaultName;
+}
+
 async function apiPickFolder(): Promise<string | null> {
   if (isTauri) {
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -788,5 +831,7 @@ export const api = {
   writeFile: apiWriteFile,
   onOpenRequest,
   pickFile: apiPickFile,
+  pickFiles: apiPickFiles,
+  pickSaveDoc: apiPickSaveDoc,
   pickFolder: apiPickFolder,
 };

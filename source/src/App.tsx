@@ -13,7 +13,6 @@ const EditorPane = lazy(() => import("./components/EditorPane"));
 import SearchPalette from "./components/SearchPalette";
 import { AboutModal, ContextMenu, CopyPop, DropVeil, ExportBusy, HitNav, ImgBox, KeysModal, PropsModal } from "./components/Overlays";
 import SettingsPanel from "./components/SettingsPanel";
-import PickDialog from "./components/PickDialog";
 import AskDialog from "./components/AskDialog";
 import { typeVars } from "./lib/typography";
 import { applyAccent } from "./lib/accent";
@@ -234,8 +233,7 @@ export default function App() {
         <HitNav />
         <DropVeil on={veil()} />
         <ContextMenu />
-        {/* 选择对话框在弹层之上（§8.6）；询问框在选择对话框之上（DOM 序决定同 z 的叠放） */}
-        <PickDialog />
+        {/* 2026-11-17：文件/目录/另存为已改回 Windows 原生系统对话框，不再挂 PickDialog；询问框仍在 */}
         <AskDialog />
         <CopyPop />
         <ExportBusy />

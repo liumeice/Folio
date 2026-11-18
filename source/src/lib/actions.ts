@@ -5,14 +5,15 @@ import type { Store } from "./store";
 import * as ui from "./ui";
 import { pdfExportName } from "./pdfname";
 
-/** 选择统一入口（§8.6）：Tauri = 应用内选择对话框（仿真原生通用对话框版式，真实盘，可多选）；
- *  浏览器回退层保留遗留 input（那是浏览器自身行为，不是 Windows 原生窗；mock 也没有磁盘树）。 */
+/** 选择统一入口：2026-11-17 起恢复 Windows 原生系统对话框（tauri-plugin-dialog），
+ *  替代 2026-11-16 的应用内 PickDialog；文件模式多选，目录模式单选目录。
+ *  浏览器回退层仍走遗留 input（浏览器自身行为，mock 也没有磁盘树）。 */
 export async function pickPaths(mode: "files" | "dir"): Promise<string[] | null> {
-  if (!api.isTauriRuntime()) {
-    if (mode === "files") { const p = await api.pickFile(); return p ? [p] : null; }
-    const d = await api.pickFolder(); return d ? [d] : null;
+  if (mode === "files") {
+    if (api.isTauriRuntime()) { const ps = await api.pickFiles(); return ps.length ? ps : null; }
+    const p = await api.pickFile(); return p ? [p] : null;
   }
-  return ui.pick(mode);
+  const d = await api.pickFolder(); return d ? [d] : null;
 }
 
 /** 文件→新建文档：创建内存草稿（应用数据目录 drafts/，不进库不进树），打开并直接进编辑。

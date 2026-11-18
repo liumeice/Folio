@@ -667,6 +667,30 @@ pub fn run() {
             {
                 let _ = app.deep_link().register_all();
             }
+            // md 文件关联图标补丁（2026-11-17，设计稿 prototype/folio/index.html）：NSIS 模板把
+            // ProgID（Folio.md，见 tauri.conf fileAssociations.name）的 DefaultIcon 写死为 exe,0，
+            // WiX 模板则不写 DefaultIcon——两者都只会显示 exe 图标。这里改指随装资源
+            // folio-md-icon.ico：HKCU 类表逐值优先于 HKLM，per-machine 安装同样生效；
+            // 源码直跑 / dev 无该资源时 exists() 过滤，跳过不改注册表。
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let ico = ["icons/folio-md-icon.ico", "folio-md-icon.ico"].iter().find_map(|rel| {
+                    app.path()
+                        .resolve(*rel, tauri::path::BaseDirectory::Resource)
+                        .ok()
+                        .filter(|p| p.exists())
+                });
+                if let Some(p) = ico {
+                    let data = format!("{},0", p.display());
+                    let _ = std::process::Command::new("reg")
+                        .args(["add", r"HKCU\Software\Classes\Folio.md\DefaultIcon", "/ve", "/d", &data, "/f"])
+                        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status();
+                }
+            }
             Ok(())
         });
 

@@ -24,8 +24,10 @@ export function showCopied(msg: string, link?: string) {
   copyPopTimer = setTimeout(() => setCopyPop(null), 2000);
 }
 
-/* ── 应用内选择对话框 / 询问框（§8.6：2026-11-16 起不再调起系统原生窗；Promise 桥=视图态）──
- * mode="save"：新建文档的首次保存对话框（同 §8.6 版式，确认文件名+目录，同名问覆盖）。 */
+/* ── 应用内询问框（Promise 桥=视图态）。选择对话框桥（pick/runSaveAs/finishPick）自
+ * 2026-11-17 起休眠：打开文件/打开文件夹/另存为已恢复 Windows 原生系统对话框
+ * （actions.pickPaths → api.pickFiles/pickFolder、store.save → api.pickSaveDoc）。
+ * 桥与 pickReq 暂留（anyOverlayOpen/closeTopOverlay 仍引用），PickDialog.tsx 未挂载。 */
 export type PickMode = "files" | "dir" | "save";
 export type PickVal = string[] | { path: string; name: string } | null;
 export interface AskSpec {

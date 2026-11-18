@@ -72,7 +72,7 @@ source/target/release/bundle/msi/
 
 ## 想先看界面
 
-`prototype/prototype.html` 是交互原型，可以直接用浏览器打开，不需要安装 Rust 或 Node.js。
+`prototype/prototype.html` 是交互原型（仅本地保存，不随仓库发布），在本地可直接用浏览器打开，不需要安装 Rust 或 Node.js。
 
 原型用于确认交互和视觉，不是最终发布版；正式的 Windows 桌面程序在 `source/` 中。
 
@@ -85,9 +85,9 @@ Folio/
 │  ├─ src/                前端界面、编辑器和样式
 │  ├─ src-tauri/          Tauri 壳、IPC 命令、窗口与安装配置
 │  └─ tests/              前端逻辑测试
-├─ prototype/             交互原型与评审记录
-├─ docs/                  PRD、UI 规范、设计与问题分析
-├─ assets/                示例 Markdown 和测试素材
+├─ prototype/             交互原型与评审记录（仅本地保存，不随仓库发布）
+├─ docs/                  PRD/UI 规范、架构图等设计资料（仅本地保存，不随仓库发布）
+├─ assets/                示例 Markdown 和测试素材（仅本地保存，不随仓库发布）
 └─ README.md              本文件
 ```
 
@@ -113,10 +113,6 @@ npm run build            # 类型检查与生产构建
 ## 相关文档
 
 - [正式版开发说明](source/README.md)：环境、构建、版本机制和排障
-- [产品需求文档](docs/Folio-PRD-v1.4-20261117.md)
-- [UI 规范](docs/Folio-UI规范-v1.2-20261116.md)
-- [PDF 导出问题分析](docs/PDF导出黑色边框问题分析.md)
-- [架构图](docs/folio-architecture.drawio.png)
 
 ## 当前状态
 

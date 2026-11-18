@@ -63,6 +63,7 @@ prototype/
 artifacts/
 source/_*.png
 source/_*.txt
+source/_*.pdf
 source/sync_*.png
 source/final.png
 source/fold.png

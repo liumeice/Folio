@@ -412,11 +412,12 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   async function save(customMsg?: string, force = false): Promise<boolean> {
     const cur = current();
     if (!cur) return false;
-    /* 新建文档草稿的首次保存（2026-11-16）：弹「保存」对话框（§8.6 同款 UI）确认文件名与目录 →
+    /* 新建文档草稿的首次保存：2026-11-17 起改弹 Windows 原生「另存为」系统对话框（同名覆盖由系统确认）→
      * 写入目标路径 → 切换登记 → 关闭草稿页签并清理 drafts/ 临时文件。取消=不保存，留在编辑中。 */
     if (ui.isDraftPath(cur.meta.path)) {
-      const res = await ui.runSaveAs(cur.meta.fileName, roots()[0] ?? null);
-      if (!res) return false;
+      const path = await api.pickSaveDoc(cur.meta.fileName, roots()[0] ?? null);
+      if (!path) return false;
+      const res = { path, name: path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path };
       const draftId = cur.meta.id, draftPath = cur.meta.path;
       try {
         await api.writeFile(res.path, draftSrc());

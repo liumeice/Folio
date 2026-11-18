@@ -16,12 +16,12 @@ export default function Icons() {
       <symbol id="i-file-text" viewBox="0 0 24 24"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4"/><path d="M9 12.5h6M9 16.5h4"/></symbol>
       <symbol id="i-md" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M7 15V9.5l2.2 2.4L11.5 9.5V15"/><path d="M15.5 9.5V14"/><path d="M14 12.6l1.5 1.6 1.5-1.6"/></symbol>
       {/* 自原型补移植（2026-11-16）：rail 打开文件快捷钮 + 复制成功浮层 */}
-      {/* 官方工具图标集（2026-11-16，prototype/toolbar-icons.html；rail 与对应菜单项共用） */}
+      {/* 官方工具图标集（2026-11-16 需求方提供，rail 与对应菜单项共用；打开文件/打开文件夹/最近/大纲四枚于 2026-11-17 按 prototype/icon/index.html 线条图标集 v-S6 更换） */}
       <symbol id="i-new-file" viewBox="0 0 24 24"><path d="M12.8 3.8v4h4"/><path d="M7.6 3.8h5.2l4 4v5.2"/><path d="M7.6 3.8a2.5 2.5 0 0 0-2.5 2.5v10a2.5 2.5 0 0 0 2.5 2.5h4.3"/><path d="M17.5 15.1v5.2M14.9 17.7h5.2"/></symbol>
-      <symbol id="i-open-file" viewBox="0 0 24 24"><path d="M12.8 3.8v4h4"/><path d="M7.6 3.8h5.2l4 4v5.2"/><path d="M7.6 3.8a2.5 2.5 0 0 0-2.5 2.5v10a2.5 2.5 0 0 0 2.5 2.5h4.3"/><path d="M15.2 19.2c1.3-1.3 2.7-2.7 4.1-4.2"/><path d="M16.1 14.1h4.1v4.1"/></symbol>
-      <symbol id="i-open-folder" viewBox="0 0 24 24"><path d="M3.7 18.5V6.7a2 2 0 0 1 2-2h3.5l2.2 2.4h6.9a2 2 0 0 1 2 2v2.6"/><path d="M3.9 18.5 6.5 12h14.1l-2.6 6.5z"/></symbol>
-      <symbol id="i-recent" viewBox="0 0 24 24"><path d="M20.6 12a8.6 8.6 0 1 1-2.5-6.1"/><path d="M20.8 4.3v4.2h-4.2"/><path d="M12 7.8V12l3 1.9"/></symbol>
-      <symbol id="i-outline" viewBox="0 0 24 24"><path d="M4.6 6.5h.01M8.4 6.5h10.7M6.9 12h.01M10.7 12h8.1M9.2 17.5h.01M13 17.5h5.8"/></symbol>
+      <symbol id="i-open-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"/><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M8.5 16.5 14 11"/><path d="M10.5 11H14v3.5"/></symbol>
+      <symbol id="i-open-folder" viewBox="0 0 24 24"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.96 2.5L19.5 18a2 2 0 0 1-1.96 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></symbol>
+      <symbol id="i-recent" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 8.5-8.5 9.75 9.75 0 0 0-6.37 2.6L3.5 8"/><path d="M3.5 4.5v4h4"/><path d="M12 8v4l3.5 2"/></symbol>
+      <symbol id="i-outline" viewBox="0 0 24 24"><path d="M5 6h.01"/><path d="M9 6h11"/><path d="M9 12h.01"/><path d="M13 12h7"/><path d="M9 18h.01"/><path d="M13 18h7"/></symbol>
       <symbol id="i-file" viewBox="0 0 24 24"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4"/></symbol>
       <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3l2.6 2.6 5-5.2"/></symbol>
       <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11M4.6 6.5h.01M4.6 12h.01M4.6 17.5h.01"/></symbol>

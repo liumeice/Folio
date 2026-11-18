@@ -47,12 +47,22 @@
       {
         "ext": [
           "md",
-          "markdown",
+          "markdown"
+        ],
+        "name": "Folio.md",
+        "description": "Markdown document",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
           "txt"
         ],
         "description": "Markdown document",
         "role": "Viewer"
       }
+    ],
+    "resources": [
+      "icons/folio-md-icon.ico"
     ],
     "windows": {
       "webviewInstallMode": {
