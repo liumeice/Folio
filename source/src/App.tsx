@@ -190,7 +190,7 @@ export default function App() {
   return (
     <>
       <Icons />
-      <div class="win" classList={{ "focus": s.focusMode(), "hnv": ui.hitNavVisible() }}>
+      <div class="win" classList={{ "focus": s.focusMode(), "hnv": ui.hitNavVisible(), "menu-up": ui.menuOpen() != null }}>
         <TitleBar />
         <div class="body" classList={{ "settings-open": ui.settingsOpen() }}>
           <Rail />

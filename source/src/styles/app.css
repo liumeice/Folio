@@ -599,6 +599,11 @@ svg{display:block}
 .win.resizing{cursor:col-resize}
 .win.resizing,.win.resizing *{user-select:none}
 .win.resizing .splitter .grip{background:var(--accent)}
+/* 菜单展开期间分隔条让出指针命中（需求方 2026-11-18 缺陷）：
+ * 菜单挂 .tbar（z5）内，堆叠上下文封顶 z5 < .splitter z20——命中区会压到下拉面板上，
+ * 鼠标在菜单里变列宽光标还能拖动。抬层级会牵动全局 z 序，改为命中屏蔽：
+ * .win 带 menu-up 类（App.tsx 随 ui.menuOpen 挂）时分隔条整条免疫指针。 */
+.win.menu-up .splitter{pointer-events:none}
 .win.focus .splitter{display:none}
 
 /* ---- narrow-window degradation (prototype parity; production min width 1000) ---- */
