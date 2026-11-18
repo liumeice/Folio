@@ -246,6 +246,12 @@ svg{display:block}
 [data-theme="light"] .prose code{color:var(--accent-dim)}
 /* 代码块内的 code 不套用行内芯片样式（去背景框/边框，字号跟随 pre） */
 .prose pre code{background:none;border:none;padding:0;border-radius:0;font-size:inherit;color:inherit}
+/* 色值前置色块（规范 §4.5，需求方 2026-11-18 样例定夺「方案 D」）：
+ * 文字颜色一律不动；仅 token 前加 8px 方色点，带 1px 细边保证贴近底色时可辨；半透明色点真实合成。
+ * 围栏代码块与链接文字不上色块——见 colorchip.ts 扫描豁免。 */
+.prose .cchip{white-space:nowrap}
+.prose .cchip>i{display:inline-block;width:8px;height:8px;border-radius:2px;
+  border:1px solid var(--line-hi);margin-right:4px;vertical-align:-.5px}
 /* 阅读窗图片一律水平居中（需求方 2026-11-17）：块级 img 用左右 auto 外边距，本地/远程同一条规则 */
 .prose img{max-width:100%;height:auto;display:block;border:none;margin:8px auto 6px;cursor:zoom-in}
 /* 纯图片段＝GitHub 流式排布（需求 2026-11-16 三次定夺「参考 Github 显示效果」）：

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test --test-concurrency=1 tests/md.test.ts tests/nav.test.ts tests/libtree.test.ts tests/mdstyle.test.ts tests/typography.test.ts tests/settings-spec.test.ts tests/layout.test.ts tests/codehl.test.ts tests/formula.test.ts tests/html.test.ts tests/wordcount.test.ts tests/pdfname.test.ts",
+    "test": "node --experimental-strip-types --test --test-concurrency=1 tests/md.test.ts tests/nav.test.ts tests/libtree.test.ts tests/mdstyle.test.ts tests/typography.test.ts tests/settings-spec.test.ts tests/layout.test.ts tests/codehl.test.ts tests/formula.test.ts tests/html.test.ts tests/wordcount.test.ts tests/pdfname.test.ts tests/colorchip.test.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },

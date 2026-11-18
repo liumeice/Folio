@@ -5,6 +5,7 @@ import { useStore } from "../lib/store";
 import { api } from "../lib/api";
 import * as ui from "../lib/ui";
 import { mdToHtml, taskOrdinalOf } from "../lib/md";
+import { applyColorChips } from "../lib/colorchip";
 import { countWords } from "../lib/wordcount";
 import { typesetMathIn } from "../lib/mathjax";
 import { renderMermaid } from "../lib/mermaidRender";
@@ -175,6 +176,7 @@ export default function Reader() {
     lastTopLine = 0;
     markTypesetSettled(-1);   // 新一版内容尚未排版：ratio 落定门重新关闸（同文档重开也不豁免）
     article.innerHTML = mdToHtml(doc.src);
+    applyColorChips(article);   // 色值前置色块（规范 §4.5）：纯同步 DOM 扫描，随首屏一起出现
     const h1 = article.querySelector("h1");
     if (h1) {
       // 字数/阅读时长按正文口径现算（公式/图表源码不计，需求方 2026-11-17；lib/wordcount.ts 与 Rust stats 同规则）
