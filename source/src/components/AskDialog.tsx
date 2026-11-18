@@ -26,12 +26,19 @@ export default function AskDialog() {
               <div class="krow"><span style={{ color: "var(--text-3)" }}>{k}</span><span class="sp" />
                 <span class="ask-val">{v}</span></div>
             )}</For>
-            <div class="ask-note">{a.note}</div>
+            <div class="ask-note" classList={{ plain: !!a.notePlain }}>{a.note}</div>
           </div>
           <div class="modal-f"><span class="sp" /><span class="mfb">
             <button class="btn" ref={(el) => queueMicrotask(() => el.focus())}
               onClick={() => ui.finishAsk(false)}>取消</button>
-            <button class="btn primary" onClick={() => ui.finishAsk(true)}>{a.ok}</button>
+            <Show when={a.buttons} fallback={
+              <button class="btn primary" onClick={() => ui.finishAsk(true)}>{a.ok ?? "确定"}</button>
+            }>{(bs) => (
+              <For each={bs()}>{(b) => (
+                <button class={"btn" + (b.primary ? " primary" : "")}
+                  onClick={() => ui.finishAsk(b.value)}>{b.label}</button>
+              )}</For>
+            )}</Show>
           </span></div>
         </div>
       </div>

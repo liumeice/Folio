@@ -230,11 +230,29 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     const cur = current();
     if (cur && cur.meta.id === docId) {
       if (dirty()) {
-        // 脏检查与模式无关（阅读态打勾也拦得住）；文案不再假定"编辑中"
-        const ok = await confirmBox("此文档有未保存的修改。\n确定 = 保存并关闭页签；取消 = 返回继续使用。", "关闭页签");
-        if (!ok) return;
-        // UI-06：保存失败/在"另存为"里点取消 ⇒ 不关页签。此前 save 无返回，取消也照关，编辑内容丢失。
-        if (!(await save())) return;
+        // 三钮形态（与「退出 Folio」同构，需求方 2026-11-18）：「取消」关框回页签；
+        // 「放弃保存」不写盘直接关；「保存并关闭」（主按钮）先落盘再关。Esc/✕/遮罩=取消。
+        // 脏检查与模式无关（阅读态打勾也拦得住）。
+        const r = await ui.ask({
+          icon: "i-info", title: "关闭页签",
+          note: "有未保存的修改，确定关闭页签吗？未保存内容将丢失。",
+          notePlain: true,
+          buttons: [
+            { label: "放弃保存", value: "discard" },
+            { label: "保存并关闭", value: "save", primary: true },
+          ],
+        });
+        if (r === "save") {
+          // UI-06：保存失败/在"另存为"里点取消 ⇒ 不关页签。此前 save 无返回，取消也照关，编辑内容丢失。
+          if (!(await save())) return;
+        } else if (r !== "discard") return;
+        else {
+          // 放弃保存：把内存态退回磁盘现状——否则脏一直挂着，稍后 switchTo 的
+          // "切换文档自动保存"会把这些改动又悄悄写回磁盘，违背"放弃"承诺。
+          const d = diskMap()[cur.meta.id];
+          if (d !== undefined && cur.src !== d) setDoc({ ...cur, src: d });
+          recomputeDirty();
+        }
       }
       if (mode() === "edit") endEdit();
       const all = tabs();

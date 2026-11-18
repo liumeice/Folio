@@ -100,9 +100,20 @@ export async function quitApp(s: Store) {
   // 再做脏检查。标题栏 ✕ / 菜单退出 / Alt+F4（经 Rust CloseRequested 广播）现在共用这一条路径。
   try { await s.flushPosition(); } catch { /* 位置写盘失败不拦退出 */ }
   if (s.dirty()) {
-    // 应用内询问框（不再弹系统窗）；「取消」= 什么都不发生
-    const ok = await confirmBox("有未保存的修改，确定退出吗？未保存内容将丢失。", "退出 Folio");
-    if (!ok) return;
+    // 三钮形态（需求方 2026-11-18）：「取消」= 关对话框回主界面；「放弃保存」= 不写盘直接退；
+    // 「保存退出」= 先落盘再退。Esc / ✕ / 点遮罩空白恒=取消，零副作用。
+    // 保存失败或冲突框里点了取消 ⇒ 不退出（退出不能吃掉内容，§6.8 同根纪律）。
+    const r = await ui.ask({
+      icon: "i-info", title: "退出 Folio",
+      note: "有未保存的修改，确定退出吗？未保存内容将丢失。",
+      notePlain: true,
+      buttons: [
+        { label: "放弃保存", value: "discard" },
+        { label: "保存退出", value: "save", primary: true },
+      ],
+    });
+    if (r === "save") { if (!(await s.save())) return; }
+    else if (r !== "discard") return;
   }
   if (s.isTauri) {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -149,7 +160,7 @@ export function openSearchFromAnywhere() {
 /** 系统原生确认框退役（2026-11-16）：一律走应用内询问框（§8.6）。
  *  多行 msg 原文进说明盒（CSS 保留换行）。取消=false，零副作用。 */
 export async function confirmBox(msg: string, title = "Folio"): Promise<boolean> {
-  return ui.ask({ icon: "i-info", title, note: msg, ok: "确定" });
+  return (await ui.ask({ icon: "i-info", title, note: msg, ok: "确定" })) === true;
 }
 
 /** 在系统文件管理器中打开所在目录（FR-10.2） */

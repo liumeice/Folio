@@ -36,14 +36,19 @@ export interface AskSpec {
   icon?: string;
   rows?: [string, string][];
   note: string;
-  ok: string;
+  /** 两钮形态的主按钮文案（默认「确定」）；给 buttons 时忽略 */
+  ok?: string;
+  /** 多钮形态（退出保存选择，需求方 2026-11-18）：「取消」恒在左，本组依序排右；resolve = 按钮 value */
+  buttons?: readonly { label: string; value: string; primary?: boolean }[];
+  /** note 走 plain 样式：无圆角边框盒、字号加大 2 号（11.5→13.5）——退出警告专用 */
+  notePlain?: boolean;
 }
 export const [pickReq, setPickReq] = createSignal<{ mode: PickMode; name?: string; dir?: string | null } | null>(null);
 export const [askReq, setAskReq] = createSignal<AskSpec | null>(null);
 /** 查看→主题 子菜单展开态（菜单关闭时由 App 的 effect 复位） */
 export const [themeSubOpen, setThemeSubOpen] = createSignal(false);
 let pickResolve: ((v: PickVal) => void) | null = null;
-let askResolve: ((v: boolean) => void) | null = null;
+let askResolve: ((v: boolean | string) => void) | null = null;
 export function pick(mode: PickMode): Promise<string[] | null> {
   if (pickResolve) finishPick(null);   // 同 ask：覆盖前先把前一个按「取消」结算（UI-03）
   return new Promise((res) => { pickResolve = res as (v: PickVal) => void; setPickReq({ mode }); });
@@ -61,14 +66,15 @@ const draftPaths = new Set<string>();
 export function markDraftPath(p: string) { draftPaths.add(p); }
 export function isDraftPath(p: string) { return draftPaths.has(p); }
 export function clearDraftPath(p: string) { draftPaths.delete(p); }
-export function ask(spec: AskSpec): Promise<boolean> {
+export function ask(spec: AskSpec): Promise<boolean | string> {
   // UI-03：同一时刻只允许一个询问框。后来者覆盖前必须先把前一个按「取消」结算，
   // 否则前一个 Promise 永远悬挂，等待它的流程（关页签/退出）会卡死。
   if (askResolve) finishAsk(false);
   return new Promise((res) => { askResolve = res; setAskReq(spec); });
 }
-export function finishAsk(ok: boolean) {
-  const r = askResolve; askResolve = null; setAskReq(null); r?.(ok);
+/** resolve 值：boolean=两钮形态（true 主操作/false 取消），string=多钮形态的按钮 value */
+export function finishAsk(v: boolean | string) {
+  const r = askResolve; askResolve = null; setAskReq(null); r?.(v);
 }
 export const [hitCount, setHitCount] = createSignal(0);
 export const [hitIdx, setHitIdx] = createSignal(0);
