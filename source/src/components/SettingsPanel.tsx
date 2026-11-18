@@ -1,9 +1,9 @@
 /* 设置中心：逐像素移植原型 MoPage 布局——左分组导航 + 右内容（抬头→分组标题→圆角卡片→一行行）。
  * 2026-11-16 形态对齐原型：居中独立浮窗（.st-win 1060×640 上限）+ 轻遮罩（.st-panel 全屏容器），
- * 主界面保持可见且挂载；关闭=Esc / 点遮罩空白（见根节点 onClick）/ 标题栏 ⚙ 再点 / 保存并关闭。
- * 抬头动作对齐原型：撤销更改 / 保存并关闭（主按钮）/ 导入配置 · 导出配置（图标钮）。
+ * 主界面保持可见且挂载；关闭=Esc / 点遮罩空白（见根节点 onClick）/ 标题栏 ⚙ 再点 / 确定 / 取消。
+ * 抬头动作（需求方 2026-11-18 定名）：取消 / 确定（主按钮）/ 导入配置 · 导出配置（图标钮）。
  * 本视图不做数据判断：有哪几组、每组哪几行、每行吃什么控件、取值域、文案，全在 lib/settings-spec.ts（可单测）。
- * 即时写 SQLite 语义保留：改动即时落库；「撤销更改」回滚到打开面板时的快照；「保存并关闭」= 关闭（已即时保存）。 */
+ * 即时写 SQLite 语义保留：改动即时落库；「取消」= 回滚到打开面板时的快照并关窗；「确定」= 直接关窗（早已即时保存）。 */
 import { For, Show, createEffect, createSignal, on, untrack } from "solid-js";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
@@ -25,7 +25,7 @@ function Control(props: { item: SettingItem }) {
   const s = useStore();
   const st = () => s.settings();
   const val = () => props.item.get(st());
-  const apply = (raw: number | string) => s.saveSettings(props.item.set(st(), raw));
+  const apply = (raw: number | string | boolean) => s.saveSettings(props.item.set(st(), raw));
 
   if (props.item.control.kind === "themeCard") {
     return (
@@ -78,10 +78,20 @@ function Control(props: { item: SettingItem }) {
       </div>
     );
   }
+  // switch：布尔开关（§4.8 控件表 34×20 胶囊；aria-checked 驱动配色与钮位）
+  if (props.item.control.kind === "switch") {
+    const on = () => val() === true;
+    return (
+      <button type="button" class="st-sw" role="switch" aria-checked={on()}
+        aria-label={props.item.label} onClick={() => apply(!on())}>
+        <span class="st-sw-knob" />
+      </button>
+    );
+  }
   const num = () => val() as number;
   const d = () => activeDomain(props.item, st())!;
   const shown = () => props.item.fmt
-    ? props.item.fmt(val(), st()) : String(val());
+    ? props.item.fmt(val() as number, st()) : String(val());
 
   if (props.item.control.kind === "range") {
     return (
@@ -134,9 +144,11 @@ export default function SettingsPanel() {
     s.saveSettings(r.settings);             // 整份覆盖并即时落库（字段已过白名单/夹紧校验）
     s.toast("已导入配置");
   }
-  function onUndo() {
+  /* 取消 = 恢复打开面板时的快照并关闭窗口（需求方 2026-11-18：撤销更改→取消）。
+   * 不弹 toast：窗子一关、界面回退本身就是反馈，取消类操作零打扰（§5.3）。 */
+  function onCancel() {
     if (baseline) s.saveSettings(baseline);
-    s.toast("已撤销到打开设置时的状态");
+    ui.setSettingsOpen(false);
   }
 
   return (
@@ -167,13 +179,13 @@ export default function SettingsPanel() {
           <button type="button" class="st-action" title="导出配置（写出 settings.json）" onClick={() => void onExport()}>
             <svg class="ico ico-14"><use href="#i-download" /></svg>
           </button>
-          {/* §8.2 按钮组口径：等宽、撤销（dismiss）居左 */}
+          {/* §8.2 按钮组口径：等宽、取消（dismiss）居左、主操作居右 */}
           <span class="mfb">
-            <button type="button" class="st-action" title="撤销本次会话内的所有改动" onClick={onUndo}>
-              <svg class="ico ico-14"><use href="#i-history" /></svg>撤销更改
+            <button type="button" class="st-action" title="恢复打开设置前的选择并关闭" onClick={onCancel}>
+              <svg class="ico ico-14"><use href="#i-x" /></svg>取消
             </button>
-            <button type="button" class="st-action primary" title="保存并关闭 (Esc)" onClick={() => ui.setSettingsOpen(false)}>
-              <svg class="ico ico-14"><use href="#i-check" /></svg>保存并关闭
+            <button type="button" class="st-action primary" title="确定并关闭 (Esc)" onClick={() => ui.setSettingsOpen(false)}>
+              <svg class="ico ico-14"><use href="#i-check" /></svg>确定
             </button>
           </span>
         </header>

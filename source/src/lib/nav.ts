@@ -14,8 +14,12 @@ export type NavRequest =
       /** "position"：按 ratio 绝对位置回位（历史导航）；缺省 "anchor"：锚点优先（打开恢复） */
       prefer?: "anchor" | "position" }
   | { kind: "anchor"; sec: number }
-  /** v1.2 主交接坐标：小数源码行号（编辑⇄阅读互切、跨会话恢复、applySaved 全走这里） */
+  /** v1.2 主交接坐标：小数源码行号（编辑⇄阅读互切、跨会话恢复走这里） */
   | { kind: "line"; line: number }
+  /** 原始像素复位（2026-11-18 勾选滚动修复）：版式不变的内存更新专用——
+   *  line↔px 往返非互逆（pxFromLine 插值到自身 bottom，lineFromAnchors 采样到 next top），
+   *  每次恢复向块顶收缩 f×块间距、连续操作累积成持续滚动。同布局恢复必须绕开行制换算。 */
+  | { kind: "pixel"; y: number }
   | { kind: "top" }
   | null;
 

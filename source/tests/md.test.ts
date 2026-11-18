@@ -2,7 +2,7 @@
  * 链接包图 / 参考式 / 自动链接 / 转义 / title 语法 / 代码段保护 / 强调 */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mdToHtml, renderSnippet, headingMatch } from "../src/lib/md.ts";
+import { mdToHtml, renderSnippet, headingMatch, flipTaskInSrc } from "../src/lib/md.ts";
 
 const imgAttrs = (html: string) => /<img([^>]*)>/.exec(html)?.[1] ?? "";
 
@@ -271,4 +271,55 @@ test("远程图片自动加载（需求方定夺取代 SEC-04 拦截方案）：
   assert.ok(h.includes('src="https://e.com/x.png"') && h.includes('src="//e.com/y.png"'), h);
   assert.ok(h.includes('loading="lazy"'), "懒加载保留，长文档不一次拉全");
   assert.ok(!h.includes("imgdefer"), "占位机制已废弃");
+});
+
+/* ── flipTaskInSrc：Rust markdown.rs toggle_task 测试向量的逐条镜像（契约 2，2026-11-18 手动保存链路）── */
+
+test("flip 镜像·围栏假任务不计（Rust toggle_task_ignores_fenced_fake 同料）", () => {
+  const src = "- [ ] real one\n\n```text\n- [ ] fake in code\n```\n\n- [ ] real two\n";
+  const out = flipTaskInSrc(src, 0);
+  assert.ok(out!.includes("[x] real one"));
+  assert.ok(out!.includes("- [ ] fake in code"), "围栏内不许改");
+  const out2 = flipTaskInSrc(out!, 1);
+  assert.ok(out2!.includes("[x] real two"));
+  assert.equal(flipTaskInSrc(src, 2), null, "越界 null");
+});
+
+test("flip 镜像·有序列表与缩进保留（preserves_ordered_and_indent）", () => {
+  assert.equal(flipTaskInSrc("  1. [ ] indented item\n", 0), "  1. [x] indented item\n");
+});
+
+test("flip 镜像·多字节与 CRLF 风格保留（multibyte_prefix_and_crlf）", () => {
+  assert.equal(flipTaskInSrc("- [ ] 中文任务\r\n正文\r\n", 0), "- [x] 中文任务\r\n正文\r\n");
+});
+
+test("flip 镜像·无尾换行不补（no_trailing_newline_added）", () => {
+  assert.equal(flipTaskInSrc("- [ ] a", 0), "- [x] a");
+});
+
+test("flip 镜像·引用块任务跳过（skips_quoted_tasks，CON-01 同根）", () => {
+  const src = "> - [ ] quoted\n\n- [ ] real\n";
+  const out = flipTaskInSrc(src, 0);
+  assert.ok(out!.includes("> - [ ] quoted"), "引用行不许被改写");
+  assert.ok(out!.includes("- [x] real"));
+  assert.equal(flipTaskInSrc(src, 1), null, "全篇可勾选任务只有 1 个");
+});
+
+test("flip 镜像·]-后无空格也算任务（task_without_space_after_bracket_counts）", () => {
+  assert.equal(flipTaskInSrc("- [ ]x\n", 0), "- [x]x\n");
+});
+
+test("flip 与渲染同坐标系：$$ 内任务按 Rust 口径计数、引用不计；大写 X 可反悔", () => {
+  const src = "# T\n\n- [ ] 甲\n\n$$\n- [ ] math内仍计数\n$$\n\n> - [ ] 引用不计\n\n- [x] 乙\n";
+  // 参与计数的顺序：0=甲、1=$$内行（Rust 不认 $$ 为围栏）、2=乙；引用行永远不计
+  const one = flipTaskInSrc(src, 1);
+  assert.ok(one!.includes("- [x] math内仍计数"), "math 块行按 Rust 口径计入：" + one);
+  assert.ok(one!.includes("- [ ] 甲"), "甲未动");
+  const two = flipTaskInSrc(src, 2);
+  assert.ok(two!.includes("- [ ] 乙"), "大写 [x] 翻回未勾：" + two);
+  assert.ok(two!.includes("> - [ ] 引用不计"), "引用行始终未动");
+  assert.equal(flipTaskInSrc(src, 3), null, "可计数任务共 3 个");
+  // 渲染侧同坐标：li 显式 2 枚 + $$ 隐藏占位 1 枚 = data-task 总数 3（taskOrdinalOf 的坐标系）
+  const h = mdToHtml(src);
+  assert.equal((h.match(/data-task/g) ?? []).length, 3, h.slice(0, 400));
 });

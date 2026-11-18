@@ -4,7 +4,7 @@ import { createEffect, on, onCleanup, onMount } from "solid-js";
 import { useStore } from "../lib/store";
 import { api } from "../lib/api";
 import * as ui from "../lib/ui";
-import { mdToHtml, taskOrdinalOf } from "../lib/md";
+import { mdToHtml, taskOrdinalOf, flipTaskInSrc } from "../lib/md";
 import { applyColorChips } from "../lib/colorchip";
 import { countWords } from "../lib/wordcount";
 import { typesetMathIn } from "../lib/mathjax";
@@ -294,6 +294,8 @@ export default function Reader() {
 
   function navApply(nav: Exclude<ReturnType<typeof s.navRequest>, null>, doc: DocFull) {
     if (nav.kind === "top") { programScroll(() => { view.scrollTop = 0; }); return; }
+    // 版式不变的原位更新（勾选翻转等）：原始像素直接复位，不经 line↔px 换算（见 nav.ts pixel 注释）
+    if (nav.kind === "pixel") { programScroll(() => { view.scrollTop = Math.max(0, nav.y); }); return; }
     if (nav.kind === "line") { scrollToLine(nav.line, doc); return; }
     if (nav.kind === "anchor") {
       const h = headingBy(nav.sec, doc.outline.find((o) => o.sec === nav.sec)?.text ?? null);
@@ -477,6 +479,7 @@ export default function Reader() {
       secOff: h ? Math.max(0, view.scrollTop - (h.offsetTop - HEAD_OFFSET)) : 0,  // 与恢复式子镜像对称
       secLineOff: offRes.off,
       srcLine,
+      scrollY: view.scrollTop,
       updatedAt: Math.floor(Date.now() / 1000),
     };
   }
@@ -551,13 +554,12 @@ export default function Reader() {
       const li = cbx.closest("li[data-task]");
       if (!li) return;
       const nth = taskOrdinalOf(article, li as HTMLElement);
-      try {
-        const next = await api.toggleTask(doc.meta.path, nth);
-        s.applySaved(next);
-        s.toast("已更新任务清单（写回源文件）");
-      } catch (err) {
-        s.toast("勾选写回失败：" + String(err));
-      }
+      /* 手动保存模式（需求方 2026-11-18：「打勾不要马上落盘，程序不要擅自做客户认知以外的事」）：
+       * 翻转只改内存 src（flipTaskInSrc 与 folio-core::toggle_task 同坐标系）并挂脏标记，
+       * 页签橙点即反馈；落盘统一走「保存」/Ctrl+S。 */
+      const flipped = flipTaskInSrc(doc.src, nth);
+      if (flipped == null) { s.toast("勾选失败：序号越界，未在源文本找到该任务行"); return; }
+      s.applySaved({ ...doc, src: flipped });
       return;
     }
 

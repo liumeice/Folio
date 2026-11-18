@@ -372,6 +372,56 @@ export function isFenceLine(line: string): boolean {
   return /^\s*```/.test(line);
 }
 
+/** 列表标记拆分：folio-core::markdown::after_list_marker 的逐字符镜像。
+ *  「缩进 + (-|*|+|n.|n\)) + ≥1 空白」开头才算；"＞ - [ ]" 等引用前缀不认（CON-01 同根规则）。
+ *  扫描段全是 ASCII（空格/标记/数字/括号），JS 索引即 Rust 字节偏移，多字节只出现在 body 尾部。 */
+function afterListMarker(line: string): { prefixLen: number; body: string } | null {
+  let i = 0;
+  while (i < line.length && (line[i] === " " || line[i] === "\t")) i++;
+  if (i >= line.length) return null;
+  let j = i;
+  const c0 = line[i];
+  if (c0 === "-" || c0 === "*" || c0 === "+") j = i + 1;
+  else {
+    let k = i;
+    while (k < line.length && line[k] >= "0" && line[k] <= "9") k++;
+    if (k === i || k >= line.length || (line[k] !== "." && line[k] !== ")")) return null;
+    j = k + 1;
+  }
+  if (j >= line.length || (line[j] !== " " && line[j] !== "\t")) return null;
+  while (j < line.length && (line[j] === " " || line[j] === "\t")) j++;
+  return { prefixLen: j, body: line.slice(j) };
+}
+
+/** 切换第 nth 个（0 起）围栏外任务的勾选态——Rust toggle_task 的 TS 镜像（契约 2 同坐标系）。
+ *  手动保存链路专用（2026-11-18 需求方定夺：打勾不即时写盘）：Reader 用它改内存 src，
+ *  落盘统一走显式「保存」。越界返回 null。保留 CRLF/LF 风格与文件末尾换行。 */
+export function flipTaskInSrc(src: string, nth: number): string | null {
+  const rows = src.split(/\r\n|\n/);
+  const nl = src.includes("\r\n") ? "\r\n" : "\n";
+  let inFence = false;
+  let seen = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const raw = rows[i];
+    if (isFenceLine(raw)) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    const a = afterListMarker(raw);
+    if (!a) continue;
+    const b = a.body;
+    if (b.length < 3 || b[0] !== "[" || b[2] !== "]") continue;
+    const st = b[1];
+    if (st !== " " && st !== "x" && st !== "X") continue;
+    if (seen === nth) {
+      const ns = st === " " ? "x" : " ";
+      const out = rows.slice();
+      out[i] = raw.slice(0, a.prefixLen) + "[" + ns + b.slice(2);
+      return out.join(nl);
+    }
+    seen++;
+  }
+  return null;
+}
+
 /** ATX 标题判定：folio-core::markdown::headings 行逻辑的逐条镜像（CON-02 修复）：
  *  前导空白一律容忍（Rust trim_start）、"#" 单独成行也算空标题、"#" 后必须空白或行尾、
  *  闭合 # 串仅在「整串即标题」或「# 串前有空白」时剥离。返回 level(1–6)+text（可空串）。 */

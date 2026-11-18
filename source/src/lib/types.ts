@@ -56,6 +56,8 @@ export interface Position {
   updatedAt: number;
   /** 运行期字段（不落库）：视口顶小数源码行号，供 HistEntry.lineFloat 与调试 */
   srcLine?: number | null;
+  /** 运行期字段（不落库）：采集瞬间的原始 scrollTop，供版式不变的原位更新（如勾选）精确复位 */
+  scrollY?: number | null;
 }
 
 export interface Settings {
@@ -81,6 +83,8 @@ export interface Settings {
   codeFs: number;
   /** 表格密度 */
   tableDensity: "compact" | "standard" | "loose";
+  /** 启动时自动打开并恢复上次关闭时的文档（false = 空态启动，加快冷启动；需求方 2026-11-18） */
+  restoreOnLaunch: boolean;
 }
 
 export type SearchScope = "current" | "library";

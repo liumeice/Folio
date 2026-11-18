@@ -14,6 +14,9 @@ const MENUS: Menu[] = [
     { act: "open", label: "打开文档…", kbd: "Ctrl O", icon: "i-open-file" },
     { act: "open-dir", label: "打开文件夹…", icon: "i-open-folder" },
     { sep: true },
+    { act: "save", label: "保存", kbd: "Ctrl S", icon: "i-save" },
+    { act: "save-as", label: "另存为…", kbd: "Ctrl Shift S", icon: "i-save-as" },
+    { sep: true },
     { act: "export", label: "导出为 HTML…", icon: "i-external" },
     { act: "export-pdf", label: "导出为 PDF…", icon: "i-download" },
     { sep: true },
@@ -42,7 +45,6 @@ const MENUS: Menu[] = [
     { act: "search", label: "全文搜索…", kbd: "Ctrl F", icon: "i-search" },
     { sep: true },
     { act: "edit", label: "切换编辑模式", kbd: "Ctrl E", icon: "i-type" },
-    { act: "save", label: "保存并返回阅读", kbd: "Ctrl S", icon: "i-save" },
     { sep: true },
     { act: "props", label: "文档信息", icon: "i-info" },
     { act: "link", label: "复制深度链接", icon: "i-copy" },
@@ -85,10 +87,8 @@ export default function TitleBar() {
       case "next-sec": ui.navSection(1); break;
       case "search": ui.setSearchOpen(true); break;
       case "edit": s.toggleEdit(); break;
-      case "save":
-        if (s.mode() === "edit") void s.save();
-        else s.toast("当前处于阅读模式 · Ctrl+E 进入编辑后可保存");
-        break;
+      case "save": void s.saveSmart(); break;
+      case "save-as": void s.saveAs(); break;
       case "props": ui.setPropsOpen(true); break;
       case "link": copyDeepLink(s); break;
       case "guide": void openGuide(s); break;

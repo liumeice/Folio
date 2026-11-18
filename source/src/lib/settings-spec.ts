@@ -4,7 +4,7 @@
  * 为什么把数据抽出来：① 能单测（每行 get/set 往返、值域与 typography.RANGE 不打架、fmt 单位、
  * 分组齐全）；② 加一栏设置只改这里一行，视图不动；③ 界面不许说谎——没在后端落地的项就不列。
  * Folio 真实可持久化的设置：theme（含护眼米色 sepia）/ accent（强调色，后端已落地，故可摆真实色板）/
- * serif / fs* / lh / letterSpacing / paraSpacing / align / width / codeFs / tableDensity / sideWidth。
+ * restoreOnLaunch（启动恢复开关）/ serif / fs* / lh / letterSpacing / paraSpacing / align / width / codeFs / tableDensity / sideWidth。
  * 仍未做的（文档字体名、内容缩放、自动进入阅读、快捷键编辑、等宽连字 / 行号缩略图 / 保存时自动格式化等
  * MoPage 装饰开关）这里依旧不摆空控件——界面不许说谎。 */
 import type { Settings } from "./types";
@@ -19,13 +19,14 @@ export interface SettingGroup {
   readonly icon: string;
 }
 
-/** 行右侧控件的形状。stepper（−值+）/segment（离散胶囊）/range（滑轨）/themeCard（三张预览卡）/swatch（强调色色板）。 */
+/** 行右侧控件的形状。stepper（−值+）/segment（离散胶囊）/range（滑轨）/themeCard（三张预览卡）/swatch（强调色色板）/switch（开关，布尔项）。 */
 export type SettingControl =
   | { kind: "stepper" }
   | { kind: "segment"; options: readonly (readonly [string, string])[] }
   | { kind: "range" }
   | { kind: "themeCard"; options: readonly (readonly [string, string])[] }
-  | { kind: "swatch" };
+  | { kind: "swatch" }
+  | { kind: "switch" };
 
 export interface SettingItem {
   readonly key: string;                       // 调试/测试定位用，不参与读写
@@ -35,9 +36,9 @@ export interface SettingItem {
   readonly control: SettingControl;
   /** 数值行的取值域（与 typography.RANGE 同源，构造时校验一致） */
   readonly domain?: { min: number; max: number; step: number };
-  readonly get: (s: Settings) => number | string;
-  /** 返回要合并进 settings 的补丁（一行可能写多个字段，如字级按 serif 分两档） */
-  readonly set: (s: Settings, raw: number | string) => Partial<Settings>;
+  readonly get: (s: Settings) => number | string | boolean;
+  /** 返回要合并进 settings 的补丁（一行可能写多个字段，如字级按 serif 分两档；switch 行给 boolean） */
+  readonly set: (s: Settings, raw: number | string | boolean) => Partial<Settings>;
   /** 显示文案：把值翻成人话（带单位/比号），住在数据层，视图不拼字符串 */
   readonly fmt?: (v: number | string, s: Settings) => string;
 }
@@ -70,6 +71,13 @@ export const ITEMS: readonly SettingItem[] = [
     control: { kind: "swatch" },
     get: (s) => s.accent,
     set: (_s, v) => ({ accent: String(v) }),
+  },
+  {
+    key: "restoreOnLaunch", group: "appearance", label: "启动时恢复上次文档",
+    hint: "关闭后启动不再自动打开上次关闭时的文档，冷启动更快；需要时从「最近打开」随时找回，阅读位置不丢。",
+    control: { kind: "switch" },
+    get: (s) => s.restoreOnLaunch,
+    set: (_s, v) => ({ restoreOnLaunch: v === true }),
   },
   // 侧栏宽度不列设置行：它由分隔条拖拽决定（Splitter + settings.sideWidth 持久化），
   // 再放一个 stepper 只会与拖拽各说一套、且改起来反而费劲。
@@ -164,7 +172,7 @@ export function activeDomain(item: SettingItem, s: Settings): SettingItem["domai
 }
 
 /** 步进结果夹到该域；调用方已 clampNum，这里再兜一层防手改值越界 */
-export function bump(item: SettingItem, s: Settings, dir: number): number | string {
+export function bump(item: SettingItem, s: Settings, dir: number): number | string | boolean {
   if (typeof item.get(s) !== "number") return item.get(s);
   const d = activeDomain(item, s)!;
   const cur = item.get(s) as number;

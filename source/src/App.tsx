@@ -127,12 +127,8 @@ export default function App() {
     if (mod && (k === "o" || k === "O")) { ev.preventDefault(); void pickAndOpen(s); return; }
     if (mod && (k === "f" || k === "F" || k === "k" || k === "K")) { ev.preventDefault(); ui.setSearchOpen(true); return; }
     if (mod && (k === "e" || k === "E")) { ev.preventDefault(); s.toggleEdit(); return; }
-    if (mod && (k === "s" || k === "S")) {
-      ev.preventDefault();
-      if (s.mode() === "edit") void s.save();
-      else s.toast("当前处于阅读模式 · Ctrl+E 进入编辑后可保存");
-      return;
-    }
+    if (mod && ev.shiftKey && (k === "s" || k === "S")) { ev.preventDefault(); void s.saveAs(); return; }
+    if (mod && (k === "s" || k === "S")) { ev.preventDefault(); void s.saveSmart(); return; }
     if (mod && k === "/") { ev.preventDefault(); ui.setKeysOpen(true); return; }
     if (k === "F3") { ev.preventDefault(); if (ui.hitNavVisible()) ui.stepHit(ev.shiftKey ? -1 : 1); return; }
     if (k === "Enter" && ui.hitNavVisible()) { ev.preventDefault(); ui.stepHit(ev.shiftKey ? -1 : 1); return; }

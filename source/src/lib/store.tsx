@@ -71,6 +71,10 @@ export interface Store {
   setDraft(v: string): void;
   /** 保存。返回 false = 未保存成功（取消对话框/写盘失败），调用方（如 closeTab）必须据此中止后续动作 */
   save(customMsg?: string, force?: boolean): Promise<boolean>;
+  /** Ctrl+S/菜单「保存」入口：模式自适应（§6.4），干净时如实提示 */
+  saveSmart(): Promise<boolean>;
+  /** 另存为…（Ctrl+Shift+S）：写副本并把当前页签原位切到新文件，原文件不动 */
+  saveAs(): Promise<boolean>;
   discard(): void;
   applySaved(next: DocFull): void;
   saveSettings(patch: Partial<Settings>): void;
@@ -120,6 +124,20 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   const [activeTabId, setActiveTabId] = createSignal<number | null>(null);
   const [histIdx, setHistIdx] = createSignal(-1);
   let history: HistEntry[] = [];
+
+  /* ── 磁盘现状对照（2026-11-18 需求方定夺：写盘只发生在用户显式动作里）──
+   * dirty = 内存态（编辑缓冲或阅读 src）≠ 最近一次落盘内容。
+   * diskMap 仅在「读盘打开/写盘成功」两类链路刷新（switchTo / 启动恢复 / save / saveAs 覆盖分支）；
+   * 打勾等内存改写走 applySaved，不动 diskMap ⇒ 脏标记立住，由「保存」统一落盘。 */
+  const [diskMap, setDiskMap] = createSignal<Record<number, string>>({});
+  function setDisk(id: number, src: string) { setDiskMap((m) => ({ ...m, [id]: src })); }
+  function recomputeDirty() {
+    const c = current();
+    if (!c) { setDirty(false); return; }
+    const disk = diskMap()[c.meta.id];
+    if (disk === undefined) { setDirty(false); return; } // 未经读盘链路的文档（如空草稿）按干净处理
+    setDirty((mode() === "edit" ? draftSrc() : c.src) !== disk);
+  }
 
   /* ── toast 队列（N1）：同屏最多 2 条，其余排队 ── */
   const queue: string[] = [];
@@ -211,16 +229,14 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   async function closeTab(docId: number) {
     const cur = current();
     if (cur && cur.meta.id === docId) {
-      if (mode() === "edit") {
-        if (dirty()) {
-          const ok = await confirmBox("此文档有未保存的修改。\n确定 = 保存并关闭页签；取消 = 留在编辑中继续。", "关闭页签");
-          if (!ok) return;
-          // UI-06：保存失败/在"另存为"里点取消 ⇒ 不关页签。此前 save 无返回，取消也照关，编辑内容丢失。
-          if (!(await save())) return;
-        } else {
-          endEdit();
-        }
+      if (dirty()) {
+        // 脏检查与模式无关（阅读态打勾也拦得住）；文案不再假定"编辑中"
+        const ok = await confirmBox("此文档有未保存的修改。\n确定 = 保存并关闭页签；取消 = 返回继续使用。", "关闭页签");
+        if (!ok) return;
+        // UI-06：保存失败/在"另存为"里点取消 ⇒ 不关页签。此前 save 无返回，取消也照关，编辑内容丢失。
+        if (!(await save())) return;
       }
+      if (mode() === "edit") endEdit();
       const all = tabs();
       const idx = all.findIndex((t) => t.docId === docId);
       const list = all.filter((t) => t.docId !== docId);
@@ -247,11 +263,11 @@ export function StoreProvider(props: ParentProps): JSX.Element {
 
   async function switchTo(doc: DocFull, opts?: { secText?: string | null; record?: boolean }) {
     await flushPosition(); // 落盘「离开处」的位置（N4）
-    if (mode() === "edit") {
-      if (dirty()) await save(`切换文档：已自动保存「${current()?.meta.fileName ?? ""}」的修改`);
-      else endEdit();
-    }
+    // 手动保存模式下阅读态也可能挂脏（打勾）：不保存就切走 = 丢改动，故脏必存，模式无关（§6.4）
+    if (dirty()) await save(`切换文档：已自动保存「${current()?.meta.fileName ?? ""}」的修改`);
+    else if (mode() === "edit") endEdit();
     const first = !current();
+    setDisk(doc.meta.id, doc.src); // switchTo 收到的 doc 一律来自读盘（或刚落盘）链路
     setDoc(doc);
     const secText = opts?.secText ?? null;
     if (secText) {
@@ -388,7 +404,8 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     ui.setPendingEditorJump(ui.getViewBridge()?.topLine() ?? null);
     setDraftSrc(current()!.src);
     setMode("edit");
-    setDirty(false);
+    // 不能清脏：进编辑前可能已有打勾待存（缓冲此刻即 cur.src，recompute 结果不变）
+    recomputeDirty();
   }
   function toggleEdit() {
     if (mode() === "edit") {
@@ -403,7 +420,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     setDraftSrc(v);
     const cur = current();
     const changed = v !== (cur?.src ?? "");
-    setDirty(changed);
+    recomputeDirty();   // 脏=缓冲 vs 落盘现状（打勾挂脏时打字再回删，脏仍真，§6.4）
     if (cur && changed) {
       window.clearTimeout(draftTimer);
       draftTimer = window.setTimeout(() => persistDraft(cur.meta.path, v), 400);
@@ -441,8 +458,13 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     }
     try {
       const next = await api.saveDoc(cur.meta.path, draftSrc(), force);
-      setDoc(next);
-      endEdit();
+      setDisk(next.meta.id, next.src);   // 写盘成功 ⇒ 磁盘现状前移，脏自然归零
+      if (mode() === "edit") {
+        setDoc(next);
+        endEdit();                       // 编辑态：返回阅读并按交接行落位（既有 §6.4 行为）
+      } else {
+        applySaved(next);                // 阅读态（打勾待存被「保存」）：原位重渲染不跳顶
+      }
       clearDraft(cur.meta.path);
       toast(customMsg ?? "已保存并写回磁盘");
       return true;
@@ -466,18 +488,89 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     setDraftSrc(cur.src);
     endEdit();
     clearDraft(cur.meta.path);
-    toast("已放弃未保存修改，返回阅读模式");
+    recomputeDirty();  // Esc 只弃编辑缓冲；阅读态挂账的打勾不属于"编辑修改"，保留待存
+    toast(dirty() ? "已放弃编辑修改；待保存的任务勾选仍在" : "已放弃未保存修改，返回阅读模式");
+  }
+  /** Ctrl+S / 菜单「保存」统一入口（§6.4）：编辑态=保存并返回阅读；
+   *  阅读态有待存改动（打勾）→ 写盘；干净 → 如实告知无事可存。 */
+  async function saveSmart(): Promise<boolean> {
+    if (!current()) return false;
+    if (mode() === "edit" || dirty()) return await save();
+    toast("当前没有待保存的修改");
+    return false;
+  }
+  /** 页签原位替换：删旧文档页签，把新文件页签挪到旧位置（setDoc upsert 已将其追加在尾）。 */
+  function retargetTab(oldId: number, newId: number) {
+    setTabs((ts) => {
+      if (oldId === newId) return ts;
+      const oi = ts.findIndex((t) => t.docId === oldId);
+      if (oi < 0) return ts;
+      const without = ts.filter((t) => t.docId !== oldId);
+      const ni = without.findIndex((t) => t.docId === newId);
+      if (ni < 0) return without;
+      const list = without.slice();
+      const [tab] = list.splice(ni, 1);
+      list.splice(Math.min(oi, list.length), 0, tab);
+      return list;
+    });
+  }
+  /** 另存为（需求方 2026-11-18 样例定夺「A 语义」）：当前内容（编辑态取缓冲）写到所选新路径，
+   *  当前页签原位切到新文件；原文件磁盘内容不动。行位置按同文坐标平移保持。
+   *  取消=零打扰；同名覆盖由系统对话框确认；失败「另存为失败：原因」。 */
+  async function saveAs(): Promise<boolean> {
+    const cur = current();
+    if (!cur) return false;
+    if (ui.isDraftPath(cur.meta.path)) return await save(); // 草稿的另存为=首次保存（既有链路）
+    const content = mode() === "edit" ? draftSrc() : cur.src;
+    const dir = cur.meta.path.replace(/[\\/][^\\/]*$/, "");
+    const path = await api.pickSaveDoc(cur.meta.fileName, dir || (roots()[0] ?? null));
+    if (!path) return false;
+    const line = mode() === "edit"
+      ? (ui.getEditorBridge()?.topLine() ?? null)
+      : (ui.getViewBridge()?.topLine() ?? null);
+    try {
+      const norm = (p: string) => p.replace(/[\\/]+/g, "/").toLowerCase();
+      if (norm(path) === norm(cur.meta.path)) {
+        // 选回原路径＝就地覆盖：写盘即磁盘现状前移，不切页签
+        await api.writeFile(path, content);
+        setDisk(cur.meta.id, content);
+        if (mode() === "edit") { setDraftSrc(content); endEdit(); } else recomputeDirty();
+        toast(`已另存为 ${cur.meta.fileName}`);
+        return true;
+      }
+      await api.writeFile(path, content);
+      const next = await api.openDoc(path);
+      const oldId = cur.meta.id;
+      if (mode() === "edit") endEdit();
+      else setDirty(false);            // 必须先归零再 switchTo：防其脏自动保存把副本又写回原文件
+      await switchTo(next);
+      retargetTab(oldId, next.meta.id);
+      if (line != null) setNavRequest({ kind: "line", line });
+      toast(`已另存为 ${next.meta.fileName}`);
+      return true;
+    } catch (e) {
+      toast("另存为失败：" + ui.fmtErr(e));
+      recomputeDirty();                // 半途失败（如 openDoc 出错）：挂账的打勾/编辑仍须可见
+      return false;
+    }
   }
   /** 复选框写回等「非用户编辑」的内容变化：原位重渲染，不跳顶。
    *  v1.2：主坐标走行锚链（勾选只动一行内容不改行号，line 天然稳）；无锚才退 ratio 老链（二轮评审 2.3） */
   async function applySaved(next: DocFull) {
     const p = posSource ? posSource() : null;
     setDoc(next);
+    recomputeDirty();  // 本函数语义=「内存已改、磁盘未动」：脏必须如实挂起（打勾手动保存链路）
     if (!p) return;
-    const lineNav = navForRestorePos(p, next.outline, srcLines(next.src));
-    if (lineNav) setNavRequest(lineNav);
-    else if (p.ratio > 0.001) {
-      setNavRequest({ kind: "restore", sec: p.sec, secText: p.secText, ratio: p.ratio, secOff: p.secOff });
+    // 本函数全部调用方都是「版式不变」的内存更新（勾选翻转）：用采集瞬间的原始 scrollTop 复位。
+    // line↔px 换算互非逆（pxFromLine 以块自身 bottom 插值、lineFromAnchors 以 next.top 采样），
+    // 走 line 链每击向块顶滑移 f×块间距并累积——真窗口取证 3~4px/击，即「连续勾选持续上滚」根因。
+    if ((p.scrollY ?? -1) >= 0) setNavRequest({ kind: "pixel", y: p.scrollY! });
+    else {
+      const lineNav = navForRestorePos(p, next.outline, srcLines(next.src));
+      if (lineNav) setNavRequest(lineNav);
+      else if (p.ratio > 0.001) {
+        setNavRequest({ kind: "restore", sec: p.sec, secText: p.secText, ratio: p.ratio, secOff: p.secOff });
+      }
     }
   }
 
@@ -528,9 +621,12 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     // 启动恢复=上次「打开过」的那篇（历史序），不是磁盘上最新改动的那篇（mtime 序）。
     // 历史为空（首启/仅扫描未打开）才回落到登记表首条。
     const restore = rc[0]?.meta ?? list[0];
-    if (restore) {
+    // 「启动时恢复上次文档」开关（设置 §4.8，需求方 2026-11-18）：关→空态直进、加快冷启动；
+    // 深链/拖放 pending 在下方照常处理，不受开关影响（那是用户动作，不是自动恢复）。
+    if (restore && settings().restoreOnLaunch !== false) {
       try {
         const doc = await api.openDoc(restore.path);
+        setDisk(doc.meta.id, doc.src);
         setDoc(doc);
         const pos = positionOf(doc);
         if (pos) setNavRequest({ kind: "restore", sec: pos.sec, secText: pos.secText, ratio: pos.ratio, secOff: pos.secOff });
@@ -587,7 +683,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     mode, dirty, side, focusMode, activeSec, toasts, navRequest, histIdx, histLen: () => history.length, draftSrc,
     tabs, activeTabId, closeTab,
     refreshDocs, openMeta, openPath, openSlug, requestAnchor,
-    enterEdit, toggleEdit, pushHist, setDraft, save, discard, applySaved,
+    enterEdit, toggleEdit, pushHist, setDraft, save, saveSmart, saveAs, discard, applySaved,
     saveSettings, setSide, toggleFocus, toast, setActiveSec,
     schedulePosition, flushPosition, providePositionSource,
     back, forward, clearNav,

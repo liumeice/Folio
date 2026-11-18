@@ -112,3 +112,16 @@ test("侧栏宽度不再是设置行，改由分隔条管：layout.clampSide 兜
   assert.equal(clampSide(null, 1280), SIDE_DEFAULT, "无记录用默认宽度");
   assert.equal(clampSide(500, 850), 210, "窗口窄时 sideMax 收到 210（850−680=170 再夹到下限），不会给下不去的宽度");
 });
+
+test("开关行与首启默认（需求方 2026-11-18：浅色主题 + 石青强调，双语言一致）", async () => {
+  const { ACCENTS } = await import("../src/lib/accent.ts");
+  const sw = ITEMS.find((i) => i.control.kind === "switch")!;
+  assert.equal(sw.key, "restoreOnLaunch");
+  assert.equal(sw.group, "appearance");
+  assert.equal(sw.get(S()), true, "开关默认=开（恢复上次文档）");
+  assert.equal(sw.get(S(sw.set(S(), false))), false);
+  assert.equal(sw.get(S(sw.set(S(), "true" as unknown as boolean))), false, "非 true 一律按关——只认布尔真");
+  assert.equal(DEFAULT_SETTINGS.theme, "light", "首启默认主题=浅色");
+  assert.equal(DEFAULT_SETTINGS.accent, "#1B6372", "首启默认强调色=石青浅档");
+  assert.ok(ACCENTS.some((a) => a.id === "#1B6372" && a.name === "石青"), "默认强调色必须是色板内的石青");
+});

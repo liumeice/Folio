@@ -23,6 +23,8 @@ export default function Icons() {
       <symbol id="i-recent" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 8.5-8.5 9.75 9.75 0 0 0-6.37 2.6L3.5 8"/><path d="M3.5 4.5v4h4"/><path d="M12 8v4l3.5 2"/></symbol>
       <symbol id="i-outline" viewBox="0 0 24 24"><path d="M5 6h.01"/><path d="M9 6h11"/><path d="M9 12h.01"/><path d="M13 12h7"/><path d="M9 18h.01"/><path d="M13 18h7"/></symbol>
       <symbol id="i-file" viewBox="0 0 24 24"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4"/></symbol>
+      {/* 另存为（2026-11-18）：软盘轮廓 + 出离箭头，线条制式同工具图标集 */}
+      <symbol id="i-save-as" viewBox="0 0 24 24"><path d="M6.5 3.5h8l4 4v8"/><path d="M6.5 3.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h4.2"/><path d="M8.5 3.5v4h5"/><path d="M13.5 16.5h7"/><path d="M17.5 13.5l3 3-3 3"/></symbol>
       <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3l2.6 2.6 5-5.2"/></symbol>
       <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11M4.6 6.5h.01M4.6 12h.01M4.6 17.5h.01"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.6l4.4 4.4L19 7.5"/></symbol>

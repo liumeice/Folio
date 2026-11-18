@@ -158,6 +158,8 @@ async function apiExportPdf(path: string, bgColor: string): Promise<void> {
 }
 
 async function apiToggleTask(path: string, nth: number): Promise<DocFull> {
+  /* 已退役自 UI 调用（2026-11-18 手动保存定夺）：Reader 打勾改为 flipTaskInSrc 内存翻转 + 显式「保存」落盘。
+   * Rust 命令 toggle_task 与 folio-core 权威实现、api 层与 mock 均保留——flipTaskInSrc 的镜像测试以此函数为参照。 */
   return isTauri ? invoke("toggle_task", { path, nth }) : mock.toggleTask(path, nth);
 }
 async function apiScanFolder(root: string): Promise<ScanReport> {
@@ -239,6 +241,7 @@ function sanitizeSettings(raw: unknown): Settings | null {
     align: en(o.align, ["left", "justify"] as const, D.align),
     codeFs: num(o.codeFs, "codeFs", D.codeFs),
     tableDensity: en(o.tableDensity, ["compact", "standard", "loose"] as const, D.tableDensity),
+    restoreOnLaunch: typeof o.restoreOnLaunch === "boolean" ? o.restoreOnLaunch : D.restoreOnLaunch,
   };
 }
 

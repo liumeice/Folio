@@ -166,13 +166,17 @@ pub struct Settings {
     pub code_fs: f64,
     /// 表格密度："compact" | "standard" | "loose"
     pub table_density: String,
+    /// 启动时自动恢复上次文档；false = 空态启动（需求方 2026-11-18）。
+    /// 旧库 JSON 缺此字段时经 struct 级 serde(default) 取 Default=true，行为不回退。
+    pub restore_on_launch: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
+        // 首启默认＝浅色 + 石青（需求方 2026-11-18）；必须与 src/lib/defaults.ts 逐字段一致
         Settings {
-            theme: "dark".into(),
-            accent: "#2DD4BF".into(),
+            theme: "light".into(),
+            accent: "#1B6372".into(),
             serif: true,
             fs_serif: 15.5,
             fs_sans: 14.0,
@@ -186,6 +190,7 @@ impl Default for Settings {
             align: "left".into(),
             code_fs: 12.5,
             table_density: "standard".into(),
+            restore_on_launch: true,
         }
     }
 }
