@@ -10,6 +10,8 @@ use folio_db::Db;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(desktop)]
+use tauri::{PhysicalPosition, PhysicalSize};
 
 pub struct AppState {
     db: Arc<Db>,
@@ -21,6 +23,29 @@ pub struct AppState {
 
 fn errstr<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
+}
+
+/// 启动几何钳制（2026-11-19 需求：窗口下沿不得撑到任务栏以下）。
+/// conf 的 1280×820 在高缩放下可能高于「监视器工作区」（监视器去掉任务栏），
+/// 且 config 的 center 是按整屏居中而不是按工作区，底边会被任务栏盖住。
+/// 这里把工作区当硬上界（留 12px 边距）收缩窗口尺寸，并按工作区重新居中。
+/// 最小尺寸 1000×620 由 tao 约束兜底：极小屏幕上宁可触底也不破 minWidth/minHeight。
+#[cfg(desktop)]
+fn clamp_window_to_work_area(app: &tauri::App) {
+    let Some(win) = app.get_webview_window("main") else { return };
+    let Ok(Some(monitor)) = win.current_monitor() else { return };
+    let wa = monitor.work_area();
+    let Ok(size) = win.outer_size() else { return };
+    let margin = 12u32;
+    let max_w = wa.size.width.saturating_sub(margin * 2);
+    let max_h = wa.size.height.saturating_sub(margin * 2);
+    let (w, h) = (size.width.min(max_w), size.height.min(max_h));
+    if w != size.width || h != size.height {
+        let _ = win.set_size(PhysicalSize::new(w, h));
+    }
+    let x = wa.position.x + ((wa.size.width.saturating_sub(w)) as i32) / 2;
+    let y = wa.position.y + ((wa.size.height.saturating_sub(h)) as i32) / 2;
+    let _ = win.set_position(PhysicalPosition::new(x, y));
 }
 
 /// deep link / 文件关联的统一载荷。协议契约（评审 v1·#9 定稿）：
@@ -660,6 +685,9 @@ pub fn run() {
         // 缺 init 会在运行时 panic（“state() called before manage()”，cargo check 无法发现）
         .plugin(tauri_plugin_deep_link::init())
         .setup(move |app| {
+            // 启动即钳制几何，早于窗口首次可见的绘制帧，用户看不到跳变
+            #[cfg(desktop)]
+            clamp_window_to_work_area(app);
             let data_dir = app.path().app_data_dir().map_err(errstr)?;
             let db = Arc::new(Db::open(&data_dir.join("folio.db")).map_err(errstr)?);
             // 草稿遗留清扫（2026-11-16 需求定夺的收尾）：旧会话把未保存的「未命名文档」记进过

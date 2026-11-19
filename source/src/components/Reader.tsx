@@ -198,7 +198,10 @@ export default function Reader() {
     anchorsCache = null;      // 新 DOM：锚点表作废
     lastTopLine = 0;
     markTypesetSettled(-1);   // 新一版内容尚未排版：ratio 落定门重新关闸（同文档重开也不豁免）
+    performance.mark("folio:render:start");
     article.innerHTML = mdToHtml(doc.src);
+    performance.mark("folio:render:innerHTML");
+    performance.measure("folio:render", "folio:render:start", "folio:render:innerHTML");
     applyColorChips(article);   // 色值前置色块（规范 §4.5）：纯同步 DOM 扫描，随首屏一起出现
     const h1 = article.querySelector("h1");
     if (h1) {
@@ -212,7 +215,11 @@ export default function Reader() {
       if (seq !== renderSeq) return;
       const run = () => {
         if (seq !== renderSeq) return;
-        pendingImages = hydrateImages(doc, seq); // v1.2：图片水合收编进 typesetDone 组成项（二轮评审 3.2）
+        performance.mark("folio:images:start");
+        pendingImages = hydrateImages(doc, seq).finally(() => {   // v1.2：图片水合收编进 typesetDone 组成项（二轮评审 3.2）
+          performance.mark("folio:images:end");
+          performance.measure("folio:images", "folio:images:start", "folio:images:end");
+        });
         void import("../lib/codehl").then((m) => { if (seq === renderSeq) void m.highlightCodeBlocks(article); });
         void typesetDoc(doc, seq); // 公式 → 图表（内部自守卫；库缺失时各自退化 pre，不惊主流程）
       };
@@ -239,20 +246,26 @@ export default function Reader() {
    * 链尾（含图片水合）= typesetDone：标记落定（ratio 门）+ 对 lastNav 做一次终局重放（第一层
    * 补偿保证过程不跳，这一步保证终点对；采样稳定后再兜一轮，方案 §4.2 第二/三层）。 */
   async function typesetDoc(doc: DocFull, seq: number) {
-    await whenVisible();
-    if (seq !== renderSeq) return;
-    await typesetMathIn(article);
-    if (seq !== renderSeq || !sameDoc(doc)) return; // 或 article.contains(el)：容器已换即停
-    await renderMermaid(article, undefined, s.settings().theme);
-    if (seq !== renderSeq || !sameDoc(doc)) return;
-    await renderZenuml(article, s.settings().theme); // zenuml 原生通道（@zenuml/core，mermaid v11 已不含该类型）
-    await pendingImages;                              // 远程/本地图片尺寸落定（load 迟到由兜底层再收）
-    if (seq !== renderSeq || !sameDoc(doc)) return;
-    onTypesetSettled(doc, seq);
-    // 第三层兜底：排版链 resolve 后仍可能有迟到尺寸（未测高远程图、字体到达）——采样稳定后再补一次
-    void ui.waitArticleStable(350, 3, 4000).then(() => {
-      if (seq === renderSeq && sameDoc(doc)) { layoutEpoch++; replayNav(doc); }
-    });
+    performance.mark("folio:typeset:start");
+    try {
+      await whenVisible();
+      if (seq !== renderSeq) return;
+      await typesetMathIn(article);
+      if (seq !== renderSeq || !sameDoc(doc)) return; // 或 article.contains(el)：容器已换即停
+      await renderMermaid(article, undefined, s.settings().theme);
+      if (seq !== renderSeq || !sameDoc(doc)) return;
+      await renderZenuml(article, s.settings().theme); // zenuml 原生通道（@zenuml/core，mermaid v11 已不含该类型）
+      await pendingImages;                              // 远程/本地图片尺寸落定（load 迟到由兜底层再收）
+      if (seq !== renderSeq || !sameDoc(doc)) return;
+      onTypesetSettled(doc, seq);
+      // 第三层兜底：排版链 resolve 后仍可能有迟到尺寸（未测高远程图、字体到达）——采样稳定后再补一次
+      void ui.waitArticleStable(350, 3, 4000).then(() => {
+        if (seq === renderSeq && sameDoc(doc)) { layoutEpoch++; replayNav(doc); }
+      });
+    } finally {
+      performance.mark("folio:typeset:end");
+      performance.measure("folio:typeset", "folio:typeset:start", "folio:typeset:end");
+    }
   }
 
   function onTypesetSettled(doc: DocFull, seq: number) {
@@ -479,17 +492,37 @@ export default function Reader() {
     s.schedulePosition();
   }
 
+  /* 标题表缓存（性能复检 2026-11-18 P2）：每次 scroll 不再 querySelectorAll + 逐项读
+   * offsetTop。键与锚点表同源（renderSeq / layoutEpoch / typeSig），DOM 或排版一变即重建；
+   * 当前节用二分找最后一个 top <= 阈值，2,000 标题下也是 O(log n)。 */
+  let headCache: { key: string; tops: number[]; secs: number[] } | null = null;
+  function headingTable(doc: DocFull | null) {
+    const key = (doc?.meta.id ?? "none") + "|" + renderSeq + "|" + layoutEpoch + "|" + typeSig();
+    if (headCache?.key === key) return headCache;
+    const els = [...article.querySelectorAll<HTMLElement>(HSEC)];
+    headCache = {
+      key,
+      tops: els.map((h) => h.offsetTop),
+      secs: els.map((h) => Number(h.dataset.sec) || 0),
+    };
+    return headCache;
+  }
+
   function updateActive() {
     const doc = s.current();
     if (doc) { const tl = topLineOf(doc); if (tl != null) lastTopLine = tl; }
-    const hs = [...article.querySelectorAll<HTMLElement>(HSEC)];
-    if (!hs.length) { s.setActiveSec(null); return; }
+    const t = headingTable(doc);
+    if (!t.tops.length) { s.setActiveSec(null); return; }
     const st = view.scrollTop + ACTIVE_SEC_ZONE;   // 大纲判据专用常量，不参与任何交接（R3）
-    let active: HTMLElement = hs[0];
-    for (const h of hs) if (h.offsetTop <= st) active = h;
+    let lo = 0, hi = t.tops.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (t.tops[mid] <= st) lo = mid + 1; else hi = mid;
+    }
+    let idx = Math.max(0, lo - 1);                 // 最后一个 top <= st；首个标题之前也取首项
     const max = view.scrollHeight - view.clientHeight;
-    if (max > 4 && view.scrollTop >= max - 4) active = hs[hs.length - 1];  // 触底强制末节；短文档不触发（v2 N2）
-    s.setActiveSec(Number(active.dataset.sec) || null);
+    if (max > 4 && view.scrollTop >= max - 4) idx = t.tops.length - 1;  // 触底强制末节；短文档不触发（v2 N2）
+    s.setActiveSec(t.secs[idx] || null);
   }
 
   /* 位置源：Reader 是唯一知道滚动真相的人。

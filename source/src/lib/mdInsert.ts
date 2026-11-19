@@ -4,12 +4,16 @@
 
 export type ListKind = "ul" | "ol" | "task";
 export type WrapKind = "bold" | "italic" | "code" | "strike" | "link";
+/** GitHub 风格标注块类型（口径对齐原型 editor-ctxmenu.html 与 md.ts 的 GFM Callouts） */
+export type CalloutKind = "NOTE" | "TIP" | "IMPORTANT" | "WARNING" | "CAUTION";
 
 /** 编辑窗右键菜单的命令（EditorBridge 执行，菜单只负责发命令） */
 export type EditorCmd =
   | { kind: "table"; cols: number; rows: number }
   | { kind: "code"; lang: string }
   | { kind: "heading"; level: number }
+  | { kind: "callout"; callout: CalloutKind }
+  | { kind: "emoji"; text: string }
   | { kind: "image" }
   | { kind: "link" }
   | { kind: "hr" }
@@ -98,6 +102,33 @@ export function codeBlockOp(src: string, from: number, to: number, lang: string)
     return { from, to, insert, selFrom: from + fence.length + 1, selTo: from + fence.length + 1 + sel.length };
   }
   return insertBlock(src, from, to, fence + "\n\n```", fence.length + 1);
+}
+
+/** 标注块 `> [!KIND]`（原型 2026-11-19 口径）：
+ *  有选区：选中各行转引用（去已有 > 前缀再加重加，保留缩进），上方插类型行，选区盖住正文；
+ *  单光标：整块插入 `> [!KIND]\n> `，光标停末行引用标记后。 */
+export function calloutOp(src: string, from: number, to: number, kind: CalloutKind): EditOp {
+  const head = `> [!${kind}]\n`;
+  if (from !== to) {
+    const { a, b } = lineRange(src, from, to);
+    const body = src.slice(a.start, b.end).split("\n")
+      .map((l) => {
+        const ws = leadingWs(l);
+        return ws + "> " + l.slice(ws.length).replace(/^>[ \t]?/, "");
+      })
+      .join("\n");
+    const insert = head + body;
+    return { from: a.start, to: b.end, insert, selFrom: a.start + head.length, selTo: a.start + insert.length };
+  }
+  const text = head + "> ";
+  return insertBlock(src, from, to, text, text.length);
+}
+
+/** Emoji 行内插入（原型 2026-11-19 insertInline 口径）：有选区则替换，光标停文本之后。
+ *  text 为短代码（`:smile:`）或 Unicode 字符，长度按 UTF-16 码元计，与 CM6 位置同系。 */
+export function emojiOp(_src: string, from: number, to: number, text: string): EditOp {
+  const pos = from + text.length;
+  return { from, to, insert: text, selFrom: pos, selTo: pos };
 }
 
 export function imageOp(src: string, from: number, to: number): EditOp {

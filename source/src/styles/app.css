@@ -654,6 +654,52 @@ svg{display:block}
 .ctx-grid .cell{width:14px;height:14px;border-radius:3px;border:1px solid var(--line-hi);
   background:transparent;cursor:pointer}
 .ctx-grid .cell.fill{background:color-mix(in srgb,var(--accent) 55%,transparent);border-color:var(--accent)}
+/* ---- 右键菜单子面板制式（对齐 editor-ctxmenu.html）：文字项字形 / 标注块标签 / 语言芯片 / emoji 面板 ---- */
+/* 功能图标用 ui-iconset-18 符号；.mi-glyph 只服务图标集未覆盖的字形项（🙂 与标题子面板 H1–H6） */
+.mi .mi-glyph{width:16px;flex:none;text-align:center;font-size:12px;line-height:1;font-family:var(--font-mono);color:var(--text-3)}
+.mi:hover .mi-glyph,.mi.kb .mi-glyph{color:var(--text)}
+/* 标注块子面板：GitHub callout 彩色标签（色板沿用原型固定值，不随主题变） */
+.ctxmenu .sub-drop .mi[data-callout="NOTE"]{--co:#4493f8}
+.ctxmenu .sub-drop .mi[data-callout="TIP"]{--co:#3fb950}
+.ctxmenu .sub-drop .mi[data-callout="IMPORTANT"]{--co:#ab7df8}
+.ctxmenu .sub-drop .mi[data-callout="WARNING"]{--co:#d29922}
+.ctxmenu .sub-drop .mi[data-callout="CAUTION"]{--co:#f85149}
+.ctxmenu .sub-drop .mi[data-callout] .callout-tag{width:92px;height:22px;flex:none;display:inline-flex;align-items:center;gap:6px;
+  padding:0 7px;border-radius:5px;border:1px solid var(--line);background:var(--bg-side);color:var(--text-2);
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.02em;line-height:1}
+.ctxmenu .sub-drop .mi[data-callout] .callout-tag .ico{width:14px;height:14px;color:var(--co)}
+.ctxmenu .sub-drop .mi[data-callout] .callout-tag b{font-weight:500;color:inherit}
+/* 代码块语言面板：分组 + 流式芯片，固定 378px 宽（超窗时由 positionSub 夹取） */
+.ctxmenu .sub-drop.langpick{width:378px;padding:7px 8px 6px}
+.ctx-lang .lgroup{display:grid;grid-template-columns:34px 1fr;gap:8px;align-items:start;padding:4px 2px}
+.ctx-lang .lgroup+.lgroup{border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent)}
+.ctx-lang .glabel{font-size:10px;line-height:22px;color:var(--text-3);letter-spacing:.06em;white-space:nowrap}
+.ctx-lang .lchips{display:flex;flex-wrap:wrap;gap:3px}
+.ctx-lang .lchip{height:23px;padding:0 8px;border-radius:6px;border:1px solid transparent;color:var(--text-2);
+  font-size:11.5px;line-height:21px;cursor:pointer;white-space:nowrap}
+.ctx-lang .lchip:hover{background:var(--bg-hover);border-color:var(--line);color:var(--text)}
+.ctx-lang .lchip:focus{outline:1.5px solid color-mix(in srgb,var(--accent) 60%,transparent);outline-offset:-1px}
+.ctx-lang .lchip.mute{color:var(--text-3)}
+/* Emoji 表情面板（原型 2026-11-19）：12 列格盘 + 短代码/Unicode 双制式切换 */
+.ctxmenu .sub-drop.emojipick{width:372px;padding:6px 7px 7px}
+.ctx-emoji .emoji-top{display:flex;align-items:center;gap:7px;padding:2px 2px 6px;border-bottom:1px solid var(--line);margin-bottom:5px}
+.ctx-emoji .emoji-title{font-size:12.5px;font-weight:600;color:var(--text)}
+.ctx-emoji .emoji-sub{font-size:10px;color:var(--text-3)}
+.ctx-emoji .emoji-modes{margin-left:auto;display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:6px;background:var(--bg-side)}
+.ctx-emoji .emoji-mode{border:0;background:transparent;color:var(--text-3);font:10px/1 var(--font-mono);padding:4px 7px;border-radius:4px;cursor:pointer}
+.ctx-emoji .emoji-mode:hover{color:var(--text)}
+.ctx-emoji .emoji-mode.on{background:var(--bg-raise);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.ctx-emoji .emoji-body{max-height:min(450px,62vh);overflow:auto;padding:0 1px}
+.ctx-emoji .emoji-group+.emoji-group{margin-top:4px;padding-top:4px;border-top:1px solid color-mix(in srgb,var(--line) 72%,transparent)}
+.ctx-emoji .emoji-gt{font-size:9.5px;color:var(--text-3);letter-spacing:.04em;margin:0 1px 3px}
+.ctx-emoji .emoji-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:1px}
+.ctx-emoji .emoji-item{height:25px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:4px;background:none;
+  color:var(--text);font:16px/1 "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",var(--font-ui);cursor:pointer;padding:0}
+.ctx-emoji .emoji-item:hover{background:var(--bg-hover);border-color:var(--line)}
+.ctx-emoji .emoji-item:active{transform:scale(.95)}
+.ctx-emoji .emoji-item:focus,.ctx-emoji .emoji-mode:focus{outline:1.5px solid color-mix(in srgb,var(--accent) 60%,transparent);outline-offset:-1px}
+.ctx-emoji .emoji-foot{display:flex;justify-content:space-between;gap:8px;margin-top:5px;padding:5px 2px 0;border-top:1px solid var(--line);font-size:9.5px;color:var(--text-3)}
+.ctx-emoji .emoji-foot code{font:10px var(--font-mono);color:var(--text-2)}
 .root-chip{cursor:pointer}
 
 /* ---- 多页签（v1.2）：可关、可切、脏点、中键关闭 ---- */

@@ -92,19 +92,49 @@ export default function App() {
    * 挡不住指针在侧栏时的整页缩放。阅读态才接管；编辑态保持原行为。 */
   let wheelAcc = 0;
   let wheelTimer: number | undefined;
-  function bumpReaderFont(dir: number) {
-    const st = s.settings();
-    const key = st.serif ? "fsSerif" : "fsSans";
-    const cur = st[key];
-    const next = clampNum(key, cur + dir * STEP[key]);
-    if (next === cur) return;
-    // 代码块与正文一起缩放（需求 2026-11-18）：代码字号同向步进；
-    // 表格在 CSS 里用 em 跟随正文，无需在这里改设置。
-    const codeNext = clampNum("codeFs", st.codeFs + dir * STEP.codeFs);
-    s.saveSettings(key === "fsSerif"
-      ? { fsSerif: next, codeFs: codeNext }
-      : { fsSans: next, codeFs: codeNext });
+  let wheelRaf = 0;
+  let wheelSave: number | undefined;
+  /** 连续滚轮期间的本地目标值（不写 settings signal，避免每步触发全量排版 effect） */
+  let wheelTarget: { key: "fsSerif" | "fsSans"; fs: number; code: number } | null = null;
+
+  function paintWheelTarget() {
+    wheelRaf = 0;
+    const t = wheelTarget;
+    if (!t) return;
+    // 预览只写本次缩放涉及的两个变量；表格 em 跟随 --prose-fs，界面字号不受影响
+    const r = document.documentElement.style;
+    r.setProperty("--prose-fs", t.fs + "px");
+    r.setProperty("--code-fs", t.code + "px");
   }
+
+  /** 滚轮停止 250ms 后一次性落库：typeVars effect 写同一组值，视觉不跳。 */
+  function queueWheelSave() {
+    if (wheelSave) window.clearTimeout(wheelSave);
+    wheelSave = window.setTimeout(() => {
+      wheelSave = undefined;
+      const t = wheelTarget;
+      if (!t) return;
+      wheelTarget = null;
+      s.saveSettings(t.key === "fsSerif"
+        ? { fsSerif: t.fs, codeFs: t.code }
+        : { fsSans: t.fs, codeFs: t.code });
+    }, 250);
+  }
+
+  function bumpReaderFont(dir: number, steps = 1) {
+    if (!wheelTarget) {
+      const st = s.settings();
+      const key = st.serif ? "fsSerif" : "fsSans";
+      wheelTarget = { key, fs: st[key], code: st.codeFs };
+    }
+    const t = wheelTarget;
+    t.fs = clampNum(t.key, t.fs + dir * steps * STEP[t.key]);
+    // 代码块与正文一起缩放（需求 2026-11-18）；表格在 CSS 里用 em 跟随正文
+    t.code = clampNum("codeFs", t.code + dir * steps * STEP.codeFs);
+    if (!wheelRaf) wheelRaf = requestAnimationFrame(paintWheelTarget);
+    queueWheelSave();
+  }
+
   function onWheel(ev: WheelEvent) {
     if (!ev.ctrlKey) return;
     // 任何模式下都不让 WebView 整页缩放（Ctrl+滚轮默认行为）；只有阅读态才调正文字号
@@ -120,7 +150,7 @@ export default function App() {
     }
     const dir = wheelAcc < 0 ? 1 : -1;   // 向上滚 = 放大
     wheelAcc = 0;
-    for (let i = 0; i < Math.min(steps, 2); i++) bumpReaderFont(dir);
+    bumpReaderFont(dir, Math.min(steps, 2));
     if (wheelTimer) window.clearTimeout(wheelTimer);
     wheelTimer = window.setTimeout(() => { wheelAcc = 0; }, 300);
   }
@@ -233,6 +263,15 @@ export default function App() {
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("wheel", onWheel);
       if (wheelTimer) window.clearTimeout(wheelTimer);
+      if (wheelRaf) cancelAnimationFrame(wheelRaf);
+      if (wheelSave) window.clearTimeout(wheelSave);
+      if (wheelTarget) {
+        const t = wheelTarget;
+        wheelTarget = null;
+        s.saveSettings(t.key === "fsSerif"
+          ? { fsSerif: t.fs, codeFs: t.code }
+          : { fsSans: t.fs, codeFs: t.code });
+      }
       disposeDrag?.();
     });
   });

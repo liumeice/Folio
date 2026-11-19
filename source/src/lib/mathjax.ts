@@ -24,6 +24,34 @@ async function ready(): Promise<MathJaxLike | null> {
   return typeof M.tex2svgPromise === "function" ? M : null;
 }
 
+/** 按需加载 MathJax（2026-11-18 性能复检）：无公式文档不再在启动时解析 2.2MB 脚本。
+ *  必须 config.js → tex-svg-full.js 顺序执行（config 注释的硬约束）；加载失败走可见退化。
+ *  同一进程只尝试一次；成功后 globalThis.MathJax 常驻，后续文档零成本。 */
+let loader: Promise<MathJaxLike | null> | null = null;
+function loadMathJax(): Promise<MathJaxLike | null> {
+  if (mathJax()?.tex2svgPromise) return ready();
+  // 纯 Node 测试环境没有 document：保持原有「库缺失 → 退化」语义
+  if (typeof document === "undefined") return Promise.resolve(null);
+  if (!loader) {
+    loader = new Promise((resolve) => {
+      const cfg = document.createElement("script");
+      cfg.src = "/vendor/mathjax/config.js";
+      cfg.async = false;
+      cfg.onerror = () => resolve(null);
+      cfg.onload = () => {
+        const main = document.createElement("script");
+        main.src = "/vendor/mathjax/tex-svg-full.js";
+        main.async = false;
+        main.onerror = () => resolve(null);
+        main.onload = () => resolve(mathJax());
+        document.head.appendChild(main);
+      };
+      document.head.appendChild(cfg);
+    });
+  }
+  return loader.then(() => ready());
+}
+
 function codeOf(el: Element): string {
   return el.getAttribute("data-code") ?? "";
 }
@@ -49,7 +77,7 @@ export async function typesetMathIn(
 ): Promise<void> {
   const els = [...scope.querySelectorAll<HTMLElement>("[data-math]")];
   if (!els.length) return;
-  const M = await ready();
+  const M = await loadMathJax();
   if (!M) { // 库缺失/未就绪：全部走可见退化，绝不留 opacity:0 的空白
     for (const el of els) fallback(el, codeOfFn(el));
     return;

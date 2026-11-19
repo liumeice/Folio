@@ -8,7 +8,7 @@ import { api, isTauri } from "../lib/api";
 import { revealInFolder, confirmBox, pickFolderAndScan } from "../lib/actions";
 import { APP_VERSION, IS_DEV } from "../lib/version";
 import type { CtxTarget } from "../lib/ui";
-import type { EditorCmd, ListKind, WrapKind } from "../lib/mdInsert";
+import type { CalloutKind, EditorCmd, ListKind, WrapKind } from "../lib/mdInsert";
 
 const KEYMAP: [string, string][] = [
   ["Ctrl O", "打开本地 .md（可多选）"],
@@ -252,38 +252,177 @@ export function HitNav() {
   );
 }
 
-/* ── 编辑窗右键菜单（方案 N-CTX-01）────────────────────────────
- * 三条图标行等分铺满；表格/标题/代码走子面板；列表连点不关菜单。
+/* ── 编辑窗右键菜单（方案 N-CTX-01；2026-11-19 按原型改版）──────
+ * 功能图标一律 ui-iconset-18 图标集（需求方定夺）；标注块/Emoji 两枚图标集未覆盖，
+ * 分别用原型线性符号 ix-callout 与 🙂 字形；
+ * 表格/标题/代码（语言分组面板）/标注块/Emoji 表情走子面板；列表连点不关菜单。
  * 动作全部经 EditorBridge 回到 CM，文档变更一次事务。 */
-const EDIT_ACTIONS = [
-  ["cut", "剪切", "Ctrl+X", "i-cut", true],
-  ["copy", "复制", "Ctrl+C", "i-copy", true],
-  ["paste", "粘贴", "Ctrl+V", "i-paste", false],
-  ["delete", "删除所选", "Delete", "i-trash", true],
-  ["selectAll", "全选", "Ctrl+A", "i-select-all", false],
-] as const;
+interface CTool { act: string; label: string; kbd: string; needSel: boolean; icon?: string; glyph?: string; glyphCls?: string }
+interface WTool { style: WrapKind; label: string; kbd: string; icon?: string; glyph?: string; glyphCls?: string }
+interface LTool { list: ListKind | "quote"; label: string; icon?: string; glyph?: string; glyphCls?: string }
 
-const WRAP_ACTIONS = [
-  ["bold", "加粗", "Ctrl+B", "i-bold"],
-  ["italic", "斜体", "Ctrl+I", "i-italic"],
-  ["code", "行内代码", "", "i-code"],
-  ["strike", "删除线", "", "i-strike"],
-  ["link", "链接", "", "i-link"],
-] as const;
+const EDIT_ACTIONS: CTool[] = [
+  { act: "cut", label: "剪切", kbd: "Ctrl+X", needSel: true, icon: "i-scissors" },
+  { act: "copy", label: "复制", kbd: "Ctrl+C", needSel: true, icon: "i-copy" },
+  { act: "paste", label: "粘贴", kbd: "Ctrl+V", needSel: false, icon: "i-paste" },
+  { act: "delete", label: "删除所选", kbd: "Delete", needSel: true, icon: "i-trash" },
+  { act: "selectAll", label: "全选", kbd: "Ctrl+A", needSel: false, icon: "i-select-all" },
+];
 
-const LIST_ACTIONS = [
-  ["ul", "无序列表", "i-list"],
-  ["ol", "有序列表", "i-ol"],
-  ["task", "任务清单", "i-task"],
-  ["quote", "引用", "i-quote"],
-] as const;
+const WRAP_ACTIONS: WTool[] = [
+  { style: "bold", label: "加粗", kbd: "Ctrl+B", icon: "i-bold" },
+  { style: "italic", label: "斜体", kbd: "Ctrl+I", icon: "i-italic" },
+  { style: "code", label: "行内代码", kbd: "", icon: "i-code" },
+  { style: "strike", label: "删除线", kbd: "", icon: "i-strikethrough" },
+  { style: "link", label: "链接", kbd: "", icon: "i-link" },
+];
 
-const CODE_LANGS = ["", "text", "ts", "js", "py", "rs", "html", "css", "json", "mermaid"];
+const LIST_ACTIONS: LTool[] = [
+  { list: "ul", label: "无序列表", icon: "i-list-bullet" },
+  { list: "ol", label: "有序列表", icon: "i-list-number" },
+  { list: "task", label: "任务清单", icon: "i-task-list" },
+  { list: "quote", label: "引用", icon: "i-quote" },
+];
+
+/* 代码块语言面板（原型口径）：分组 + 芯片；lang 即写进围栏的值，""=不带语言标识 */
+interface LangItem { lang: string; label: string; tip: string; mute?: boolean }
+const LANG_GROUPS: { group: string; items: LangItem[] }[] = [
+  { group: "通用", items: [
+    { lang: "plaintext", label: "纯文本", tip: "plaintext / text" },
+    { lang: "md", label: "Markdown", tip: "md / markdown" },
+    { lang: "", label: "无", tip: "不带语言标识", mute: true },
+  ] },
+  { group: "前端", items: [
+    { lang: "js", label: "JavaScript", tip: "js / javascript" },
+    { lang: "ts", label: "TypeScript", tip: "ts / typescript" },
+    { lang: "jsx", label: "React", tip: "jsx / tsx" },
+    { lang: "html", label: "HTML", tip: "html" },
+    { lang: "css", label: "CSS", tip: "css" },
+  ] },
+  { group: "后端", items: [
+    { lang: "rust", label: "Rust", tip: "rust" },
+    { lang: "python", label: "Python", tip: "python / py" },
+    { lang: "go", label: "Go", tip: "go" },
+    { lang: "java", label: "Java", tip: "java" },
+    { lang: "cpp", label: "C / C++", tip: "c / cpp / c++" },
+    { lang: "cs", label: "C#", tip: "cs" },
+  ] },
+  { group: "数据", items: [
+    { lang: "json", label: "JSON", tip: "json" },
+    { lang: "yaml", label: "YAML", tip: "yaml / yml" },
+    { lang: "toml", label: "TOML", tip: "toml" },
+    { lang: "xml", label: "XML", tip: "xml" },
+    { lang: "sql", label: "SQL", tip: "sql" },
+  ] },
+  { group: "脚本", items: [
+    { lang: "bash", label: "Shell", tip: "bash / sh / shell" },
+    { lang: "powershell", label: "PowerShell", tip: "powershell" },
+  ] },
+  { group: "图表", items: [
+    { lang: "mermaid", label: "Mermaid", tip: "mermaid" },
+    { lang: "mathjax", label: "MathJax", tip: "mathjax / math" },
+  ] },
+  { group: "其他", items: [
+    { lang: "dockerfile", label: "Dockerfile", tip: "dockerfile" },
+    { lang: "diff", label: "差异对比", tip: "diff" },
+  ] },
+];
+
+/* GitHub 风格标注块（> [!KIND]，阅读区按 md.ts GFM Callouts 渲染）；配色沿用原型口径 */
+const CALLOUTS: { kind: CalloutKind; label: string }[] = [
+  { kind: "NOTE", label: "提示" },
+  { kind: "TIP", label: "技巧" },
+  { kind: "IMPORTANT", label: "重要" },
+  { kind: "WARNING", label: "警告" },
+  { kind: "CAUTION", label: "危险" },
+];
+
+/* Emoji 插入面板（原型 2026-11-19 新增）：五种文档高频场景分组，展示顺序即此顺序
+ * （原型 EMOJI_GROUP_ORDER：状态与标记优先）；alt 为短代码别名，仅进悬浮提示。 */
+interface EmojiItem { char: string; code: string; scene: string; alt?: string }
+const EMOJI_GROUPS: { group: string; items: EmojiItem[] }[] = [
+  { group: "状态与标记", items: [
+    { char: "✅", code: ":white_check_mark:", scene: "已完成、通过" },
+    { char: "☑️", code: ":ballot_box_with_check:", scene: "已勾选" },
+    { char: "❌", code: ":x:", scene: "错误、不支持" },
+    { char: "⚠️", code: ":warning:", scene: "警告、注意" },
+    { char: "❗", code: ":exclamation:", scene: "重点提示" },
+    { char: "❓", code: ":question:", scene: "待确认" },
+    { char: "🚧", code: ":construction:", scene: "进行中、施工中" },
+    { char: "🔒", code: ":lock:", scene: "锁定、权限" },
+    { char: "🔥", code: ":fire:", scene: "热门、重点" },
+    { char: "⭐", code: ":star:", scene: "推荐、收藏" },
+    { char: "🆕", code: ":new:", scene: "新增" },
+    { char: "🆗", code: ":ok:", scene: "可以、同意" },
+  ] },
+  { group: "表情与情绪", items: [
+    { char: "🙂", code: ":slightly_smiling_face:", scene: "友好、中性" },
+    { char: "😄", code: ":smile:", scene: "开心、顺利" },
+    { char: "😂", code: ":joy:", scene: "幽默、自嘲" },
+    { char: "😊", code: ":blush:", scene: "温和、客气" },
+    { char: "😉", code: ":wink:", scene: "暗示、玩笑" },
+    { char: "🤔", code: ":thinking:", scene: "思考、疑问" },
+    { char: "😅", code: ":sweat_smile:", scene: "尴尬、勉强" },
+    { char: "😢", code: ":cry:", scene: "遗憾、惋惜" },
+    { char: "😮", code: ":open_mouth:", scene: "惊讶" },
+    { char: "😡", code: ":rage:", scene: "强烈不满，慎用" },
+    { char: "❤️", code: ":heart:", scene: "喜欢、感谢" },
+    { char: "🎉", code: ":tada:", scene: "发布、完成、庆祝" },
+  ] },
+  { group: "手势与人物", items: [
+    { char: "👍", code: ":+1:", scene: "赞同、通过", alt: ":thumbsup:" },
+    { char: "👎", code: ":-1:", scene: "反对、否决", alt: ":thumbsdown:" },
+    { char: "👏", code: ":clap:", scene: "赞赏、鼓掌" },
+    { char: "🙏", code: ":pray:", scene: "感谢、拜托" },
+    { char: "💪", code: ":muscle:", scene: "加油、有干劲" },
+    { char: "👀", code: ":eyes:", scene: "关注、围观、评审中" },
+    { char: "🤝", code: ":handshake:", scene: "合作、达成" },
+    { char: "✌️", code: ":v:", scene: "完成、轻松" },
+  ] },
+  { group: "开发与文档常备", items: [
+    { char: "🐛", code: ":bug:", scene: "缺陷、问题" },
+    { char: "🔧", code: ":wrench:", scene: "修复、配置" },
+    { char: "✨", code: ":sparkles:", scene: "新特性" },
+    { char: "📝", code: ":memo:", scene: "笔记、文档" },
+    { char: "📌", code: ":pushpin:", scene: "固定说明、要点" },
+    { char: "📎", code: ":paperclip:", scene: "附件" },
+    { char: "🔗", code: ":link:", scene: "链接、关联" },
+    { char: "💡", code: ":bulb:", scene: "提示、想法" },
+    { char: "📊", code: ":bar_chart:", scene: "数据、统计" },
+    { char: "🚀", code: ":rocket:", scene: "上线、发布" },
+    { char: "🎯", code: ":dart:", scene: "目标、重点" },
+    { char: "🕐", code: ":clock1:", scene: "时间、排期" },
+    { char: "💬", code: ":speech_balloon:", scene: "评论、反馈" },
+    { char: "👉", code: ":point_right:", scene: "指向下一步" },
+    { char: "🔍", code: ":mag:", scene: "搜索、查找" },
+    { char: "📦", code: ":package:", scene: "发布包、模块" },
+    { char: "🧪", code: ":test_tube:", scene: "测试" },
+    { char: "🗑️", code: ":wastebasket:", scene: "删除、废弃" },
+  ] },
+  { group: "箭头与分隔", items: [
+    { char: "➡️", code: ":arrow_right:", scene: "下一步" },
+    { char: "⬅️", code: ":arrow_left:", scene: "返回" },
+    { char: "⬆️", code: ":arrow_up:", scene: "上升、更新" },
+    { char: "⬇️", code: ":arrow_down:", scene: "下降、下载" },
+    { char: "🔁", code: ":repeat:", scene: "循环、重试" },
+    { char: "➕", code: ":heavy_plus_sign:", scene: "增加" },
+    { char: "➖", code: ":heavy_minus_sign:", scene: "减少" },
+  ] },
+];
+type EmojiMode = "code" | "unicode";
+const emojiCodes = (it: EmojiItem) => (it.alt ? `${it.code} / ${it.alt}` : it.code);
+
+const toolIcon = (t: { icon?: string; glyph?: string; glyphCls?: string }) =>
+  t.icon
+    ? <svg class="ico"><use href={"#" + t.icon} /></svg>
+    : <span class={t.glyphCls}>{t.glyph}</span>;
 
 function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
   const [hasSel, setHasSel] = createSignal(props.tt.hasSelection);
   const [openSub, setOpenSub] = createSignal<string | null>(null);
   const [hover, setHover] = createSignal({ c: 3, r: 3 });
+  /* Emoji 插入制式：短代码（:smile:）或 Unicode 字符，面板内切换、不关菜单（原型口径） */
+  const [emojiMode, setEmojiMode] = createSignal<EmojiMode>("code");
   let el!: HTMLDivElement;
 
   const bridge = () => ui.getEditorBridge();
@@ -329,7 +468,7 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
 
   function focusables(): HTMLElement[] {
     if (!el) return [];
-    return [...el.querySelectorAll<HTMLElement>(".ctool:not(:disabled), .mi[data-ctx]")]
+    return [...el.querySelectorAll<HTMLElement>(".ctool:not(:disabled), .mi[data-ctx], .lchip, .emoji-mode, .emoji-item")]
       .filter((x) => x.offsetParent !== null);
   }
 
@@ -358,7 +497,7 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
         if (!cur?.dataset.sub) break;
         e.preventDefault();
         setOpenSub(cur.dataset.ctx ?? null);
-        queueMicrotask(() => cur.querySelector<HTMLElement>(".sub-drop .mi")?.focus());
+        queueMicrotask(() => cur.querySelector<HTMLElement>(".sub-drop .mi, .sub-drop .lchip, .sub-drop .emoji-item")?.focus());
         break;
       }
       case "ArrowLeft": {
@@ -375,7 +514,7 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
         e.preventDefault();
         if (cur?.dataset.sub && !cur.dataset.default) {
           setOpenSub(cur.dataset.ctx ?? null);
-          queueMicrotask(() => cur.querySelector<HTMLElement>(".sub-drop .mi")?.focus());
+          queueMicrotask(() => cur.querySelector<HTMLElement>(".sub-drop .mi, .sub-drop .lchip, .sub-drop .emoji-item")?.focus());
         } else {
           cur?.click();
         }
@@ -391,7 +530,8 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
     }
   }
 
-  const menuItem = (icon: string, label: string, runFn: () => void, opts: { sub?: string; default?: boolean } = {}) => (
+  const menuItem = (icon: string, label: string, runFn: () => void,
+    opts: { sub?: string; default?: boolean; glyph?: string; subClass?: string } = {}) => (
     <div class="mi" classList={{ sub: !!opts.sub }}
       data-ctx={opts.sub ?? label} data-sub={opts.sub ? "1" : undefined}
       data-default={opts.default ? "1" : undefined}
@@ -404,12 +544,15 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
         setOpenSub(null);
       }}
       onClick={(e) => { e.stopPropagation(); runFn(); }}>
-      <svg class="ico ico-14"><use href={"#" + icon} /></svg>
+      {opts.glyph
+        ? <span class="mi-glyph">{opts.glyph}</span>
+        : <svg class="ico ico-14"><use href={"#" + icon} /></svg>}
       <span class="t">{label}</span>
       <Show when={opts.sub}>
         <svg class="ico ico-12"><use href="#i-chev-r" /></svg>
         <Show when={openSub() === opts.sub}>
-        <div class="sub-drop open" ref={(node) => queueMicrotask(() => positionSub(node))}>
+        <div class={"sub-drop open" + (opts.subClass ? " " + opts.subClass : "")}
+          ref={(node) => queueMicrotask(() => positionSub(node))}>
           {opts.sub === "table" ? (
             <div class="ctx-gridwrap" onClick={(e) => e.stopPropagation()}>
               <div class="ctx-gridlab">{hover().c} 列 × {hover().r} 行</div>
@@ -428,16 +571,82 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
             <For each={[1, 2, 3, 4, 5, 6]}>{(lv) => (
               <div class="mi" data-ctx={`head-${lv}`} role="menuitem" tabIndex={-1}
                 onClick={(e) => { e.stopPropagation(); void run({ kind: "heading", level: lv }); }}>
+                <span class="mi-glyph">{`H${lv}`}</span>
                 <span class="t">{`标题 ${lv} 级`}</span>
               </div>
             )}</For>
-          ) : (
-            <For each={CODE_LANGS}>{(lang) => (
-              <div class="mi" data-ctx={`lang-${lang || "none"}`} role="menuitem" tabIndex={-1}
-                onClick={(e) => { e.stopPropagation(); void run({ kind: "code", lang }); }}>
-                <span class="t">{lang || "无语言"}</span>
+          ) : opts.sub === "callout" ? (
+            <For each={CALLOUTS}>{(c) => (
+              <div class="mi" data-ctx={`callout-${c.kind}`} data-callout={c.kind}
+                role="menuitem" tabIndex={-1}
+                onClick={(e) => { e.stopPropagation(); void run({ kind: "callout", callout: c.kind }); }}>
+                <span class="callout-tag">
+                  <svg class="ico ico-14"><use href={"#s-" + c.kind.toLowerCase()} /></svg>
+                  <b>{c.kind}</b>
+                </span>
+                <span class="t">{c.label}</span>
               </div>
             )}</For>
+          ) : opts.sub === "emoji" ? (
+            <div class="ctx-emoji" onClick={(e) => e.stopPropagation()}>
+              <div class="emoji-top">
+                <div>
+                  <div class="emoji-title">Emoji 表情</div>
+                  <div class="emoji-sub">悬停查看短代码，单击插入</div>
+                </div>
+                <div class="emoji-modes">
+                  <For each={["code", "unicode"] as EmojiMode[]}>{(m) => (
+                    <button type="button" class="emoji-mode" classList={{ on: emojiMode() === m }}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={(e) => { e.stopPropagation(); setEmojiMode(m); }}>
+                      {m === "code" ? "短代码" : "Unicode"}
+                    </button>
+                  )}</For>
+                </div>
+              </div>
+              <div class="emoji-body">
+                <For each={EMOJI_GROUPS}>{(g) => (
+                  <div class="emoji-group">
+                    <div class="emoji-gt">{`${g.group} · ${g.items.length}`}</div>
+                    <div class="emoji-grid">
+                      <For each={g.items}>{(it) => (
+                        <button type="button" class="emoji-item"
+                          title={`${emojiCodes(it)} · ${it.scene}`}
+                          aria-label={`${emojiCodes(it)}，${it.scene}`}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void run({ kind: "emoji", text: emojiMode() === "code" ? it.code : it.char });
+                          }}>
+                          {it.char}
+                        </button>
+                      )}</For>
+                    </div>
+                  </div>
+                )}</For>
+              </div>
+              <div class="emoji-foot">
+                <span>Unicode 直接插入字符</span>
+                <span>短代码示例：<code>:smile:</code></span>
+              </div>
+            </div>
+          ) : (
+            <div class="ctx-lang" onClick={(e) => e.stopPropagation()}>
+              <For each={LANG_GROUPS}>{(g) => (
+                <div class="lgroup">
+                  <span class="glabel">{g.group}</span>
+                  <span class="lchips">
+                    <For each={g.items}>{(it) => (
+                      <span class="lchip" classList={{ mute: !!it.mute }} role="menuitem" tabIndex={-1}
+                        data-ctx={`lang-${it.lang || "none"}`} title={it.tip}
+                        onClick={(e) => { e.stopPropagation(); void run({ kind: "code", lang: it.lang }); }}>
+                        {it.label}
+                      </span>
+                    )}</For>
+                  </span>
+                </div>
+              )}</For>
+            </div>
           )}
         </div>
         </Show>
@@ -454,22 +663,22 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
       onClick={(e) => e.stopPropagation()} onKeyDown={onKey}>
       <div class="ctx-tools">
         <For each={EDIT_ACTIONS}>{(a) => (
-          <button type="button" class="ctool" title={`${a[1]}（${a[2]}）`} aria-label={a[1]}
-            role="menuitem" disabled={a[4] && !hasSel()}
+          <button type="button" class="ctool" title={`${a.label}（${a.kbd}）`} aria-label={a.label}
+            role="menuitem" disabled={a.needSel && !hasSel()}
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void run({ kind: "clip", action: a[0] })}>
-            <svg class="ico"><use href={"#" + a[3]} /></svg>
+            onClick={() => void run({ kind: "clip", action: a.act as "cut" | "copy" | "paste" | "delete" | "selectAll" })}>
+            {toolIcon(a)}
           </button>
         )}</For>
       </div>
       <div class="msep" />
       <div class="ctx-tools">
         <For each={WRAP_ACTIONS}>{(a) => (
-          <button type="button" class="ctool" title={`${a[1]}（${a[2] || "需先选中文字"}）`} aria-label={a[1]}
+          <button type="button" class="ctool" title={`${a.label}（${a.kbd || "需先选中文字"}）`} aria-label={a.label}
             role="menuitem" disabled={!hasSel()}
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void run({ kind: "wrap", style: a[0] as WrapKind })}>
-            <svg class="ico"><use href={"#" + a[3]} /></svg>
+            onClick={() => void run({ kind: "wrap", style: a.style })}>
+            {toolIcon(a)}
           </button>
         )}</For>
       </div>
@@ -477,19 +686,21 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
       <div class="mgrp">插入块</div>
       <div class="ctx-tools">
         <For each={LIST_ACTIONS}>{(a) => (
-          <button type="button" class="ctool" title={a[1]} aria-label={a[1]} role="menuitem"
+          <button type="button" class="ctool" title={a.label} aria-label={a.label} role="menuitem"
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void run({ kind: "list", list: a[0] as ListKind | "quote" }, a[0] !== "quote")}>
-            <svg class="ico"><use href={"#" + a[2]} /></svg>
+            onClick={() => void run({ kind: "list", list: a.list }, a.list !== "quote")}>
+            {toolIcon(a)}
           </button>
         )}</For>
       </div>
       {menuItem("i-table", "表格", () => void run({ kind: "table", cols: 3, rows: 3 }), { sub: "table", default: true })}
       {menuItem("i-heading", "标题", () => setOpenSub("heading"), { sub: "heading" })}
-      {menuItem("i-code", "代码块", () => void run({ kind: "code", lang: "" }), { sub: "code", default: true })}
+      {menuItem("i-code", "代码块", () => void run({ kind: "code", lang: "" }), { sub: "code", default: true, subClass: "langpick" })}
+      {menuItem("ix-callout", "标注块", () => setOpenSub("callout"), { sub: "callout" })}
+      {menuItem("", "Emoji 表情", () => setOpenSub("emoji"), { sub: "emoji", glyph: "🙂" })}
       {menuItem("i-image", "图片", () => void run({ kind: "image" }))}
       {menuItem("i-link", "链接（新建）", () => void run({ kind: "link" }))}
-      {menuItem("i-hr", "分隔线", () => void run({ kind: "hr" }))}
+      {menuItem("i-divider", "分隔线", () => void run({ kind: "hr" }))}
     </div>
   );
 }

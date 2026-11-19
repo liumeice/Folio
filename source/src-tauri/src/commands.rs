@@ -338,7 +338,11 @@ pub fn search(db: &Arc<Db>, q: &SearchQuery) -> Result<Vec<SearchHit>> {
         SearchScope::Library => {
             let ids = match &p {
                 Plan::Fts { match_expr } => db.search_doc_ids(Some(match_expr), None, SEARCH_DOC_CANDIDATES)?,
-                Plan::Like { pattern, .. } => db.search_doc_ids(None, Some(pattern), SEARCH_DOC_CANDIDATES)?,
+                // 1–2 字：先按字符位图预筛候选，避免 LIKE 全库正文；位图不支持时回退原 LIKE
+                Plan::Like { pattern, needle } => match db.search_short_doc_ids(needle, SEARCH_DOC_CANDIDATES)? {
+                    Some(ids) => ids,
+                    None => db.search_doc_ids(None, Some(pattern), SEARCH_DOC_CANDIDATES)?,
+                },
             };
             for id in ids {
                 if hits.len() >= limit as usize {

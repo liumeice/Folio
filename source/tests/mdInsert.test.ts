@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  codeBlockOp, hrOp, imageOp, insertBlock, linkOp, listOp, prefixLinesOp, tableOp, wrapOp,
+  calloutOp, codeBlockOp, emojiOp, hrOp, imageOp, insertBlock, linkOp, listOp, prefixLinesOp, tableOp, wrapOp,
   type EditOp,
 } from "../src/lib/mdInsert.ts";
 
@@ -122,4 +122,47 @@ test("分隔线：独占一行，光标在行尾", () => {
   const op = hrOp("", 0, 0);
   assert.equal(apply("", op), "---");
   assert.equal(op.selFrom, 3);
+});
+
+/* ── 标注块（2026-11-19 原型口径）────────────────────────────── */
+
+test("标注块：单光标整块插入，光标停末行引用标记后", () => {
+  const op = calloutOp("", 0, 0, "NOTE");
+  assert.equal(apply("", op), "> [!NOTE]\n> ");
+  assert.deepEqual([op.selFrom, op.selTo], [12, 12]);
+});
+
+test("标注块：非空行后整块插入并按 §3.1 补空行", () => {
+  const src = "hello\nworld";
+  const op = calloutOp(src, 2, 2, "NOTE");
+  assert.equal(apply(src, op), "hello\n\n> [!NOTE]\n> \n\nworld");
+  assert.equal(op.selFrom, 19);   // 5(hello\n) + 2(\n\n) + 12("> [!NOTE]\n> ")
+});
+
+test("标注块：选区各行转引用并加类型行，选区盖住正文", () => {
+  const src = "para one\npara two";
+  const op = calloutOp(src, 0, 17, "TIP");
+  assert.equal(apply(src, op), "> [!TIP]\n> para one\n> para two");
+  assert.deepEqual([op.selFrom, op.selTo], [9, 30]);
+});
+
+test("标注块：已有引用前缀不重复叠加；缩进保留（同引用前缀口径）", () => {
+  const src = "> quoted\n  item";
+  const op = calloutOp(src, 0, 15, "WARNING");
+  assert.equal(apply(src, op), "> [!WARNING]\n> quoted\n  > item");
+});
+
+/* ── Emoji 行内插入（2026-11-19 原型口径）────────────────────── */
+
+test("Emoji：光标处插短代码，光标停文本之后", () => {
+  const op = emojiOp("ab", 1, 1, ":smile:");
+  assert.equal(apply("ab", op), "a:smile:b");
+  assert.deepEqual([op.selFrom, op.selTo], [8, 8]);
+});
+
+test("Emoji：代理对按 UTF-16 码元计位（与 CM6 位置同系），选区被替换", () => {
+  const src = "x😀y";           // 😀 占码元 1–2
+  const op = emojiOp(src, 1, 3, "🎉");
+  assert.equal(apply(src, op), "x🎉y");
+  assert.deepEqual([op.selFrom, op.selTo], [3, 3]);
 });

@@ -285,6 +285,35 @@ pub fn setup(c: &Connection) -> rusqlite::Result<()> {
              PRAGMA user_version = 7;",
         )?;
     }
+    if v < 8 {
+        // schema v8（性能复检 2026-11-18 P1）：1–2 字短查询的字符位图预筛。
+        // 每篇文档一张 65536 位（8KB）BMP 位图；短查询按位图圈定候选文档，不再 LIKE 全库正文。
+        // 回填从 docs_fts 的 body 生成；一次升级成本，之后由 upsert/scan 维护。幂等：
+        // CREATE IF NOT EXISTS + INSERT OR REPLACE；中断重放只会重算同一批位图。
+        c.execute_batch(
+            "CREATE TABLE IF NOT EXISTS doc_chars(
+                doc_id INTEGER PRIMARY KEY,
+                bitmap BLOB NOT NULL
+            );",
+        )?;
+        // 兼容旧测试/残缺库：docs_fts 不存在时跳过回填（真实库 v1 必建此表）
+        let has_fts: bool = c
+            .prepare("SELECT 1 FROM sqlite_master WHERE name = 'docs_fts'")
+            .and_then(|mut s| s.exists([]))
+            .unwrap_or(false);
+        if has_fts {
+            let bodies: Vec<(i64, String)> = {
+                let mut st = c.prepare("SELECT CAST(doc AS INTEGER), body FROM docs_fts")?;
+                let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let mut ins = c.prepare("INSERT OR REPLACE INTO doc_chars(doc_id, bitmap) VALUES(?1, ?2)")?;
+            for (id, body) in bodies {
+                ins.execute(rusqlite::params![id, crate::charbits::bitmap(&body)])?;
+            }
+        }
+        c.pragma_update(None, "user_version", 8)?;
+    }
     Ok(())
 }
 

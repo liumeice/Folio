@@ -31,20 +31,25 @@ export default function Icons() {
           保证并排时视觉高度一致（需求方对照原型确认） */}
       <symbol id="i-ol-expand" viewBox="0 0 24 24"><path d="M7 8l5 5 5-5"/><path d="M7 16h10"/></symbol>
       <symbol id="i-ol-collapse" viewBox="0 0 24 24"><path d="M7 16l5-5 5 5"/><path d="M7 8h10"/></symbol>
-      {/* 编辑窗右键插入模板（2026-11-18）：动作 / 格式 / 块级图标 */}
-      <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6.2" cy="7" r="2.4"/><circle cx="6.2" cy="17" r="2.4"/><path d="M8.3 8.4l10.7 8.8M8.3 15.6l10.7-8.8"/></symbol>
-      <symbol id="i-paste" viewBox="0 0 24 24"><path d="M9 4.5H7.2A2.2 2.2 0 0 0 5 6.7v12.1A2.2 2.2 0 0 0 7.2 21h9.6a2.2 2.2 0 0 0 2.2-2.2V6.7a2.2 2.2 0 0 0-2.2-2.2H15"/><rect x="9" y="2.8" width="6" height="3.4" rx="1.1"/></symbol>
-      <symbol id="i-select-all" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5" stroke-dasharray="3.2 2.6"/><path d="M8 12.2l2.8 2.8 5.4-6"/></symbol>
-      <symbol id="i-bold" viewBox="0 0 24 24"><path d="M7.5 5h5.2a3.6 3.6 0 0 1 0 7.2H7.5zM7.5 12.2h6a3.9 3.9 0 0 1 0 7.8h-6z"/></symbol>
-      <symbol id="i-italic" viewBox="0 0 24 24"><path d="M10 5h7M7 19h7M14.5 5l-4.5 14"/></symbol>
-      <symbol id="i-strike" viewBox="0 0 24 24"><path d="M17.2 7.4A5.5 5.5 0 0 0 12.4 5c-2.8 0-4.7 1.5-4.7 3.7 0 2.1 1.7 3.3 4.8 4 3.2.7 4.8 2 4.8 4.1 0 2.4-2 4.2-5.2 4.2-2.4 0-4.3-1-5.4-2.7"/><path d="M4.5 12h15"/></symbol>
-      <symbol id="i-link" viewBox="0 0 24 24"><path d="M9.8 14.2l4.4-4.4"/><path d="M10.6 7.6l1.7-1.7a3.6 3.6 0 0 1 5.1 5.1l-1.7 1.7"/><path d="M13.4 16.4l-1.7 1.7a3.6 3.6 0 0 1-5.1-5.1l1.7-1.7"/></symbol>
-      <symbol id="i-table" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9 9.5v10M15 9.5v10"/></symbol>
-      <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17l5-4.6 3.4 3 2.7-2.2 4 3.8"/></symbol>
-      <symbol id="i-hr" viewBox="0 0 24 24"><path d="M4 12h16"/></symbol>
-      <symbol id="i-quote" viewBox="0 0 24 24"><path d="M6 10.5H10v5H6zM14 10.5h4v5h-4z"/><path d="M10 10.5c0-2.8 1.2-4.4 3.4-5.2M18 10.5c0-2.8 1.2-4.4 3.4-5.2"/></symbol>
-      <symbol id="i-ol" viewBox="0 0 24 24"><path d="M10 6.5h10M10 12h10M10 17.5h10"/><path d="M4 5.2l1.2-.7v4"/><path d="M3.4 10.4c0-.8.6-1.3 1.4-1.3.8 0 1.4.5 1.4 1.2 0 1.2-2.8 2-2.8 3.5h2.8"/><path d="M3.6 15.3h2.6l-1.5 1.6c.9 0 1.5.6 1.5 1.4 0 .9-.7 1.5-1.6 1.5-.7 0-1.3-.3-1.6-.8"/></symbol>
-      <symbol id="i-task" viewBox="0 0 24 24"><rect x="3" y="4" width="4" height="4" rx="1"/><path d="M4 6l1 1 1.4-1.7"/><path d="M10 6h10"/><rect x="3" y="10" width="4" height="4" rx="1"/><path d="M4 12l1 1 1.4-1.7"/><path d="M10 12h10"/><rect x="3" y="16" width="4" height="4" rx="1"/><path d="M4 18l1 1 1.4-1.7"/><path d="M10 18h10"/></symbol>
+      {/* 编辑窗右键菜单图标（2026-11-19 需求方定夺）：功能图标一律用 ui-iconset-18 图标集
+          （prototype/icons/output/ui-iconset-18）；每枚的 <g transform>+stroke-width 是图标集的
+          「18.4/24 光学框」补偿参数，勿手改；.ico 的 stroke:currentColor 与 linecap/linejoin 照常继承。
+          图标集未覆盖的两枚新增项例外：标注块 ix-callout（原型线性侧栏标记）、Emoji 项用 🙂 字形。 */}
+      <symbol id="i-scissors" viewBox="0 0 24 24"><g transform="translate(12 12) scale(1.04375) translate(-12.000 -12.400)" stroke-width="1.6287"><circle cx="7.6" cy="17.9" r="2.5"/><circle cx="16.4" cy="17.9" r="2.5"/><path d="M9.26 16.03 19.6 4.4"/><path d="M14.74 16.03 4.4 4.4"/></g></symbol>
+      <symbol id="i-paste" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></g></symbol>
+      <symbol id="i-select-all" viewBox="0 0 24 24"><g transform="translate(12 12) scale(1.04375) translate(-12.000 -12.000)" stroke-width="1.6287"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.2 12.1 11 14.9 16 9.7"/></g></symbol>
+      <symbol id="i-bold" viewBox="0 0 24 24"><g transform="translate(12 12) scale(1.04375) translate(-12.500 -12.000)" stroke-width="1.6287"><path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/></g></symbol>
+      <symbol id="i-italic" viewBox="0 0 24 24"><g transform="translate(12 12) scale(1.04375) translate(-12.000 -12.000)" stroke-width="1.6287"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></g></symbol>
+      <symbol id="i-strikethrough" viewBox="0 0 24 24"><g transform="translate(12 12) scale(1.04375) translate(-12.000 -12.000)" stroke-width="1.6287"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></g></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83920) translate(-12.000 -12.000)" stroke-width="2.0257"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></g></symbol>
+      <symbol id="i-list-bullet" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.92778) translate(-12.000 -12.000)" stroke-width="1.8323"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></g></symbol>
+      <symbol id="i-list-number" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.84450) translate(-12.000 -12.738)" stroke-width="2.0130"><g stroke-width="1.7"><path d="M4 3.60 5 2.85V7.25"/><path d="M3.9 7.25h2.2"/><path d="M6.5 14.55H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/><path d="M3.5 17.90a1.55 1.55 0 0 1 3 .4c0 1-.85 1.45-1.6 1.45.75 0 1.6.45 1.6 1.45a1.55 1.55 0 0 1-3 .4"/></g><path d="M10.4 5h10.2"/><path d="M10.4 12h10.2"/><path d="M10.4 19h10.2"/></g></symbol>
+      <symbol id="i-task-list" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.90761) translate(-11.800 -12.000)" stroke-width="1.8731"><rect x="3" y="2.8" width="4.8" height="4.8" rx="1.3"/><rect x="3" y="9.6" width="4.8" height="4.8" rx="1.3"/><rect x="3" y="16.4" width="4.8" height="4.8" rx="1.3"/><path d="M10.6 5.2h10"/><path d="M10.6 12h10"/><path d="M10.6 18.8h10"/></g></symbol>
+      <symbol id="i-quote" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.92778) translate(-12.000 -12.000)" stroke-width="1.8323"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/></g></symbol>
+      <symbol id="i-table" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.92778) translate(-12.000 -12.000)" stroke-width="1.8323"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 9v12"/><path d="M15 9v12"/></g></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.92778) translate(-12.000 -12.000)" stroke-width="1.8323"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="16.4" cy="8.2" r="1.5"/><path d="M3.6 18.4 8.1 13.3l3.5 3.5 2.6-2.8 5.9 5.8"/></g></symbol>
+      <symbol id="i-divider" viewBox="0 0 24 24"><g transform="translate(12 12) scale(1.19286) translate(-12.000 -12.000)" stroke-width="1.4251"><path d="M5 12h14"/></g></symbol>
+      <symbol id="ix-callout" viewBox="0 0 16 16"><g stroke-width="1.4"><path d="M2.7 3.3v9.4"/><path d="M5.9 4.4h7.4M5.9 8h7.4M5.9 11.6h4.6"/></g></symbol>
       <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3l2.6 2.6 5-5.2"/></symbol>
       <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11M4.6 6.5h.01M4.6 12h.01M4.6 17.5h.01"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.6l4.4 4.4L19 7.5"/></symbol>
@@ -54,11 +59,11 @@ export default function Icons() {
       <symbol id="i-type" viewBox="0 0 24 24"><path d="M5 6.5h14M12 6.5V19M9 19h6"/></symbol>
       <symbol id="i-panel-l" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M9 5v14"/></symbol>
       {/* 自原型移植：设置左导航（外观/代码与表格） */}
-      <symbol id="i-code" viewBox="0 0 24 24"><path d="M8.6 8L5 12l3.6 4M15.4 8L19 12l-3.6 4"/></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></g></symbol>
       <symbol id="i-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z"/></symbol>
       <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 8h9M17.5 8H20M4 16h3.5M12 16h8"/><circle cx="15.2" cy="8" r="2.2"/><circle cx="9.6" cy="16" r="2.2"/></symbol>
       <symbol id="i-save" viewBox="0 0 24 24"><path d="M5.5 5.5h10l3 3v10h-13z"/><path d="M8.5 5.5v4.5h6.5V5.5M8.5 15.5h7"/></symbol>
-      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5.5 15.5h-.8a1.2 1.2 0 0 1-1.2-1.2V5.5a1.2 1.2 0 0 1 1.2-1.2h8.8A1.2 1.2 0 0 1 14.7 5.5v.8"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></g></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11.2v5M12 8h.01"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4.8h5.2v5.2M19.2 4.8L11 13"/><path d="M18.4 14v4.4a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18.4V7.2a1.6 1.6 0 0 1 1.6-1.6H10"/></symbol>
       <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19.2V4.8M6 10.8l6-6 6 6"/></symbol>
@@ -67,17 +72,24 @@ export default function Icons() {
       <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M4.8 12h14.4M13.2 6l6 6-6 6"/></symbol>
       <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.4A8.4 8.4 0 0 1 9.6 4a8.4 8.4 0 1 0 10.4 10.4z"/></symbol>
       <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></symbol>
-      <symbol id="i-heading" viewBox="0 0 24 24"><path d="M5.5 5.5v13M13.5 5.5v13M5.5 12h8M17.5 9.5h3v9"/></symbol>
+      <symbol id="i-heading" viewBox="0 0 24 24"><g transform="translate(12 12) scale(1.04375) translate(-12.000 -12.000)" stroke-width="1.6287"><path d="M4 12h8"/><path d="M4 18V6"/><path d="M12 18V6"/><path d="m17 12 3-2v8"/></g></symbol>
       <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.4V12l3.2 2"/></symbol>
       <symbol id="i-history" viewBox="0 0 24 24"><path d="M3.7 12a8.4 8.4 0 1 0 2.7-6.2L3.5 8.3"/><path d="M3.3 4.4v4h4"/><path d="M12 7.7V12l3.1 1.9"/></symbol>
       <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20.2 12a8.2 8.2 0 1 1-2.4-5.8"/><path d="M20.6 4.2v4.4h-4.4"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
-      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></g></symbol>
       <symbol id="i-co-note" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2M12 7.8h.01"/></symbol>
       <symbol id="i-co-tip" viewBox="0 0 24 24"><path d="M12 20s-7-4.3-8.7-8.6C2 8.2 4 5.2 7 5c1.9-.1 3.7 1 4.2 2.2h1.6C13.3 6 15.1 4.9 17 5c3 .2 5 3.2 3.7 6.4C19 15.7 12 20 12 20z"/></symbol>
       <symbol id="i-co-important" viewBox="0 0 24 24"><path d="M13.2 2.8 5 13.6h5.4l-.6 7.6L19 10.4h-5.4z"/></symbol>
       <symbol id="i-co-warning" viewBox="0 0 24 24"><path d="M12 4.2 3.2 19.2h17.6z"/><path d="M12 10v4.2M12 17.2h.01"/></symbol>
       <symbol id="i-co-caution" viewBox="0 0 24 24"><path d="M8.6 3.4h6.8L20.6 8.6v6.8L15.4 20.6H8.6L3.4 15.4V8.6z"/><path d="M12 8v5.4M12 16.4h.01"/></symbol>
+      {/* 右键「标注块」子面板的彩色标签图标（2026-11-19 原型口径）：
+          <g transform>+stroke-width 是图标集的「18.4/24 光学框」补偿参数，勿手改；阅读区 callout 仍用 i-co-* */}
+      <symbol id="s-note" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></g></symbol>
+      <symbol id="s-tip" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></g></symbol>
+      <symbol id="s-important" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.500)" stroke-width="2.0359"><path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/><path d="M12 15h.01"/><path d="M12 7v4"/></g></symbol>
+      <symbol id="s-warning" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83396) translate(-11.988 -11.988)" stroke-width="2.0385"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></g></symbol>
+      <symbol id="s-caution" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><path d="M12 16h.01"/><path d="M12 8v4"/><path d="M15.312 2a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586l-4.688-4.688A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2z"/></g></symbol>
     </defs></svg>
   );
 }

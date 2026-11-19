@@ -35,11 +35,11 @@
     <div class="bs-bar"><i></i></div>
   </div>
 </div>
-<!-- MathJax v3（vendored 3.2.2，es5/tex-svg-full.js）：不进 vite bundle，<script> 直挂全局，
-     由 src/lib/mathjax.ts 消费（同 highlight.js vendored 先例）。defer 不阻塞首屏；
-     config.js 在前、库在后，defer 文档序保证配置先生效。库缺失时公式块退化为 <pre> 源码（不白屏）。 -->
-<script defer src="/vendor/mathjax/config.js"></script>
-<script defer src="/vendor/mathjax/tex-svg-full.js"></script>
+<!-- MathJax v3（vendored 3.2.2，es5/tex-svg-full.js）不再启动即加载（性能复检 2026-11-18）：
+     2.2MB 经典脚本每次启动都要解析/初始化，即使当前文档没有公式。
+     改由 src/lib/mathjax.ts 在首次遇到 [data-math] 时按需注入 config.js → tex-svg-full.js；
+     无公式文档的启动不再付这笔成本。CSP script-src 'self' 允许同源动态脚本。
+     库缺失时公式块退化为 <pre> 源码（不白屏）。 -->
 <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

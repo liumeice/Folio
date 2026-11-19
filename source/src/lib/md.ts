@@ -372,52 +372,59 @@ export function isFenceLine(line: string): boolean {
   return /^\s*```/.test(line);
 }
 
-/** 列表标记拆分：folio-core::markdown::after_list_marker 的逐字符镜像。
- *  「缩进 + (-|*|+|n.|n\)) + ≥1 空白」开头才算；"＞ - [ ]" 等引用前缀不认（CON-01 同根规则）。
- *  扫描段全是 ASCII（空格/标记/数字/括号），JS 索引即 Rust 字节偏移，多字节只出现在 body 尾部。 */
-function afterListMarker(line: string): { prefixLen: number; body: string } | null {
-  let i = 0;
-  while (i < line.length && (line[i] === " " || line[i] === "\t")) i++;
-  if (i >= line.length) return null;
-  let j = i;
-  const c0 = line[i];
-  if (c0 === "-" || c0 === "*" || c0 === "+") j = i + 1;
-  else {
-    let k = i;
-    while (k < line.length && line[k] >= "0" && line[k] <= "9") k++;
-    if (k === i || k >= line.length || (line[k] !== "." && line[k] !== ")")) return null;
-    j = k + 1;
-  }
-  if (j >= line.length || (line[j] !== " " && line[j] !== "\t")) return null;
-  while (j < line.length && (line[j] === " " || line[j] === "\t")) j++;
-  return { prefixLen: j, body: line.slice(j) };
-}
-
 /** 切换第 nth 个（0 起）围栏外任务的勾选态——Rust toggle_task 的 TS 镜像（契约 2 同坐标系）。
  *  手动保存链路专用（2026-11-18 需求方定夺：打勾不即时写盘）：Reader 用它改内存 src，
  *  落盘统一走显式「保存」。越界返回 null。保留 CRLF/LF 风格与文件末尾换行。 */
 export function flipTaskInSrc(src: string, nth: number): string | null {
-  const rows = src.split(/\r\n|\n/);
-  const nl = src.includes("\r\n") ? "\r\n" : "\n";
+  // 单次扫描 + 只替换状态位（性能复检 2026-11-18 P3）：不再 split 全文 / 复制行数组 / join。
+  // 列表标记判定与 folio-core::markdown::after_list_marker 同口径（引用前缀行不认）；
+  // CRLF 与末行无换行由原样切片保留。
   let inFence = false;
   let seen = 0;
-  for (let i = 0; i < rows.length; i++) {
-    const raw = rows[i];
-    if (isFenceLine(raw)) { inFence = !inFence; continue; }
-    if (inFence) continue;
-    const a = afterListMarker(raw);
-    if (!a) continue;
-    const b = a.body;
-    if (b.length < 3 || b[0] !== "[" || b[2] !== "]") continue;
-    const st = b[1];
-    if (st !== " " && st !== "x" && st !== "X") continue;
-    if (seen === nth) {
-      const ns = st === " " ? "x" : " ";
-      const out = rows.slice();
-      out[i] = raw.slice(0, a.prefixLen) + "[" + ns + b.slice(2);
-      return out.join(nl);
+  let lineStart = 0;
+  const n = src.length;
+  for (;;) {
+    let lineEnd = src.indexOf("\n", lineStart);
+    if (lineEnd < 0) lineEnd = n;
+
+    // 围栏判定：与 isFenceLine 同口径（行首空白后紧跟 ```；~~~ 不算）
+    let f = lineStart;
+    while (f < lineEnd && (src[f] === " " || src[f] === "\t")) f++;
+    if (f + 3 <= lineEnd && src.startsWith("```", f)) {
+      inFence = !inFence;
+    } else if (!inFence) {
+      // 列表标记（缩进 + -/*/+ 或 n./n) + 至少一个空白）
+      let i = lineStart;
+      while (i < lineEnd && (src[i] === " " || src[i] === "\t")) i++;
+      if (i < lineEnd) {
+        let j = -1;
+        const c0 = src[i];
+        if (c0 === "-" || c0 === "*" || c0 === "+") {
+          j = i + 1;
+        } else {
+          let k = i;
+          while (k < lineEnd && src[k] >= "0" && src[k] <= "9") k++;
+          if (k > i && k < lineEnd && (src[k] === "." || src[k] === ")")) j = k + 1;
+        }
+        if (j > 0 && j < lineEnd && (src[j] === " " || src[j] === "\t")) {
+          while (j < lineEnd && (src[j] === " " || src[j] === "\t")) j++;
+          // 任务框：[ ] / [x] / [X]（与任务序号坐标系同一判定）
+          if (j + 2 < lineEnd && src[j] === "[" && src[j + 2] === "]") {
+            const st = src[j + 1];
+            if (st === " " || st === "x" || st === "X") {
+              if (seen === nth) {
+                const ns = st === " " ? "x" : " ";
+                return src.slice(0, j + 1) + ns + src.slice(j + 2);
+              }
+              seen++;
+            }
+          }
+        }
+      }
     }
-    seen++;
+
+    if (lineEnd >= n) break;
+    lineStart = lineEnd + 1;
   }
   return null;
 }

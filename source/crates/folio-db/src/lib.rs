@@ -1,6 +1,7 @@
 //! folio-db — 唯一持有 SQLite 连接（Mutex 包装，命令层并发安全）。
 //! 表设计沿用原型 localStorage 语义：documents(+fts) / positions(每文档) / settings(blob)。
 
+mod charbits;
 mod schema;
 
 use folio_core::{markdown, CoreError, DocMeta, Position, RecentDoc, RecentReport, Result, Settings};
@@ -43,6 +44,8 @@ pub struct DocUpsert {
     pub sec_count: i64,
     pub mtime: i64,
     pub size: u64,
+    /// 1–2 字短查询预筛位图（65536 位；锁外算好，事务内只写 BLOB）
+    pub bitmap: Vec<u8>,
 }
 
 impl DocUpsert {
@@ -53,6 +56,7 @@ impl DocUpsert {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| path_str.clone());
         let dir = path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let bitmap = charbits::bitmap(&src);
         let (word_count, head_count, sec_count) = markdown::stats(&src);
         let meta_fs = std::fs::metadata(path).ok();
         let mtime = meta_fs
@@ -82,6 +86,7 @@ impl DocUpsert {
             sec_count,
             mtime,
             size,
+            bitmap,
         }
     }
 }
@@ -362,6 +367,39 @@ impl Db {
                 return st.query_map(params![l, limit, "\\"], |r| r.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>();
             }
             Ok(Vec::new())
+        })
+    }
+
+    /// 1–2 字短查询：按 doc_chars 位图预筛候选文档，避免 `body LIKE '%x%'` 全库扫描。
+    /// `None` = 查询长度/字符超出位图范围（或表未就绪），调用方回退 LIKE。
+    /// 候选只保证「字出现过」；顺序/完整词由命令层的精确 section 搜索继续验证。
+    pub fn search_short_doc_ids(&self, needle: &str, limit: i64) -> Result<Option<Vec<i64>>> {
+        let Some(chars) = charbits::query_chars(needle) else { return Ok(None) };
+        self.with_read(|c| {
+            let mut st = c.prepare("SELECT doc_id, bitmap FROM doc_chars ORDER BY doc_id")?;
+            let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+            let all: Vec<(i64, Vec<u8>)> = rows.collect::<rusqlite::Result<_>>()?;
+            if all.is_empty() {
+                // 无文档 = 合法空结果；有文档但位图表空 = 迁移未完成，回退 LIKE
+                let docs: i64 = c.query_row("SELECT count(*) FROM documents", [], |r| r.get(0))?;
+                return Ok(if docs == 0 { Some(Vec::new()) } else { None });
+            }
+            // 选命中文档最少的字做候选（两字查询取更稀有的那一个），再交给精确搜索
+            let mut best: Option<(char, usize)> = None;
+            for ch in &chars {
+                let n = all.iter().filter(|(_, b)| charbits::has(b, *ch)).count();
+                if best.map(|(_, bn)| n < bn).unwrap_or(true) {
+                    best = Some((*ch, n));
+                }
+            }
+            let Some((ch, _)) = best else { return Ok(Some(Vec::new())) };
+            let ids = all
+                .iter()
+                .filter(|(_, b)| charbits::has(b, ch))
+                .map(|(id, _)| *id)
+                .take(limit.max(1) as usize)
+                .collect();
+            Ok(Some(ids))
         })
     }
 
@@ -694,6 +732,8 @@ fn upsert_prepared(c: &Connection, d: &DocUpsert) -> rusqlite::Result<()> {
     c.prepare_cached("DELETE FROM docs_fts WHERE doc = ?1")?.execute(params![id_str])?;
     c.prepare_cached("INSERT INTO docs_fts(title, body, doc) VALUES(?1, ?2, ?3)")?
         .execute(params![d.title, d.src, id_str])?;
+    c.prepare_cached("INSERT OR REPLACE INTO doc_chars(doc_id, bitmap) VALUES(?1, ?2)")?
+        .execute(params![id, d.bitmap.as_slice()])?;
     Ok(())
 }
 
@@ -702,6 +742,7 @@ fn upsert_prepared(c: &Connection, d: &DocUpsert) -> rusqlite::Result<()> {
 fn purge_conn(c: &Connection, id: i64) -> rusqlite::Result<()> {
     c.execute("DELETE FROM recents WHERE doc_id = ?1", params![id])?;
     c.execute("DELETE FROM docs_fts WHERE doc = ?1", params![id.to_string()])?;
+    c.execute("DELETE FROM doc_chars WHERE doc_id = ?1", params![id])?;
     c.execute("DELETE FROM positions WHERE doc_id = ?1", params![id])?;
     c.execute("DELETE FROM documents WHERE id = ?1", params![id])?;
     Ok(())
@@ -741,6 +782,25 @@ mod tests {
         let p = dir.join(name);
         std::fs::write(&p, content).unwrap();
         p
+    }
+
+    #[test]
+    fn short_search_uses_char_bitmap_candidates() {
+        let (db, dir) = tmp_db("short");
+        let a = doc_file(&dir, "a.md", "# A\n\n大纲与文档");
+        let b = doc_file(&dir, "b.md", "# B\n\n只有文字");
+        let ma = db.upsert_document(&a, "# A\n\n大纲与文档", true).unwrap();
+        let mb = db.upsert_document(&b, "# B\n\n只有文字", true).unwrap();
+        assert_eq!(db.search_short_doc_ids("大纲", 64).unwrap().unwrap(), vec![ma.id]);
+        assert_eq!(db.search_short_doc_ids("纲", 64).unwrap().unwrap(), vec![ma.id]);
+        let both = db.search_short_doc_ids("文", 64).unwrap().unwrap();
+        assert!(both.contains(&ma.id) && both.contains(&mb.id), "两篇都含「文」");
+        assert_eq!(db.search_short_doc_ids("猫", 64).unwrap().unwrap(), Vec::<i64>::new());
+        assert!(db.search_short_doc_ids("三字符", 64).unwrap().is_none(), "≥3 字交给 FTS");
+
+        let c = doc_file(&dir, "c.md", "# C\n\nHELLO");
+        let mc = db.upsert_document(&c, "# C\n\nHELLO", true).unwrap();
+        assert!(db.search_short_doc_ids("he", 64).unwrap().unwrap().contains(&mc.id), "ASCII 大小写不敏感");
     }
 
     #[test]

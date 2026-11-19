@@ -5,9 +5,10 @@
  *  jumpToLine(lineFloat) —— scrollIntoView 贴整行 + 下一帧 coordsAtPos 精确对齐视口顶。 */
 import { Show, onCleanup, onMount } from "solid-js";
 import { basicSetup } from "codemirror";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
+import { indentLess, insertTab } from "@codemirror/commands";
 import { md } from "../lib/mdEditor";
-import { syntaxHighlighting } from "@codemirror/language";
+import { indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { mdHighlight } from "../lib/mdstyle";
 import { mdStructural } from "../lib/mdStructural";
 import { useStore } from "../lib/store";
@@ -15,7 +16,7 @@ import * as ui from "../lib/ui";
 import { SYNC_EPSILON } from "../lib/nav";
 import { commonEditRange } from "../lib/textedit";
 import {
-  codeBlockOp, hrOp, imageOp, linkOp, listOp, prefixLinesOp, tableOp, wrapOp,
+  calloutOp, codeBlockOp, emojiOp, hrOp, imageOp, linkOp, listOp, prefixLinesOp, tableOp, wrapOp,
   type EditOp, type EditorCmd,
 } from "../lib/mdInsert";
 
@@ -143,6 +144,21 @@ export default function EditorPane() {
       case "heading": {
         const w = localWindow("lines", from, to);
         applyOp(prefixLinesOp(w.src, w.from, w.to, "heading", cmd.level), w.base);
+        break;
+      }
+      case "callout": {
+        if (from !== to) {
+          const w = localWindow("lines", from, to);
+          applyOp(calloutOp(w.src, w.from, w.to, cmd.callout), w.base);
+        } else {
+          const w = localWindow("block", from, to);
+          applyOp(calloutOp(w.src, w.from, w.to, cmd.callout), w.base);
+        }
+        break;
+      }
+      case "emoji": {
+        // 行内纯替换，不需要上下文窗口（P1-3：不复制周边文本）
+        applyOp(emojiOp("", from, to, cmd.text), 0);
         break;
       }
       case "image": {
@@ -289,6 +305,12 @@ export default function EditorPane() {
         syntaxHighlighting(mdHighlight),
         mdStructural,
         EditorView.lineWrapping,
+        // Tab = 制表符（需求方 2026-11-19 定夺）。CM 默认不绑 Tab（焦点切换给浏览器），
+        // 这里插回制表语义：无选择→光标处插 \t；有选择→整段行首加 \t；Shift-Tab 反操作。
+        // indentUnit 设为 "\t" 让缩进落的是制表符而不是空格；需要焦点导航时 Ctrl+M 切换
+        // （basicSetup 自带 toggleTabFocusMode）。
+        indentUnit.of("\t"),
+        keymap.of([{ key: "Tab", run: insertTab, shift: indentLess }]),
         // 中英混排文档里浏览器拼写检查满屏红波浪线（把 focus.css、拼音词全判"错拼"）——
         // contenteditable 默认 spellcheck=true，显式关闭
         EditorView.contentAttributes.of({ spellcheck: "false" }),
