@@ -96,7 +96,7 @@ async function runFormat(s: Store) {
   const docId = cur.meta.id;
   const inEdit = s.mode() === "edit";
   const bridge = inEdit ? ui.getEditorBridge() : null;
-  if (inEdit && !bridge) { s.toast("格式化失败：编辑器尚未就绪"); return; }
+  if (inEdit && !bridge) { s.toast("格式化失败：编辑器还没准备好，请稍后再试"); return; }
   const src = inEdit ? bridge!.docText() : cur.src;
 
   let r: FormatResult;
@@ -116,7 +116,7 @@ async function runFormat(s: Store) {
     // 格式化期间用户可能继续输入或退出编辑：两者都放弃本次结果，绝不覆盖现场
     if (s.mode() !== "edit") { s.toast("文档已退出编辑模式，格式化未应用"); return; }
     const b = ui.getEditorBridge();
-    if (!b) { s.toast("格式化失败：编辑器尚未就绪"); return; }
+    if (!b) { s.toast("格式化失败：编辑器还没准备好，请稍后再试"); return; }
     if (b.docText() !== src) { s.toast("文档在格式化期间有新的修改，请重试"); return; }
     b.replaceAll(r.text);
   } else {
@@ -126,7 +126,7 @@ async function runFormat(s: Store) {
     if (!b) {
       // 评审 P2-3：编辑器没挂载成功时退回阅读态，不留用户停在未格式化的编辑模式
       if (s.current()?.meta.id === docId && s.mode() === "edit") s.cancelEdit();
-      s.toast("编辑器未就绪，已返回阅读模式，请稍后重试");
+      s.toast("编辑器还没准备好，已返回阅读模式，请稍后再试");
       return;
     }
     if (s.current()?.meta.id !== docId || s.mode() !== "edit") return;
@@ -171,15 +171,15 @@ export async function pickFolderAndScan(s: Store) {
     s.setSide("library");   // 2026-11-16：打开/切换文件夹后自动切到文档库面板，让结果立刻可见
     // PERF-01：截断口径真实化——truncated>0 时明说"还有多少没登记"，不再让 UI 宣称假数字
     const truncNote = r.truncated
-      ? `：已登记前 ${r.total - r.truncated} 篇，还有 ${r.truncated} 篇未索引（可在设置调高扫描上限）`
+      ? `；文件太多，只纳入了前 ${r.total - r.truncated} 篇，还有 ${r.truncated} 篇没有纳入`
       : "";
     // 扫描成功通知停留 1s（需求方 2026-11-18）：刚完成大扫描，视线要回到内容上，一句话扫过即可
     if (r.prevRoot) {
-      s.toast(`已切换到文件夹「${leaf(r.root)}」（${r.total} 篇${truncNote ? "，部分未索引" : ""}）；「${leaf(r.prevRoot)}」的 `
+      s.toast(`已切换到文件夹「${leaf(r.root)}」（${r.total} 篇${r.truncated ? "，部分没有纳入" : ""}）；「${leaf(r.prevRoot)}」的 `
         + `${r.prevDemoted} 篇没有删除，可在「最近打开」里继续读`, 1000);
     } else if (cur && sameDir(cur, dir)) {
-      s.toast(`重新扫描「${leaf(dir)}」：新增 ${r.inserted} · 更新 ${r.updated} · 未变 ${r.unchanged}`
-        + ` · 移除 ${r.removed}` + (r.skipped ? ` · 读取失败跳过 ${r.skipped}` : "") + truncNote, 1000);
+      s.toast(`重新扫描「${leaf(dir)}」：新增 ${r.inserted} 篇 · 更新 ${r.updated} 篇 · 未变 ${r.unchanged} 篇`
+        + ` · 移除 ${r.removed} 篇` + (r.skipped ? ` · ${r.skipped} 篇读取失败，已跳过` : "") + truncNote, 1000);
     } else {
       s.toast(`已打开文件夹「${leaf(dir)}」：共 ${r.total} 篇文档${truncNote}`, 1000);
     }
@@ -245,7 +245,7 @@ export function copyDeepLink(s: Store) {
     ? link + "&sec=" + cur.outline[sec - 1].text
     : link;
   navigator.clipboard?.writeText(full)
-    .then(() => ui.showCopied("已复制深度链接", full))   // 中央浮层 2s 自隐（不再贴状态栏弹 toast）
+    .then(() => ui.showCopied("已复制文档链接", full))   // 中央浮层 2s 自隐（不再贴状态栏弹 toast）
     .catch(() => s.toast("剪贴板不可用：" + full));
 }
 
@@ -282,8 +282,8 @@ export async function exportPdf(s: Store) {
     s.toggleEdit();
     await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
   }
-  if (!ui.getArticleHtml()) { s.toast("导出失败：正文尚未渲染"); return; }
-  if (ui.articlePendingFigures()) { s.toast("图表仍在渲染，请稍候再试"); return; }
+  if (!ui.getArticleHtml()) { s.toast("导出失败：正文还没显示出来，请稍后再试"); return; }
+  if (ui.articlePendingFigures()) { s.toast("图表还在绘制，请稍后再试"); return; }
   ui.clearHits();
   let target: string | null = null;
   try { target = await api.pickSavePath(pdfExportName(cur.meta.fileName)); }
@@ -294,7 +294,7 @@ export async function exportPdf(s: Store) {
   const prevTitle = document.title;
   try {
     await ui.waitArticleStable();                             // 长文档初排渐进：截在半途会缺后半正文
-    if (ui.articlePendingFigures()) { s.toast("图表仍在渲染，请稍候再试"); return; }
+    if (ui.articlePendingFigures()) { s.toast("图表还在绘制，请稍后再试"); return; }
     await ui.primeArticleImages();
     document.title = cur.meta.title;                          // PDF 书签根节点取 <title>——洗净文件名尾巴
     await api.exportPdf(target, ui.viewBgHex());              // 页边距衬底 = 阅读窗底色（边框随主题）
@@ -335,7 +335,7 @@ export async function exportHtml(s: Store) {
   if (!cur) { s.toast("未打开文档，无可导出内容"); return; }
   ui.clearHits();
   const body0 = ui.getArticleHtml();
-  if (!body0) { s.toast("导出失败：正文尚未渲染"); return; }
+  if (!body0) { s.toast("导出失败：正文还没显示出来，请稍后再试"); return; }
   const wrap = (inner: string) =>
     `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>` +

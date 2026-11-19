@@ -49,7 +49,7 @@ const MENUS: Menu[] = [
     { act: "format", label: "源码自动格式化", kbd: "Shift Alt F", icon: "i-format" },
     { sep: true },
     { act: "props", label: "文档信息", icon: "i-info" },
-    { act: "link", label: "复制深度链接", icon: "i-copy" },
+    { act: "link", label: "复制文档链接", icon: "i-copy" },
   ] },
   { name: "帮助", items: [
     { act: "guide", label: "Folio 使用指南", icon: "i-md" },
@@ -188,7 +188,7 @@ export default function TitleBar() {
       <div class="brand" data-tauri-drag-region>
         <span class="mark">F</span>
         <span class="brand-name">Folio</span>
-        <span class="brand-chip" title="版本=主.次.修复.编译次数（release.sh 自增）">v{APP_VERSION} {IS_DEV ? "开发版" : "正式版"}</span>
+        <span class="brand-chip" title={`版本 ${APP_VERSION}`}>v{APP_VERSION} {IS_DEV ? "开发版" : "正式版"}</span>
       </div>
 
       <nav class="menu" role="menubar" id="menubar">

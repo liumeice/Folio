@@ -54,3 +54,8 @@ fi
 echo "== 完成：v${VER} =="
 powershell -NoProfile -Command "(Get-Item 'target/release/Folio-Portable.exe').VersionInfo | Format-List FileVersion,FileVersionRaw" 2>/dev/null | grep -E "FileVersion" || true
 ls -1 target/release/bundle/nsis/ target/release/bundle/msi/ 2>/dev/null || true
+
+# 需求方规则（2026-11-19）：发版后推百度网盘 /Folio/<四位号>/ 五件套并建永久分享链接。
+# 网盘推送取自 GitHub release 与 tag 归档，必须等推仓发版完成后执行：
+#   ./netdisk-release.sh        （幂等，可重跑）
+echo "→ 下一步：推仓并发布 GitHub release v${VER} 后，运行 ./netdisk-release.sh 推送百度网盘"

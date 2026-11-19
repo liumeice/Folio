@@ -380,8 +380,8 @@ async fn export_pdf(
         };
         let mut orig = COREWEBVIEW2_COLOR { A: 255, R: 255, G: 255, B: 255 };
         let _ = unsafe { ctl2.DefaultBackgroundColor(&mut orig) };
-        if let Err(e) = unsafe { ctl2.SetDefaultBackgroundColor(COREWEBVIEW2_COLOR { A: 255, R: pr, G: pg, B: pb }) } {
-            let _ = tx.send(Err(format!("设置页面衬底失败：{}", e)));
+        if unsafe { ctl2.SetDefaultBackgroundColor(COREWEBVIEW2_COLOR { A: 255, R: pr, G: pg, B: pb }) }.is_err() {
+            let _ = tx.send(Err("设置页面背景失败，请重试".to_string()));
             return;
         }
         let ctl_h = ctl2.clone();
@@ -402,26 +402,26 @@ async fn export_pdf(
         let name = pcstr_in(&mut mbuf, "Page.printToPDF");
         let args = pcstr_in(&mut pbuf, &params);
         // 提交失败 = handler 永远不会触发 → 先还原衬底再就地送错，否则外层只能等到断链
-        if let Err(e) = unsafe { core.CallDevToolsProtocolMethod(name, args, &handler) } {
+        if unsafe { core.CallDevToolsProtocolMethod(name, args, &handler) }.is_err() {
             let _ = unsafe { ctl2.SetDefaultBackgroundColor(orig) };
-            let _ = tx.send(Err(format!("打印接口调用失败：{}", e)));
+            let _ = tx.send(Err("调用打印功能失败，请重试".to_string()));
         }
     });
-    if let Err(e) = dispatch {
+    if dispatch.is_err() {
         state.exporting.store(false, std::sync::atomic::Ordering::SeqCst);
-        return Err(format!("无法访问渲染进程：{}", e));
+        return Err("无法连接页面，请重试".to_string());
     }
     // 等回调（阻塞在 spawn_blocking 线程，不占 async 执行器）
     let recv = tauri::async_runtime::spawn_blocking(move || rx.recv())
         .await
         .map_err(errstr)?;
     state.exporting.store(false, std::sync::atomic::Ordering::SeqCst);
-    let json = recv.map_err(|_| "导出超时：渲染进程未返回 PDF（请重试）".to_string())??;
-    // CDP 结果 {"data":"<base64>"}；解析失败/无 data 字段一律当错误，把原始片段带回（截断）
+    let json = recv.map_err(|_| "导出超时，请重试".to_string())??;
+    // CDP 结果 {"data":"<base64>"}；解析失败/无 data 字段一律当错误
     let val: serde_json::Value = serde_json::from_str(&json)
-        .map_err(|_| format!("PDF 返回解析失败：{}", trunc(&json, 120)))?;
+        .map_err(|_| "生成的 PDF 数据有误，请重试".to_string())?;
     let b64 = val.get("data").and_then(|d| d.as_str())
-        .ok_or_else(|| format!("导出失败：渲染器未产出 PDF（{}）", trunc(&json, 120)))?;
+        .ok_or_else(|| "没有生成 PDF，请重试".to_string())?;
     let bytes = base64::engine::general_purpose::STANDARD.decode(b64).map_err(errstr)?;
     let p = guarded_path(&path)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -440,10 +440,6 @@ async fn export_pdf(_app: AppHandle, _state: State<'_, AppState>, _path: String,
     Err("导出 PDF 目前仅在 Windows 平台提供".into())
 }
 
-/// 安全截断（避免把超长 base64 或异常 payload 整段甩进错误串）。
-fn trunc(s: &str, n: usize) -> String {
-    if s.len() <= n { s.to_string() } else { s.chars().take(n).collect::<String>() + "…" }
-}
 
 /// 导出等通用写出（路径由前端 save 对话框确定，FR-13.1）
 #[tauri::command]
@@ -718,16 +714,19 @@ pub fn run() {
             }
             // FR-4.5：内置文档（欢迎页 + 使用指南，后者挂在「帮助」菜单）。v3 起它们既不是库成员、
             // 也不被历史清理回收（builtin 标记），所以按「这一条登记在不在」判定，而不是「库是否为空」
-            // ——后者会让重新安装后不再出现。文件只在不存时解出，用户在数据目录里的改动不会被覆盖。
+            // ——后者会让重新安装后不再出现。
+            // 需求方 2026-11-19 定夺：内置文档随包更新——内容有变化就覆盖数据目录里的旧副本，
+            // 并同步登记行（正文与搜索索引跟着更新）；内容相同则不动，避免每次启动都写盘。
             for (name, content) in [
                 ("welcome.md", include_str!("../../src/assets/welcome.md")),
                 ("guide.md", include_str!("../../src/assets/guide.md")),
             ] {
                 let p = data_dir.join(name);
-                if !p.exists() {
+                let changed = !matches!(std::fs::read_to_string(&p), Ok(old) if old == content);
+                if changed {
                     let _ = std::fs::write(&p, content);
                 }
-                if db.doc_by_path(&p.to_string_lossy()).is_err() {
+                if changed || db.doc_by_path(&p.to_string_lossy()).is_err() {
                     if let Ok(src) = folio_fs::read_md(&p) {
                         let _ = db.upsert_builtin_document(&p, &src);
                     }

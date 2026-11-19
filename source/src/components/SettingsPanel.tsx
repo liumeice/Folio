@@ -173,7 +173,7 @@ export default function SettingsPanel() {
         <header class="st-head">
           <div class="st-headtext">
             <div class="st-title">设置</div>
-            <div class="st-desc">阅读与排版偏好，改动即时生效并写入 SQLite。</div>
+            <div class="st-desc">阅读与排版偏好，改动立即生效并自动保存。</div>
           </div>
           <span class="st-spacer" />
           <button type="button" class="st-action" title="导入配置（读取 settings.json）" onClick={() => void onImport()}>
@@ -220,7 +220,7 @@ export default function SettingsPanel() {
           <button type="button" class="st-action" title="恢复阅读与排版的默认值（主题、强调色、侧栏宽度不受影响）"
             onClick={() => { s.saveSettings(resetPatch()); s.toast("已恢复默认"); }}>恢复默认</button>
           <span class="st-spacer" />
-          <span class="st-foot-hint">共 {ITEMS.length} 项 · 写入 SQLite · 重启仍在</span>
+          <span class="st-foot-hint">共 {ITEMS.length} 项 · 自动保存 · 重启后仍在</span>
         </footer>
       </div>
       </div>

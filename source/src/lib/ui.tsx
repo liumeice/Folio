@@ -168,7 +168,7 @@ export function fmtErr(e: unknown): string {
     return name ? `文件不存在或已被移动（${name}）` : "文件不存在或已被移动";
   }
   if (/unsupported/i.test(s)) return "不支持的文件类型（仅 .md / .markdown / .txt）";
-  if (/db mutex|database|sqlite/i.test(s)) return "本地数据库访问失败，请重试";
+  if (/db mutex|database|sqlite/i.test(s)) return "读取本地数据失败，请重试";
   return s.length > 80 ? s.slice(0, 80) + "…" : s;
 }
 

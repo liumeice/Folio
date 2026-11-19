@@ -47,7 +47,7 @@ async function doRender(scope: HTMLElement, themeName?: string): Promise<void> {
     if (typeof cand !== "function") throw new Error("导出异常");
     Z = cand as typeof Z;
   } catch {
-    for (const el of els) if (el.isConnected) fallbackBox(el, "渲染引擎加载失败");
+    for (const el of els) if (el.isConnected) fallbackBox(el, "图表引擎加载失败");
     return;
   }
   const theme = themeFor(themeName);
@@ -61,7 +61,7 @@ async function doRender(scope: HTMLElement, themeName?: string): Promise<void> {
       const pr = await z.parse(code);
       if (!pr.pass) {
         const d = pr.errorDetails?.[0];
-        fallbackBox(el, d ? `第 ${d.line} 行第 ${d.column} 列：${d.msg}` : "校验未通过");
+        fallbackBox(el, d ? `第 ${d.line} 行第 ${d.column} 列：${d.msg}` : "图表内容有误");
         continue;
       }
       await z.render(code, { theme });
@@ -81,7 +81,7 @@ async function doRender(scope: HTMLElement, themeName?: string): Promise<void> {
         el.classList.remove("f-error");
       });
     } catch (e) {
-      fallbackBox(el, "渲染失败");
+      fallbackBox(el, "图表绘制失败");
     }
   }
 }

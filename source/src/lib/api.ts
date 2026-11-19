@@ -285,7 +285,7 @@ async function apiImportSettings(): Promise<ImportResult> {
     if (!settings) return { kind: "invalid", why: "文件内容不是有效的设置对象" };
     return { kind: "ok", settings };
   } catch {
-    return { kind: "invalid", why: "JSON 解析失败（文件损坏或不是配置导出）" };
+    return { kind: "invalid", why: "这个文件不是有效的设置文件" };
   }
 }
 async function apiDrainPending(): Promise<string[]> {

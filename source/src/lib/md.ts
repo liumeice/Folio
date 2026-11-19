@@ -772,8 +772,8 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
         const cbx = (clickable: boolean, t: boolean) =>
           `<span class="cbx${t ? " done" : ""}"` +
           (clickable
-            ? ` role="checkbox" tabindex="0" aria-checked="${t}" title="点击勾选 / 取消（写回源文件）"`
-            : ` aria-hidden="true" title="引用块内的任务不可勾选（不写回源文件）"`) +
+            ? ` role="checkbox" tabindex="0" aria-checked="${t}" title="点一下打勾或取消，改完按 Ctrl+S 保存"`
+            : ` aria-hidden="true" title="引用块里的任务不能勾选"`) +
           `><svg class="ico ico-12"><use href="#i-check"/></svg></span>`;
         if (nested) {
           // 引用块/提示块内的任务：只显示不可勾选（Rust toggle_task 不认引用前缀行，

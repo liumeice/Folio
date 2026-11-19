@@ -12,14 +12,14 @@ import type { CalloutKind, EditorCmd, ListKind, WrapKind } from "../lib/mdInsert
 
 const KEYMAP: [string, string][] = [
   ["Ctrl O", "打开本地 .md（可多选）"],
-  ["Ctrl N", "新建文档（草稿即写，首次保存确认名字与位置）"],
+  ["Ctrl N", "新建文档（建好直接写，第一次保存时确认文件名和位置）"],
   ["Ctrl F / Ctrl K", "全文搜索"],
   ["F3 / Shift+F3", "搜索命中下一处 / 上一处"],
   ["Ctrl E", "阅读 ⇄ 编辑（有改动时保存并提示）"],
-  ["Ctrl S", "保存（编辑态写回并返回阅读；阅读态提交待保存修改，如任务勾选）"],
+  ["Ctrl S", "保存（编辑时保存并回到阅读；阅读时保存刚勾选的改动）"],
   ["Ctrl Shift S", "另存为…（当前内容写到新路径，页签切到新文件，原文件不动）"],
   ["Ctrl 滚轮 ↑ / ↓", "阅读区正文字号放大 / 缩小（仅正文排版，不缩放应用界面）"],
-  ["Shift Alt F", "源码自动格式化（标题 / 列表 / 引用 / 围栏空格与空行；代码块内容不动）"],
+  ["Shift Alt F", "源码自动格式化（整理标题、列表、引用的空格和空行；代码块内容不动）"],
   ["Alt ↑ / Alt ↓", "上一章 / 下一章"],
   ["Alt ← / Alt →", "后退 / 前进（同文档回当时行）"],
   ["↑ ↓ ← →", "大纲内：移动 / 收起 / 展开（Enter 或空格跳转）"],
@@ -103,11 +103,11 @@ export function AboutModal() {
           <div style={{ "margin-top": "16px", padding: "10px 12px", border: "1px solid var(--line)", "border-radius": "var(--r-2)", "font-family": "var(--font-mono)", "font-size": "11px", color: "var(--text-3)" }}>
             GitHub：<a class="about-repo" href={REPO_URL} target="_blank" rel="noopener"
               onClick={(e) => { e.preventDefault(); openRepo(); }}>github.com/liumeice/Folio</a><br />
-            深度链接：<span style={{ color: "var(--accent)" }}>folio://open?doc=&lt;slug&gt;&amp;sec=…</span><br />
-            {isTauri ? "单实例 · WebView2 · " + s.docs().length + " 篇已索引" : "浏览器演示环境（Rust 未接入，localStorage 模拟）"}
+            文档链接：<span style={{ color: "var(--accent)" }}>folio://open?doc=&lt;slug&gt;&amp;sec=…</span><br />
+            {isTauri ? "本地运行 · 已收录 " + s.docs().length + " 篇文档" : "浏览器预览模式（数据保存在浏览器里，不写磁盘）"}
           </div>
         </div>
-        <div class="modal-f"><span style={{ "font-size": "11.5px", color: "var(--text-3)" }}>数据只落本地 · 网络图片在线加载</span><span class="sp" />
+        <div class="modal-f"><span style={{ "font-size": "11.5px", color: "var(--text-3)" }}>数据只存在这台电脑上 · 网络图片按需加载</span><span class="sp" />
           <button class="btn primary" onClick={() => ui.setAboutOpen(false)}>好</button></div>
       </div>
     </OverlayShell>
@@ -182,13 +182,13 @@ export function PropsModal() {
     return [
       ["路径", c.meta.path],
       ["大小", (c.meta.size / 1024).toFixed(1) + " KB"],
-      ["字数", countWords(c.src).toLocaleString() + " 字（正文口径 · 不含公式/图表源码）"],
+      ["字数", countWords(c.src).toLocaleString() + " 字（只统计正文，不含公式和图表源码）"],
       ["小节 / 标题", c.meta.secCount + " 节 / " + c.outline.length + " 条"],
       ["编码", "UTF-8"],
       ["修改时间", new Date(c.meta.mtime * 1000).toLocaleString()],
       ["当前章节", s.activeSec() != null ? (c.outline[s.activeSec()! - 1]?.text ?? "—") : "—"],
       ["阅读进度", Math.round(ui.readPct() * 100) + "%"],
-      ["深度链接", link()],
+      ["文档链接", link()],
     ];
   };
   return (
@@ -210,9 +210,9 @@ export function PropsModal() {
         <div class="modal-f"><span class="sp" /><span class="mfb">
           <button class="btn" onClick={() => ui.setPropsOpen(false)}>关闭</button>
           <button class="btn primary" onClick={() => {
-            navigator.clipboard?.writeText(link()).then(() => ui.showCopied("已复制深度链接", link()))
+            navigator.clipboard?.writeText(link()).then(() => ui.showCopied("已复制文档链接", link()))
               .catch(() => s.toast("剪贴板不可用"));
-          }}><svg class="ico ico-14"><use href="#i-copy" /></svg>复制深度链接</button>
+          }}><svg class="ico ico-14"><use href="#i-copy" /></svg>复制文档链接</button>
         </span></div>
       </div>
     </OverlayShell>
@@ -716,18 +716,18 @@ export function ContextMenu() {
       // 从文档库移除 = 取消库成员身份：登记/进度/打开历史都留着，重扫该目录会再入库
       else if (item === "unlibrary") {
         await api.setInLibrary(m.id, false);
-        s.toast("已从文件夹移除（进度与历史保留 · 重新打开该文件夹会再列入）");
+        s.toast("已从文件夹移除（阅读进度和打开记录都保留 · 重新打开这个文件夹会再出现）");
       }
       // 从最近打开移除 = 删打开记录；若这文件从没入过库，登记连带回收
       else if (item === "unrecent") {
         const purged = await api.removeRecent(m.id);
-        s.toast(purged ? "已从最近打开移除（该文档不在库，登记一并回收）" : "已从最近打开移除");
+        s.toast(purged ? "已从最近打开移除（这个文件不在任何文件夹里，阅读进度也一并清除了）" : "已从最近打开移除");
       }
       else if (item === "reveal") { void revealInFolder(m.path, s); return; }
       else if (item === "path") { void copyText(m.path); return; }
       else if (item === "link") {
         const l = "folio://open?doc=" + m.slug;
-        navigator.clipboard?.writeText(l).then(() => ui.showCopied("已复制深度链接", l))
+        navigator.clipboard?.writeText(l).then(() => ui.showCopied("已复制文档链接", l))
           .catch(() => s.toast("剪贴板不可用"));
         return;
       }
@@ -758,7 +758,7 @@ export function ContextMenu() {
               </Show>
               {item("打开所在目录", "reveal", d, "i-folder-open")}
               {item("复制路径", "path", d, "i-copy")}
-              {item("复制深度链接", "link", d, "i-external")}
+              {item("复制文档链接", "link", d, "i-external")}
               <div class="msep" />
               <Show when={d.meta.inLibrary}>
                 {item("从文件夹移除", "unlibrary", d, "i-x")}

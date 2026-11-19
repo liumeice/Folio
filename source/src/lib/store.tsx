@@ -23,7 +23,7 @@ function srcLines(src: string): number {
 function outlineSig(outline: readonly { sec: number; line: number; text: string }[]): string {
   return outline.map((o) => `${o.sec}:${o.line}:${o.text}`).join("\u0001");
 }
-import { confirmBox, quitApp } from "./actions";
+import { quitApp } from "./actions";
 import * as ui from "./ui";
 import { dismissSplash } from "./boot";
 
@@ -359,8 +359,13 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     // 草稿找回（FR-7.7）：存在"晚于文件 mtime"的未保存草稿 → 询问恢复
     const dr = getDraft(doc.meta.path);
     if (dr && dr.at > doc.meta.mtime * 1000 + 1500 && dr.text !== doc.src) {
-      const yes = await confirmBox("检测到上次未保存的草稿（晚于磁盘文件）。\n确定 = 恢复草稿进入待保存状态；取消 = 丢弃草稿。", "未保存草稿");
-      if (yes) { setDraftSrc(dr.text); setDirty(true); toast("已恢复草稿 · Ctrl+S 落盘 / Esc 放弃"); }
+      const yes = (await ui.ask({
+        icon: "i-info", title: "发现未保存的修改",
+        sub: `「${doc.meta.fileName}」上次退出前的修改还没保存到文件`,
+        note: "点「恢复修改」，内容会回到上次编辑的样子，确认后按 Ctrl+S 保存到文件；点「取消」，这些修改就丢掉了，文件保持原来的内容。",
+        ok: "恢复修改",
+      })) === true;
+      if (yes) { setDraftSrc(dr.text); setDirty(true); toast("已找回上次未保存的修改 · 按 Ctrl+S 保存到文件"); }
       else clearDraft(doc.meta.path);
     }
   }
@@ -410,7 +415,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     try {
       await switchTo(await api.openBySlug(slug), { secText });
     } catch {
-      toast("深度链接未命中：" + slug);
+      toast("没有找到这个文档链接对应的文件：" + slug);
     }
   }
 
@@ -583,17 +588,23 @@ export function StoreProvider(props: ParentProps): JSX.Element {
         applySaved(next);                // 阅读态（打勾待存被「保存」）：原位重渲染不跳顶
       }
       clearDraft(cur.meta.path);
-      toast(customMsg ?? "已保存并写回磁盘");
+      toast(customMsg ?? "已保存到文件");
       return true;
     } catch (e) {
       const msg = String(e);
       if (msg.includes("CONFLICT") && !force) {
-        // FR-7.5：外部并发编辑 → 重新加载 / 覆盖 二选一
-        const reload = await confirmBox(
-          "文件在本编辑器之外被修改过。\n确定 = 重新加载磁盘版本（丢弃当前缓冲）；取消 = 以当前内容覆盖磁盘。",
-          "保存冲突");
-        if (reload) { setDraftSrc(cur.src); setDirty(false); await openPath(cur.meta.path); return true; }
-        return await save(customMsg, true);
+        // FR-7.5：外部并发编辑 → 重新加载 / 覆盖 二选一；取消/Esc/✕/遮罩 = 零副作用（§8.6）
+        const pick = await ui.ask({
+          icon: "i-info", title: "文件已被其他程序改动",
+          note: "这份文件在 Folio 之外被改过了。你想保留哪一个版本？",
+          buttons: [
+            { label: "重新加载", value: "reload", primary: true },
+            { label: "用我的内容覆盖", value: "overwrite" },
+          ],
+        });
+        if (pick === "reload") { setDraftSrc(cur.src); setDirty(false); await openPath(cur.meta.path); return true; }
+        if (pick === "overwrite") return await save(customMsg, true);
+        return false;
       }
       toast("保存失败：" + ui.fmtErr(msg));
       return false;
@@ -607,7 +618,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     endEdit();
     clearDraft(cur.meta.path);
     recomputeDirty();  // Esc 只弃编辑缓冲；阅读态挂账的打勾不属于"编辑修改"，保留待存
-    toast(dirty() ? "已放弃编辑修改；待保存的任务勾选仍在" : "已放弃未保存修改，返回阅读模式");
+    toast(dirty() ? "已放弃编辑修改；刚勾选的改动还没保存" : "已放弃未保存修改，返回阅读模式");
   }
   /** Ctrl+S / 菜单「保存」统一入口（§6.4）：编辑态=保存并返回阅读；
    *  阅读态有待存改动（打勾）→ 写盘；干净 → 如实告知无事可存。 */

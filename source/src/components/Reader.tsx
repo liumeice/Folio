@@ -625,7 +625,7 @@ export default function Reader() {
        * 翻转只改内存 src（flipTaskInSrc 与 folio-core::toggle_task 同坐标系）并挂脏标记，
        * 页签橙点即反馈；落盘统一走「保存」/Ctrl+S。 */
       const flipped = flipTaskInSrc(doc.src, nth);
-      if (flipped == null) { s.toast("勾选失败：序号越界，未在源文本找到该任务行"); return; }
+      if (flipped == null) { s.toast("没能在这个文件里找到这一项，勾选没有生效"); return; }
       /* P1-4：勾选只改当前 <li> 的一个状态位，不整篇 mdToHtml + innerHTML 重渲染。
        * DOM 先原地改好，再把新 DocFull 登记为 lastRendered——Reader 的渲染 effect 看到
        * doc === lastRendered 就直接跳过 render()；滚动复位仍由 applySaved 的 pixel 导航负责。 */
@@ -676,12 +676,12 @@ export default function Reader() {
           const resolved = joinDocPath(baseDir, clean);
           if (resolved) { void s.openPath(resolved); return; }
         }
-        s.toast("不支持的相对链接：" + clip(href));
+        s.toast("暂不支持打开这种链接：" + clip(href));
         return;
       }
       if (scheme === "http" || scheme === "https" || scheme === "mailto") { void openExternal(href); return; }
       // data: / javascript: / file: / 任意未知 scheme —— 一律拦截（SEC-03 白名单口径）
-      s.toast("已拦截不安全链接协议：" + scheme);
+      s.toast("出于安全考虑，这种链接不会打开：" + scheme);
     }
   }
 

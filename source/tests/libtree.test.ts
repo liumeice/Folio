@@ -86,7 +86,7 @@ test("最长匹配：嵌套库根时以最具体的根为准", () => {
 test("分隔符边界：docs2 不许被 docs 命中；无根可挂的落进兜底桶", () => {
   const tops = buildLibTree(["D:/docs"], [doc("D:/docs2/a.md")]);
   assert.equal(tops.length, 1);
-  assert.equal(tops[0].name, "其他库条目");
+  assert.equal(tops[0].name, "其他文件夹的文档");
   assert.equal(tops[0].files.length, 1);
 });
 

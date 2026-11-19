@@ -349,8 +349,8 @@ export default function EditorPane() {
   return (
     <div class="editor-wrap">
       <div class="editor-bar">
-        <span class="hint" title="编辑模式已启用行号 / Markdown 语法着色 / 软换行；滚动与阅读视图、大纲互通">
-          编辑模式 — <b>行号 / 语法着色</b>已启用
+        <span class="hint" title="编辑模式已开启行号和高亮；滚动、大纲与阅读视图保持同步">
+          编辑模式 — <b>行号 / 高亮</b>已开启
         </span>
         <span class="sp" />
         <Show when={s.dirty()}>
@@ -359,7 +359,7 @@ export default function EditorPane() {
         {/* §8.2 按钮组口径：等宽、dismiss（放弃修改）居左 */}
         <span class="mfb">
           <button class="btn" title="不保存本次修改，返回阅读 (Esc)" onClick={() => s.discard()}>放弃修改</button>
-          <button class="btn primary" title="写回磁盘并更新索引 (Ctrl+S)" onClick={() => void s.save()}>
+          <button class="btn primary" title="保存到文件 (Ctrl+S)" onClick={() => void s.save()}>
             <svg class="ico ico-14"><use href="#i-save" /></svg>保存并返回阅读
           </button>
         </span>

@@ -51,11 +51,11 @@ export default function App() {
       if (kind === "dir") {
         try {
           const r = await api.scanFolder(p);
-          s.toast(`目录已登记：新增 ${r.inserted} · 更新 ${r.updated} · 移除 ${r.removed}`
-            + (r.truncated ? `（${r.truncated} 篇超出扫描上限未索引）` : ""));
+          s.toast(`已打开文件夹：新增 ${r.inserted} 篇 · 更新 ${r.updated} 篇 · 移除 ${r.removed} 篇`
+            + (r.truncated ? `（文件太多，还有 ${r.truncated} 篇没有纳入）` : ""));
           s.setSide("library");   // 2026-11-16：拖入文件夹=打开库，自动切到文档库面板
         } catch (e) {
-          s.toast("目录登记失败：" + ui.fmtErr(e));
+          s.toast("打开文件夹失败：" + ui.fmtErr(e));
         }
       } else if (kind === "file" && /\.(md|markdown|txt)$/i.test(p)) {
         files.push(p);
@@ -76,7 +76,7 @@ export default function App() {
 
   async function handleBrowserDrop(files: FileList) {
     const arr = [...files].filter((f) => /\.(md|markdown|txt)$/i.test(f.name));
-    if (!arr.length) { s.toast("未找到 Markdown 文件（支持 .md / .markdown / .txt；目录拖放为正式版能力）"); return; }
+    if (!arr.length) { s.toast("未找到 Markdown 文件（支持 .md / .markdown / .txt；把文件夹拖进窗口请用正式版）"); return; }
     let first: string | null = null;
     for (const f of arr.slice(0, 100)) {
       const p = await api.importBrowserFile(f);

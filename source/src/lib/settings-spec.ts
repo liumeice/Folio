@@ -60,21 +60,21 @@ const dom = (name: keyof typeof RANGE) => ({ min: RANGE[name][0], max: RANGE[nam
 export const ITEMS: readonly SettingItem[] = [
   {
     key: "theme", group: "appearance", label: "主题",
-    hint: "深浅两套灰阶都过了 WCAG AA，护眼米色另按小字对比收紧；切换即时生效并记住。",
+    hint: "三套配色都按小字可读性调过对比度；选中立即生效，下次启动仍然记得。",
     control: { kind: "themeCard", options: [["dark", "深色"], ["light", "浅色"], ["sepia", "护眼米色"]] },
     get: (s) => s.theme,
     set: (_s, v) => ({ theme: v as Settings["theme"] }),
   },
   {
     key: "accent", group: "appearance", label: "强调色",
-    hint: "十二枚强调色：六枚纯色 + 六枚日夜双档（色板对分圆，浅底取浅档、暗底取暗档）。选中即时套用到高亮、描边、链接与主按钮，前景墨色自动择优。",
+    hint: "选一个颜色用在按钮、链接和高亮上；深色和浅色主题下会自动取合适的深浅，保证看得清。",
     control: { kind: "swatch" },
     get: (s) => s.accent,
     set: (_s, v) => ({ accent: String(v) }),
   },
   {
     key: "restoreOnLaunch", group: "appearance", label: "启动时恢复上次文档",
-    hint: "关闭后启动不再自动打开上次关闭时的文档，冷启动更快；需要时从「最近打开」随时找回，阅读位置不丢。",
+    hint: "关闭后启动不再自动打开上次关闭时的文档，启动更快；需要时从「最近打开」随时找回，阅读位置不丢。",
     control: { kind: "switch" },
     get: (s) => s.restoreOnLaunch,
     set: (_s, v) => ({ restoreOnLaunch: v === true }),
@@ -110,7 +110,7 @@ export const ITEMS: readonly SettingItem[] = [
   },
   {
     key: "letterSpacing", group: "paragraph", label: "字距",
-    hint: "额外字间距 em，0 为不加；中文长文加一点点更透气。",
+    hint: "字与字之间多加一点空隙，0 就是不加；中文长文稍加一点更好读。",
     control: { kind: "range" },
     domain: dom("letterSpacing"),
     get: (s) => s.letterSpacing,

@@ -87,10 +87,10 @@ export function LibraryPanel() {
   async function rescanOne(r: string) {
     try {
       const rep = await api.scanFolder(r);
-      s.toast(`重新扫描「${leafName(r)}」：新增 ${rep.inserted} · 更新 ${rep.updated} · `
-        + `未变 ${rep.unchanged} · 移除 ${rep.removed}`
-        + (rep.skipped ? ` · 读取失败跳过 ${rep.skipped}` : "")
-        + (rep.truncated ? ` · 超上限未索引 ${rep.truncated}` : ""));
+      s.toast(`重新扫描「${leafName(r)}」：新增 ${rep.inserted} 篇 · 更新 ${rep.updated} 篇 · `
+        + `未变 ${rep.unchanged} 篇 · 移除 ${rep.removed} 篇`
+        + (rep.skipped ? ` · ${rep.skipped} 篇读取失败，已跳过` : "")
+        + (rep.truncated ? ` · 文件太多，还有 ${rep.truncated} 篇没有纳入` : ""));
       void s.refreshDocs();
     } catch (e) {
       s.toast("重新扫描失败：" + String(e));   // UI-15：旧版裸 await，失败无声无息
@@ -112,7 +112,7 @@ export function LibraryPanel() {
     const r = curRoot();
     if (!r) { await pickFolderAndScan(s); return; }   // 没有库时这个位置就是「打开文件夹…」
     const extra = s.roots().length > 1
-      ? `另有 ${s.roots().length - 1} 个库不受影响。` : "";
+      ? `另外 ${s.roots().length - 1} 个文件夹不受影响。` : "";
     // 应用内询问框（§8.6）：白话文案 + 新旧信息分行；取消/Esc/遮罩 = 零副作用
     const ok = await ui.ask({
       icon: "i-x", title: "关闭文件夹", sub: "关闭当前打开的文件夹，不会删除电脑里任何文件。",
@@ -138,7 +138,7 @@ export function LibraryPanel() {
             onClick={() => setAll(true)}>
             <svg class="ico ico-12"><use href="#i-chev-d" /></svg>
           </span>
-          <span class="act" id="lib-collapse" title="全部收起（只留库根与它的第一层）"
+          <span class="act" id="lib-collapse" title="全部收起（只留最外层）"
             onClick={() => setAll(false)}>
             <svg class="ico ico-12"><use href="#i-chev-u" /></svg>
           </span>
@@ -162,7 +162,7 @@ export function LibraryPanel() {
                 <svg class="ico ico-12"><use href="#i-refresh" /></svg>
               </span>
               <span class="ract" id="lib-close"
-                title={`关闭这个文件夹（${underCur()} 篇转为「仅最近打开」· 磁盘与进度不动）`}
+                title={`关闭这个文件夹（${underCur()} 篇只保留在「最近打开」里 · 磁盘上的文件和阅读进度都不受影响）`}
                 onClick={(e) => { e.stopPropagation(); void closeLibrary(); }}>
                 <svg class="ico ico-12"><use href="#i-x" /></svg>
               </span>
@@ -208,7 +208,7 @@ export function LibraryPanel() {
         </For>
       </div>
       <div class="side-foot">
-        <span class="dot-ok" /><span>SQLite · FTS5</span><span class="sp" />
+        <span class="dot-ok" /><span>本地存储</span><span class="sp" />
         <span>{libDocs().length ? `共 ${libDocs().length} 篇` : "还没有打开的文件夹"}</span>
       </div>
     </>
@@ -280,7 +280,8 @@ export function RecentsPanel() {
   });
   async function clearAll() {
     const ok = await confirmBox(
-      "清空「最近打开」列表？\n只删打开历史：文件夹里的文档与内置文档完全不受影响。\n仅「打开过但从未加入文件夹」的条目会连带回收登记（阅读进度与索引一并清除，磁盘文件不动）。",
+      "清空「最近打开」列表？\n只是清掉打开记录，文件夹里的文档一篇都不会少。\n"
+      + "不在任何文件夹里的文件，阅读进度和搜索记录也会一起清掉；磁盘上的文件不动。",
       "清空最近打开");
     if (!ok) return;
     // UI-15：清空失败必须有声——旧版裸 await，命令排队/异常时静默无反应，看起来像"没清掉"
@@ -289,14 +290,14 @@ export function RecentsPanel() {
     catch (e) { s.toast("清空最近打开失败：" + String(e)); return; }
     await s.refreshDocs();
     s.toast(rep.pruned
-      ? `已清空打开历史（${rep.cleared} 条 · 回收 ${rep.pruned} 条登记）`
+      ? `已清空打开历史（${rep.cleared} 条；其中 ${rep.pruned} 个文件的阅读进度也一并清除了）`
       : `已清空打开历史（${rep.cleared} 条）`);
   }
   return (
     <>
       <div class="side-head">
         <div class="side-title">最近打开<span class="sp" />
-          <span id="rec-clear" class="sec-act" title="清空打开历史（不动库 · 不动磁盘）" onClick={() => void clearAll()}>
+          <span id="rec-clear" class="sec-act" title="清空打开记录（文件夹和磁盘上的文件都不受影响）" onClick={() => void clearAll()}>
             <svg class="ico ico-12"><use href="#i-trash" /></svg>
           </span>
           <span id="rec-add" title="打开文档… (Ctrl+O)" style={{ cursor: "pointer", display: "inline-grid" }}
@@ -343,7 +344,7 @@ function RecentItem(props: { r: RecentDoc }) {
     try {
       const purged = await api.removeRecent(d().id);
       await s.refreshDocs();
-      s.toast(purged ? "已从历史移除（该文档不在任何文件夹，登记一并回收）" : "已从历史移除");
+      s.toast(purged ? "已从历史移除（这个文件不在任何文件夹里，阅读进度也一并清除了）" : "已从历史移除");
     } catch (err) {
       s.toast("移除失败：" + String(err));   // UI-15：失败必须有声
     }
@@ -359,7 +360,7 @@ function RecentItem(props: { r: RecentDoc }) {
       <svg class="ico ico-14" style={{ color: on() ? "var(--accent)" : "var(--text-3)" }}><use href="#i-md" /></svg>
       <span class="nm">{d().fileName}</span>
       {/* 需求方 2026-11-17：历史行不显示上级文件夹小字；时间右移贴住关闭按钮留位 */}
-      <Show when={d().inLibrary}><span class="badge">库</span></Show>
+      <Show when={d().inLibrary}><span class="badge">文件夹</span></Show>
       <Show when={d().builtin}><span class="badge">内置</span></Show>
       <span class="mt">{recentLabel(props.r.openedAt)}</span>
       <span class="iconbtn row-x" title="从最近打开移除" onClick={(e) => void remove(e)}>
@@ -597,12 +598,12 @@ export function StatusBar() {
       <span class="si" id="stat-enc" onClick={() => ui.setPropsOpen(true)} title="查看文档信息">UTF-8</span>
       {/* 百分比定宽槽：位数变化不抖动（样式见 app.css .pct-slot） */}
       <span class="si">阅读 <span class="pct-slot">{Math.round(ui.readPct() * 100)}%</span></span>
-      <span class="si acc" id="stat-link-btn" title="点击复制当前文档深度链接"
+      <span class="si acc" id="stat-link-btn" title="点击复制当前文档链接"
         onClick={() => {
           const c = s.current();
           if (!c) { s.toast("未打开文档"); return; }
           navigator.clipboard?.writeText(link())
-            .then(() => ui.showCopied("已复制深度链接", link()))
+            .then(() => ui.showCopied("已复制文档链接", link()))
             .catch(() => s.toast("剪贴板不可用"));
         }}>
         <code>{link()}</code>

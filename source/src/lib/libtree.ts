@@ -89,7 +89,7 @@ export function buildLibTree(roots: string[], libDocs: DocMeta[]): DirNode[] {
     }
     return child;
   };
-  const loose = mkDir("*", "其他库条目", 0);
+  const loose = mkDir("*", "其他文件夹的文档", 0);
   for (const d of libDocs) {
     const r = rootOf(d.dir, roots);
     if (!r) { loose.files.push(d); continue; }

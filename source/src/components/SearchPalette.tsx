@@ -10,7 +10,7 @@ import type { SearchHit } from "../lib/types";
 const [query, setQuery] = createSignal("");
 const [hits, setHits] = createSignal<SearchHit[]>([]);
 const [sel, setSel] = createSignal(0);
-const IDLE_STATUS = "范围：当前文档 · 芯片可切换全部已登记（FTS5 trigram）";
+const IDLE_STATUS = "范围：当前文档 · 点右上角可搜索全部文档";
 const [status, setStatus] = createSignal(IDLE_STATUS);
 let inputEl!: HTMLInputElement;
 let debTimer: number | undefined;
@@ -33,7 +33,6 @@ export default function SearchPalette() {
       ? (s.mode() === "edit" ? (ui.getEditorBridge()?.docText() ?? s.draftSrc()) : (s.current()?.src ?? null))
       : null;
     void (async () => {
-      const t0 = performance.now();
       try {
         const r = await api.search({
           text,
@@ -45,15 +44,14 @@ export default function SearchPalette() {
         if (seq !== querySeq) return;   // 旧请求：结果作废，不覆盖新查询
         setHits(r);
         setSel(0);
-        const ms = (performance.now() - t0).toFixed(1);
         const total = r.reduce((a, h) => a + h.count, 0);
         // UI-11：状态文案不许说谎——当前文档是现算不是 FTS；命中数达 limit 时明示截断
-        const engine = scope === "library" ? "FTS5 全部已登记" : "当前文档";
-        const capped = r.length >= 200 ? " · 已达 200 条展示上限" : "";
-        setStatus(`${total} 处匹配 · ${ms} ms（${engine}${capped}）`);
+        const engine = scope === "library" ? "全部文档" : "当前文档";
+        const capped = r.length >= 200 ? " · 只显示前 200 条" : "";
+        setStatus(`${total} 处匹配（${engine}${capped}）`);
       } catch (e) {
         if (seq !== querySeq) return;
-        setStatus("检索失败：" + String(e));
+        setStatus("搜索失败：" + String(e));
       }
     })();
   }
@@ -149,18 +147,18 @@ export default function SearchPalette() {
       <div class="pal">
         <div class="pal-in">
           <svg class="ico"><use href="#i-search" /></svg>
-          <input id="search-input" ref={inputEl} spellcheck="false" placeholder={ui.searchScope() === "library" ? "搜索全部已登记…" : "搜索当前文档…"}
+          <input id="search-input" ref={inputEl} spellcheck="false" placeholder={ui.searchScope() === "library" ? "搜索全部文档…" : "搜索当前文档…"}
             value={query()} onInput={(e) => onInput(e.currentTarget.value)} onKeyDown={onKey} />
           <button
             style={{ "font-size": "11px", color: "var(--text-3)", border: "1px solid var(--line)", "border-radius": "6px", padding: "3px 7px", cursor: "pointer" }}
-            title="切换检索范围：当前文档 ⇄ 全部已登记（库 + 最近打开）" onClick={() => {
+            title="切换搜索范围：当前文档 ⇄ 全部文档（包括只打开过、没放进文件夹的文件）" onClick={() => {
               ui.setSearchScope(ui.searchScope() === "library" ? "current" : "library");
               if (query()) runQuery(query()); else setStatus(IDLE_STATUS);
-            }}>FTS5 · {ui.searchScope() === "library" ? "全部" : "当前"}</button>
+            }}>{ui.searchScope() === "library" ? "全部文档" : "当前文档"}</button>
         </div>
         <div class="pal-list" id="search-results">
           <Show when={!query().trim() && !hits().length}>
-            <div class="sr-empty">范围：{ui.searchScope() === "library" ? "全部已登记（含仅最近打开的文件；FTS5 trigram，中文 2 字词 LIKE 兜底）" : "仅当前文档"}<br />输入关键词开始搜索</div>
+            <div class="sr-empty">范围：{ui.searchScope() === "library" ? "全部文档（包括只打开过、没放进文件夹的文件）" : "仅当前文档"}<br />输入关键词开始搜索</div>
           </Show>
           <Show when={query().trim() && !hits().length}>
             <div class="sr-empty">没有找到与 “{escapeHtml(query().trim())}” 匹配的内容</div>
