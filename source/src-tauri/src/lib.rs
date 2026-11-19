@@ -108,10 +108,21 @@ fn emit_open_request(app: &AppHandle, raw: &str) {
 
 /// 所有重活的统一入口：clone Arc、进阻塞线程池、双层错误折叠成 String。
 /// （比 macro_rules 好在：闭包参数类型由签名确定，且无宏卫生问题）
+/// 最近一次交互式 DB 命令的时刻（unix 毫秒）。后台维护线程据此「安静才干活」，
+/// 避免 VACUUM/FTS optimize 长事务占写锁期间把用户操作憋死（2026-11-19 垃圾桶假死回归）。
+static LAST_DB_USE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 async fn spawn_db<T: Send + 'static>(
     state: &State<'_, AppState>,
     f: impl FnOnce(&Arc<Db>) -> folio_core::Result<T> + Send + 'static,
 ) -> Result<T, String> {
+    LAST_DB_USE_MS.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || f(&db))
         .await
@@ -722,14 +733,38 @@ pub fn run() {
                     }
                 }
             }
-            // P1-6：启动 3s 后（脱离关键路径）后台维护一次库：膨胀 VACUUM（条件触发）+ WAL 收拢
+            // P1-6：后台维护一轮库：FTS 段合并 → 膨胀 VACUUM（条件触发）→ WAL 收拢。
+            // 2026-11-19 回归修复：旧实现固定启动 3s 后开工，大库上 optimize/VACUUM 会
+            // 长时间持有 DB 写锁——期间用户点「清空最近打开」/保存，命令在互斥锁上排队，
+            // 表现为"点了没反应、列表不清"，维护结束才补上（垃圾桶假死）。
+            // 现在：连续 2 分钟没有交互式 DB 命令才开工；每一步之间复核安静期，
+            // 被用户打断则推迟到下一个安静窗口。WAL 日常收拢有 wal_autocheckpoint=256 兜底，
+            // optimize/VACUUM 本就是条件触发，本轮错过无害。
             let db_maint = db.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(3));
-                let _ = db_maint.optimize_fts_if_stale(); // 先合并 FTS 段碎片
-                let _ = db_maint.vacuum_if_bloated();     // 再回收页（含 optimize 释放的）
-                let _ = db_maint.checkpoint();
-            });
+            // 把"现在"当作最近一次活动：启动命令与欢迎页登记还没走 spawn_db 计数，
+            // 否则维护线程会在开机第一秒就误判安静并抢跑。
+            LAST_DB_USE_MS.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
+            std::thread::Builder::new()
+                .name("folio-db-maint".into())
+                .spawn(move || {
+                    const QUIET_MS: u64 = 120_000;
+                    let quiet = || {
+                        now_ms().saturating_sub(LAST_DB_USE_MS.load(std::sync::atomic::Ordering::Relaxed)) >= QUIET_MS
+                    };
+                    let wait_quiet = || {
+                        while !quiet() {
+                            std::thread::sleep(std::time::Duration::from_secs(10));
+                        }
+                    };
+                    // 逐步复核安静期：上一步耗时期间用户回来了，后续步骤顺延到下一个窗口
+                    wait_quiet();
+                    let _ = db_maint.optimize_fts_if_stale();
+                    wait_quiet();
+                    let _ = db_maint.vacuum_if_bloated();
+                    wait_quiet();
+                    let _ = db_maint.checkpoint();
+                })
+                .ok();
             app.manage(AppState { db, pending: Mutex::new(initial.clone()), exporting: std::sync::atomic::AtomicBool::new(false) });
 
             use tauri_plugin_deep_link::DeepLinkExt;

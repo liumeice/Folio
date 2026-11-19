@@ -3,7 +3,7 @@ import { useStore, type SideView } from "../lib/store";
 import * as ui from "../lib/ui";
 import { pickAndOpen, pickFolderAndScan, confirmBox } from "../lib/actions";
 import { api } from "../lib/api";
-import type { DocMeta, RecentDoc } from "../lib/types";
+import type { DocMeta, RecentDoc, RecentReport } from "../lib/types";
 import { allDirKeys, revealKeys } from "../lib/libtree";
 import { countWords } from "../lib/wordcount";
 import { buildLibTree, flattenAll, isDirOpen, leafName, rootOf, type DirNode, type TreeRow } from "../lib/libtree";
@@ -283,7 +283,10 @@ export function RecentsPanel() {
       "清空「最近打开」列表？\n只删打开历史：文件夹里的文档与内置文档完全不受影响。\n仅「打开过但从未加入文件夹」的条目会连带回收登记（阅读进度与索引一并清除，磁盘文件不动）。",
       "清空最近打开");
     if (!ok) return;
-    const rep = await api.clearRecents();
+    // UI-15：清空失败必须有声——旧版裸 await，命令排队/异常时静默无反应，看起来像"没清掉"
+    let rep: RecentReport;
+    try { rep = await api.clearRecents(); }
+    catch (e) { s.toast("清空最近打开失败：" + String(e)); return; }
     await s.refreshDocs();
     s.toast(rep.pruned
       ? `已清空打开历史（${rep.cleared} 条 · 回收 ${rep.pruned} 条登记）`
