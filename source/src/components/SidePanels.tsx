@@ -1,7 +1,8 @@
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onMount } from "solid-js";
 import { useStore, type SideView } from "../lib/store";
 import * as ui from "../lib/ui";
-import { pickAndOpen, pickFolderAndScan, confirmBox } from "../lib/actions";
+import { pickAndOpen, pickFolderAndScan, confirmBox, renameFile, renameFolder } from "../lib/actions";
+import { baseNameLen } from "../lib/filename";
 import { api } from "../lib/api";
 import type { DocMeta, RecentDoc, RecentReport } from "../lib/types";
 import { allDirKeys, revealKeys } from "../lib/libtree";
@@ -216,20 +217,77 @@ export function LibraryPanel() {
 }
 
 /** 库列表行。depth 只用于缩进（筛选态为 0），showPath 在平铺态补出所在目录。 */
+/* 目录树「重命名」就地编辑框（《Folio-目录树文件重命名方案》§4.4 + 增强 2026-11-20）：
+ * 文件默认选中主文件名（扩展名不选，打字换名不换型），文件夹整名选中；
+ * Enter 提交、**点击别处失焦也提交**（需求方增强 3：不用必须回车），Esc 显式取消；
+ * 校验失败/写盘被拒：顶部 toast 说明原因并保持在编辑态（不抢回焦点——用户可能已去别处，
+ * 想改回来点一下该行即可，行在编辑态不响应打开）。
+ * 两道闸门：settling=提交异步进行中（防 Enter 与紧随的 blur 双触发）；
+ * escCancel=Esc 收起引发的卸载 blur 不当提交。 */
+function RenameBox(props: { kind: "file" | "dir"; initial: string; onSubmit: (name: string) => Promise<boolean> }) {
+  let el: HTMLInputElement | undefined;
+  let settling = false;
+  let escCancel = false;
+  const commit = async () => {
+    if (settling || escCancel) return;
+    settling = true;
+    const ok = await props.onSubmit(el?.value ?? "");
+    if (ok) ui.setRenaming(null);
+    else settling = false;   // 保持在编辑态，输入不丢
+  };
+  onMount(() => {
+    if (!el) return;
+    el.value = props.initial;
+    el.focus();
+    el.setSelectionRange(0, props.kind === "file" ? baseNameLen(props.initial) : props.initial.length);
+  });
+  return (
+    <input
+      ref={(node) => { el = node; }}
+      class="rename-input"
+      spellcheck={false}
+      title="Enter 或点击别处确认 · Esc 取消"
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDblClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void commit(); }
+        else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); escCancel = true; ui.setRenaming(null); }
+        else e.stopPropagation();   // 方向键等输入框内动作不外洐给全局快捷键（UI-01 口径）
+      }}
+      onBlur={() => { void commit(); }}
+    />
+  );
+}
+
 function LibItem(props: { d: DocMeta; depth?: number; showPath?: boolean }) {
   const s = useStore();
   const on = () => s.current()?.meta.id === props.d.id;
+  const editing = () => {
+    const r = ui.renaming();
+    return !!r && r.kind === "file" && r.path === props.d.path;
+  };
   return (
     <div class="tf" classList={{ on: on() }} tabindex={0} title={props.d.path}
       style={{ "padding-left": 6 + (props.depth ?? 0) * 13 + "px" }}
-      onClick={() => void s.openMeta(props.d)}
+      onClick={() => { if (!editing()) void s.openMeta(props.d); }}
       onContextMenu={(e) => {
         e.preventDefault();
         ui.setCtxMenu({ kind: "doc", from: "library", x: e.clientX, y: e.clientY, meta: props.d });
       }}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void s.openMeta(props.d); } }}>
+      onKeyDown={(e) => {
+        if (editing()) return;   // 重命名编辑态里方向键/回车归输入框（Esc 由 RenameBox 就地处理）
+        if (e.key === "F2") {    // 增强 2：行聚焦态 F2 = 就地重命名（资源管理器口径）
+          e.preventDefault(); e.stopPropagation();
+          ui.setRenaming({ kind: "file", path: props.d.path });
+          return;
+        }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void s.openMeta(props.d); }
+      }}>
       <svg class="ico ico-14" style={{ color: on() ? "var(--accent)" : "var(--text-3)" }}><use href="#i-md" /></svg>
-      <span class="nm">{props.d.fileName}</span>
+      <Show when={editing()} fallback={<span class="nm">{props.d.fileName}</span>}>
+        <RenameBox kind="file" initial={props.d.fileName} onSubmit={(n) => renameFile(s, props.d, n)} />
+      </Show>
       <Show when={props.showPath && props.d.dir}>
         <span class="src-dir ellip">{leafName(props.d.dir)}</span>
       </Show>
@@ -239,16 +297,35 @@ function LibItem(props: { d: DocMeta; depth?: number; showPath?: boolean }) {
   );
 }
 
-/** 目录行：点击展开/收起，右侧是含子目录的总数 */
+/** 目录行：点击展开/收起，右侧是含子目录的总数；右键/F2 走文件夹重命名（增强 1，2026-11-20） */
 function DirRow(props: { node: DirNode; open: boolean; onToggle: () => void }) {
+  const s = useStore();
+  const editing = () => {
+    const r = ui.renaming();
+    return !!r && r.kind === "dir" && r.path === props.node.key;
+  };
   return (
     <div class={"tf dir" + (props.node.depth === 0 ? " root" : "")}
       style={{ "padding-left": 6 + props.node.depth * 13 + "px" }}
       title={props.node.key} tabindex={0}
-      onClick={props.onToggle}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); props.onToggle(); } }}>
+      onClick={() => { if (!editing()) props.onToggle(); }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        ui.setCtxMenu({ kind: "dir", x: e.clientX, y: e.clientY, path: props.node.key });
+      }}
+      onKeyDown={(e) => {
+        if (editing()) return;
+        if (e.key === "F2") {
+          e.preventDefault(); e.stopPropagation();
+          ui.setRenaming({ kind: "dir", path: props.node.key });
+          return;
+        }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); props.onToggle(); }
+      }}>
       <svg class="ico ico-14 chev"><use href={props.open ? "#i-folder-open" : "#i-folder"} /></svg>
-      <span class="nm">{props.node.name}</span>
+      <Show when={editing()} fallback={<span class="nm">{props.node.name}</span>}>
+        <RenameBox kind="dir" initial={props.node.name} onSubmit={(n) => renameFolder(s, props.node.key, n)} />
+      </Show>
       <span class="mt">{props.node.count}</span>
     </div>
   );

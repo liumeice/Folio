@@ -44,6 +44,16 @@ async function apiOpenBySlug(slug: string): Promise<DocFull> {
 async function apiSaveDoc(path: string, content: string, force = false): Promise<DocFull> {
   return isTauri ? invoke("save_doc", { path, content, force }) : mock.save(path, content);
 }
+/** 目录树「重命名」（rename_doc 命令）：磁盘改名 + 登记行 path/slug 更新，doc_id 不动。
+ *  浏览器回退层只在 mock 清单里改 path/fileName（无磁盘概念），行为口径以 Rust 为准。 */
+async function apiRenameDoc(path: string, newName: string): Promise<DocMeta> {
+  return isTauri ? invoke("rename_doc", { path, newName }) : mock.renameDoc(path, newName);
+}
+/** 文件夹「重命名」（rename_dir 命令，增强 2026-11-20）：磁盘改名 + 子树文档路径/库根登记换前缀。
+ *  返回新目录路径。mock 层同样按前缀搬运 docs + roots。 */
+async function apiRenameDir(path: string, newName: string): Promise<string> {
+  return isTauri ? invoke("rename_dir", { path, newName }) : mock.renameDir(path, newName);
+}
 /** 源码自动格式化（权威实现 crates/folio-core/src/format.rs）。
  *  浏览器回退层刻意不维护第二套规则：原样返回 + 警告，只保证 UI 流程可走。 */
 async function apiFormatMarkdown(src: string, options: FormatOptions): Promise<FormatResult> {
@@ -539,6 +549,55 @@ const mock = {
     this.persist(docs);
     return toFull(d);
   },
+  /** 重命名的浏览器回退层：同目录查重 + 改 path/fileName（无磁盘、无 slug 表，toFull 现算）。 */
+  async renameDoc(p: string, newName: string): Promise<DocMeta> {
+    const { validateFileName } = await import("./filename");
+    const bad = validateFileName(newName);
+    if (bad) throw new Error("invalid argument: " + bad);
+    const docs = this.docs();
+    const d = docs.find((x) => x.path.toLowerCase() === p.toLowerCase());
+    if (!d) throw new Error("file not found: " + p);
+    const dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+    const nextPath = (dir ? dir + "/" : "") + newName.trim();
+    if (nextPath.toLowerCase() === d.path.toLowerCase() && nextPath === d.path) return toFull(d).meta;
+    if (docs.some((x) => x.path.toLowerCase() === nextPath.toLowerCase())) {
+      throw new Error("invalid argument: EXISTS");
+    }
+    d.path = nextPath;
+    d.fileName = newName.trim();
+    this.persist(docs);
+    return toFull(d).meta;
+  },
+  /** 文件夹重命名的浏览器回退层：docs/roots 按前缀搬运（大小写不敏感），行为口径以 Rust rename_dir 为准。 */
+  async renameDir(p: string, newName: string): Promise<string> {
+    const { validateDirName } = await import("./filename");
+    const bad = validateDirName(newName);
+    if (bad) throw new Error("invalid argument: " + bad);
+    const oldDir = p.replace(/[\\/]+$/, "");
+    const cut = Math.max(oldDir.lastIndexOf("\\"), oldDir.lastIndexOf("/"));
+    if (cut <= 0) throw new Error("invalid argument: NO_DIR");
+    const newDir = oldDir.slice(0, cut + 1) + newName.trim();
+    const swap = (s: string): string | null => {
+      const sl = s.toLowerCase(), od = oldDir.toLowerCase();
+      if (sl === od) return newDir + s.slice(od.length);
+      if (sl.startsWith(od) && (s[od.length] === "/" || s[od.length] === "\\")) return newDir + s.slice(od.length);
+      return null;
+    };
+    const docs = this.docs();
+    for (const d of docs) {
+      const np = swap(d.path);
+      if (np) {
+        d.path = np;
+        d.fileName = np.slice(Math.max(np.lastIndexOf("/"), np.lastIndexOf("\\")) + 1);
+      }
+    }
+    this.persist(docs);
+    try {
+      const rs = this.listRoots().map((r) => swap(r) ?? r);
+      localStorage.setItem(LS_ROOTS, JSON.stringify(rs));
+    } catch { /* 配额 */ }
+    return newDir;
+  },
   async toggleTask(p: string, nth: number): Promise<DocFull> {
     const docs = this.docs();
     const d = docs.find((x) => x.path === p);
@@ -823,6 +882,8 @@ export const api = {
   openDoc: apiOpenDoc,
   openBySlug: apiOpenBySlug,
   saveDoc: apiSaveDoc,
+  renameDoc: apiRenameDoc,
+  renameDir: apiRenameDir,
   formatMarkdown: apiFormatMarkdown,
   setPinned: apiSetPinned,
   setInLibrary: apiSetInLibrary,

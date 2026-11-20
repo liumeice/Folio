@@ -65,6 +65,8 @@ export default function Icons() {
       <symbol id="i-save" viewBox="0 0 24 24"><path d="M5.5 5.5h10l3 3v10h-13z"/><path d="M8.5 5.5v4.5h6.5V5.5M8.5 15.5h7"/></symbol>
       <symbol id="i-copy" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></g></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11.2v5M12 8h.01"/></symbol>
+      {/* 目录树「重命名」（2026-11-20）：线性铅笔，与 ui-iconset-18 同族收口 */}
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4.4 19.6l.8-3.9L16.2 5.5a1.7 1.7 0 0 1 2.4 0l.4.4a1.7 1.7 0 0 1 0 2.4L8.3 18.8l-3.9.8Z"/><path d="M14.6 7.2l2.7 2.7"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4.8h5.2v5.2M19.2 4.8L11 13"/><path d="M18.4 14v4.4a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18.4V7.2a1.6 1.6 0 0 1 1.6-1.6H10"/></symbol>
       <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19.2V4.8M6 10.8l6-6 6 6"/></symbol>
       <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 4.8v14.4M6 13.2l6 6 6-6"/></symbol>

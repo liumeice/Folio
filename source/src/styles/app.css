@@ -178,6 +178,11 @@ svg{display:block}
 .tf.on::after{content:"";position:absolute;left:-8px;top:5px;bottom:5px;width:2px;border-radius:2px;background:var(--accent)}
 .tf.on .nm{font-weight:600;color:var(--accent)}
 .tf .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 目录树「重命名」就地输入框（2026-11-20）：吃掉 .nm 的弹性位，视觉与行文字同尺寸；
+ * 描边即「编辑中」指示，不再另设按钮 */
+.tf .rename-input{flex:1;min-width:0;font-family:inherit;font-size:12.5px;line-height:1.4;
+  color:var(--text);background:var(--accent-bg);border:1px solid var(--accent);
+  border-radius:4px;padding:0 6px;outline:none}
 .tf .mt{font-size:10.5px;color:var(--text-3);font-family:var(--font-mono);flex:none}
 .tf .badge{font-size:9.5px;color:var(--text-3);border:1px solid var(--line);border-radius:7px;padding:0 5px;flex:none}
 /* v3：文档库目录树 + 最近打开历史行 */

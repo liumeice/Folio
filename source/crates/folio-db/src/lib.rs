@@ -304,6 +304,113 @@ impl Db {
         .ok_or_else(|| CoreError::NotFound(format!("id:{id}")))
     }
 
+    /// 文件重命名落库（《Folio-目录树文件重命名方案》§3.3）：**只改 path/file_name/dir/slug，
+    /// doc_id 原地不动**——positions/recents/docs_fts/doc_chars 都按 id 关联，正文未变故索引零重写。
+    /// slug 按「改盘名后重扫登记」同规则重新生成（同族取号排除自身行）；title 仅当旧值是由
+    /// 旧文件名兜底生成（无 H1 文档）时跟着换，正文首行 H1 一律不动。
+    /// 调用方（commands::rename）负责先改磁盘、失败回滚；本函数单事务，要么全成要么不动。
+    pub fn rename_doc(&self, id: i64, new_path: &Path) -> Result<DocMeta> {
+        let path_str = new_path.to_string_lossy().to_string();
+        let new_file = new_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .ok_or_else(|| CoreError::Invalid("BAD_NAME".into()))?;
+        let new_dir = new_path
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        self.with_tx(|c| {
+            let (old_file, old_title): (String, String) = c
+                .prepare_cached("SELECT file_name, title FROM documents WHERE id = ?1")?
+                .query_row(params![id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()?
+                .ok_or_else(|| {
+                    // SQLITE_NOTFOUND = 12（rusqlite 该版本无 ErrorCode::into_error，直填码值）
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(12),
+                        Some(format!("documents id={id} 不存在")),
+                    )
+                })?;
+            // slug 同族取号（口径同 upsert_prepared 新行分支），排除自身旧 slug
+            let base = markdown::slugify(&new_file);
+            let like = format!("{}-%", escape_like(&base));
+            let taken: HashSet<String> = {
+                let mut st = c.prepare_cached(
+                    "SELECT slug FROM documents
+                     WHERE (slug = ?1 OR slug LIKE ?2 ESCAPE '\\') AND id != ?3",
+                )?;
+                let rows = st.query_map(params![base, like, id], |r| r.get::<_, String>(0))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            let slug = markdown::unique_slug(&base, &taken);
+            let title = if old_title == markdown::slugify(&old_file) {
+                base.clone()
+            } else {
+                old_title
+            };
+            c.prepare_cached(
+                "UPDATE documents SET path = ?1, slug = ?2, dir = ?3, file_name = ?4, title = ?5
+                 WHERE id = ?6",
+            )?
+            .execute(params![path_str, slug, new_dir, new_file, title, id])?;
+            Ok(())
+        })?;
+        self.doc_by_path(&path_str)
+    }
+
+    /// 文件夹原地改名（目录树「重命名」增强 2026-11-20）：单事务内把 `old` 子树下所有
+    /// documents.path/dir 换前缀，并同步 roots 登记（根自身或根在子树内）。
+    /// doc_id / slug / title / FTS / positions / recents 全部不动（正文与文件名未变）。
+    /// 返回被搬运的 (旧文档路径, 新文档路径) 列表，供命令层搬运「打开篇」缓存与失败回滚定位。
+    /// 前缀切点按 schema::norm 口径（小写 + 反斜杠→斜杠，字节 1:1），越界不匹配的行原样保留。
+    pub fn rename_dir(&self, old: &Path, new: &Path) -> Result<Vec<(String, String)>> {
+        let old_raw = old.to_string_lossy().to_string();
+        let new_raw = new.to_string_lossy().to_string();
+        let nd = schema::norm_dir(&old_raw);
+        self.with_tx(|c| {
+            let mut moved: Vec<(String, String)> = Vec::new();
+            {
+                let mut st = c.prepare("SELECT id, path FROM documents")?;
+                let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+                for row in rows {
+                    let (id, p) = row?;
+                    let np = schema::norm_path(&p);
+                    // 只搬「在 old 里面」的文档（path_under 同口径：前缀后必须是分隔符）
+                    if np.len() <= nd.len() + 1 || !np.starts_with(&nd) || np.as_bytes()[nd.len()] != b'/' {
+                        continue;
+                    }
+                    let dest = new_raw.clone() + &p[nd.len()..];
+                    let dir = match dest.rfind(['\\', '/']) {
+                        Some(i) if i + 1 < dest.len() => dest[..i].to_string(),
+                        _ => String::new(),
+                    };
+                    c.prepare_cached("UPDATE documents SET path = ?1, dir = ?2 WHERE id = ?3")?
+                        .execute(params![dest, dir, id])?;
+                    moved.push((p, dest));
+                }
+            }
+            // roots：等于 old 目录（大小写不敏感）或位于 old 子树内的登记根一并换前缀
+            let roots: Vec<(i64, String)> = {
+                let mut st = c.prepare("SELECT id, path FROM roots")?;
+                let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            for (id, r) in roots {
+                let nr = schema::norm_path(&r);
+                let dest = if nr == nd {
+                    new_raw.clone()
+                } else if nr.len() > nd.len() + 1 && nr.starts_with(&nd) && nr.as_bytes()[nd.len()] == b'/' {
+                    new_raw.clone() + &r[nd.len()..]
+                } else {
+                    continue;
+                };
+                c.prepare_cached("UPDATE roots SET path = ?1 WHERE id = ?2")?
+                    .execute(params![dest, id])?;
+            }
+            Ok(moved)
+        })
+    }
+
     fn query_doc(&self, sql: &str, key: &str) -> Result<Option<DocMeta>> {
         self.with_read(|c| c.query_row(sql, params![key], row_to_meta).optional())
     }

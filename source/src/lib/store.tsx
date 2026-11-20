@@ -7,6 +7,7 @@ import {
   createContext, useContext, createSignal, onMount, type JSX, type ParentProps,
 } from "solid-js";
 import { api } from "./api";
+import { swapPathPrefix } from "./filename";
 import { DEFAULT_SETTINGS } from "./defaults";
 import type { DocFull, DocMeta, FormatResult, HistEntry, Position, RecentDoc, Settings } from "./types";
 
@@ -67,6 +68,13 @@ export interface Store {
   activeTabId: () => number | null;
   // actions
   refreshDocs(): Promise<void>;
+  /** 目录树「重命名」成功回调（IPC 完成后调）：登记清单 / 页签 / 最近打开 / 当前文档的
+   *  路径类元数据统一换新，异常找回草稿随路径搬家。doc_id 不变 ⇒ 进度、脏标记、编辑器缓冲不动。 */
+  applyRenamed(oldPath: string, next: DocMeta): void;
+  /** 文件夹「重命名」成功回调（增强 2026-11-20）：子树内所有文档的 path/dir/fileName、页签、
+   *  历史行、当前文档与异常找回草稿按前缀整体搬家；roots 清单与 libraryRoot 偏好交给随后的
+   *  refreshDocs / saveSettings 对齐。库成员判定（Rust path_under）已随 rename_dir 换前缀。 */
+  applyRenamedFolder(oldDir: string, newDir: string): void;
   /** 返回是否打开成功（失败=文件丢失时条目自动移出最近打开，2026-11-17 定夺） */
   openMeta(meta: DocMeta): Promise<boolean>;
   openPath(path: string, secText?: string | null): Promise<boolean>;
@@ -728,6 +736,74 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     draftTimer = window.setTimeout(() => persistDraft(meta.path, r.text), 400);
   }
 
+  /* ── 目录树「重命名」成功后的内存同步（《Folio-目录树文件重命名方案》§4.3）──
+   * IPC 已把磁盘与登记行改完（doc_id 不变）；这里只换各信号里的路径类元数据：
+   * 清单/历史行/页签/当前文档。进度（positionsMap 按 id）、脏标记（diskMap 按 id）、
+   * 编辑器缓冲全部不动。异常找回草稿按 path 存，必须跟文件搬家，否则重启后
+   * 「检测到未保存修改」找不到新家。 */
+  function applyRenamed(oldPath: string, next: DocMeta) {
+    setDocs((ds) => ds.map((d) => (d.id === next.id ? next : d)));
+    setRecents((rs) => rs.map((ent) => (ent.meta.id === next.id ? { ...ent, meta: next } : ent)));
+    setTabs((ts) => ts.map((t) => (t.docId === next.id ? { ...t, path: next.path, fileName: next.fileName } : t)));
+    const cur = current();
+    if (cur && cur.meta.id === next.id) setCurrent({ ...cur, meta: { ...cur.meta, ...next } });
+    try {
+      const raw = localStorage.getItem(DRAFT_PREFIX + oldPath);
+      if (raw) {
+        localStorage.setItem(DRAFT_PREFIX + next.path, raw);
+        localStorage.removeItem(DRAFT_PREFIX + oldPath);
+      }
+    } catch { /* 配额：草稿搬家失败不拦重命名本身 */ }
+  }
+
+  /* ── 文件夹「重命名」成功后的内存同步（增强 2026-11-20）──
+   * Rust 已把磁盘与 documents/roots 的路径前缀换完（doc_id/slug 不动）；这里对同样几处信号
+   * 做前缀搬运：清单、历史行、页签、当前文档、按路径存的异常找回草稿，外加 settings.libraryRoot。
+   * 正文缓冲、脏标记、阅读进度、大纲折叠（按 sec）全部不受影响。 */
+  function applyRenamedFolder(oldDir: string, newDir: string) {
+    const remap = (d: DocMeta): DocMeta => {
+      const path = swapPathPrefix(d.path, oldDir, newDir);
+      if (!path) return d;
+      const sep = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+      return { ...d, path, dir: sep > 0 ? path.slice(0, sep) : d.dir, fileName: sep >= 0 ? path.slice(sep + 1) : d.fileName };
+    };
+    setDocs((ds) => ds.map(remap));
+    setRecents((rs) => rs.map((ent) => {
+      const m = remap(ent.meta);
+      return m === ent.meta ? ent : { ...ent, meta: m };
+    }));
+    setTabs((ts) => ts.map((t) => {
+      const path = swapPathPrefix(t.path, oldDir, newDir);
+      if (!path) return t;
+      const sep = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+      return { ...t, path, fileName: sep >= 0 ? path.slice(sep + 1) : t.fileName };
+    }));
+    const cur = current();
+    if (cur) {
+      const meta = remap(cur.meta);
+      if (meta !== cur.meta) setCurrent({ ...cur, meta });
+    }
+    const lr = settings().libraryRoot;
+    if (lr) {
+      const nl = swapPathPrefix(lr, oldDir, newDir);
+      if (nl && nl !== lr) saveSettings({ libraryRoot: nl });
+    }
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith(DRAFT_PREFIX)) continue;
+        const np = swapPathPrefix(key.slice(DRAFT_PREFIX.length), oldDir, newDir);
+        if (np && np !== key.slice(DRAFT_PREFIX.length)) {
+          const raw = localStorage.getItem(key);
+          if (raw != null) {
+            localStorage.setItem(DRAFT_PREFIX + np, raw);
+            localStorage.removeItem(key);
+          }
+        }
+      }
+    } catch { /* 配额：同 applyRenamed 口径 */ }
+  }
+
   /* ── 设置写入（P1-6）：拖动滑杆时内存/CSS 立即变，SQLite 写入合并 250ms ──
    * 此前每个 input 事件都 invoke("set_settings") 一次：拖一次滑杆几十次 IPC+DB 写，
    * 与扫描/搜索争用写锁。现在只保留最后一次快照；松手/关面板/退出时 flush。
@@ -863,7 +939,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     mode, dirty, side, focusMode, activeSec, toasts, navRequest, histIdx, histLen: () => history.length, draftSrc,
     tabs, activeTabId, closeTab,
     refreshDocs, openMeta, openPath, openSlug, requestAnchor, revealOutline,
-    enterEdit, toggleEdit, cancelEdit, pushHist, setDraft, markDraftChanged, save, saveSmart, saveAs, discard, applySaved, applyFormatted,
+    enterEdit, toggleEdit, cancelEdit, pushHist, setDraft, markDraftChanged, save, saveSmart, saveAs, discard, applySaved, applyFormatted, applyRenamed, applyRenamedFolder,
     saveSettings, flushSettings, setSide, toggleFocus, toast, setActiveSec,
     schedulePosition, flushPosition, providePositionSource,
     back, forward, clearNav,

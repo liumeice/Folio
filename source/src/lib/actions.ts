@@ -2,9 +2,10 @@
 import { api } from "./api";
 import type { ImageRef } from "./api";
 import type { Store } from "./store";
-import type { FormatOptions, FormatResult } from "./types";
+import type { DocMeta, FormatOptions, FormatResult } from "./types";
 import * as ui from "./ui";
 import { pdfExportName } from "./pdfname";
+import { leafNameOf, renameErrText, validateDirName, validateFileName } from "./filename";
 
 /** 选择统一入口：2026-11-17 起恢复 Windows 原生系统对话框（tauri-plugin-dialog），
  *  替代 2026-11-16 的应用内 PickDialog；文件模式多选，目录模式单选目录。
@@ -267,6 +268,47 @@ export async function revealInFolder(path: string, s: Store) {
     await revealItemInDir(path);
   } catch {
     s.toast("打开所在目录失败");
+  }
+}
+
+/** 目录树右键「重命名」（《Folio-目录树文件重命名方案》§4）：
+ *  本地先拦一道校验（人话文案），过 IPC 让 Rust 权威校验 + 磁盘改名 + 落库，
+ *  成功后 store.applyRenamed 同步清单/页签/历史/当前文档，再补一次全量刷新对齐 DB。
+ *  返回 true=已改名或同名空操作（调用方收起编辑态）；false=校验或写盘被拒（保持现场）。
+ *  失败一律顶部提示原因（铁律：提示不进窗口底沿），且原名保持不动（Rust 侧回滚保证）。 */
+export async function renameFile(s: Store, meta: DocMeta, newName: string): Promise<boolean> {
+  const name = newName.trim();
+  const bad = validateFileName(name);
+  if (bad) { s.toast(bad); return false; }
+  if (name === meta.fileName) return true;   // 完全同名 = 空操作（只改大小写不算）
+  try {
+    const next = await api.renameDoc(meta.path, name);
+    s.applyRenamed(meta.path, next);
+    void s.refreshDocs();
+    s.toast(`已重命名为「${next.fileName}」`);
+    return true;
+  } catch (e) {
+    s.toast("重命名失败：" + renameErrText(ui.fmtErr(e)));
+    return false;
+  }
+}
+
+/** 目录树文件夹「重命名」（增强 2026-11-20）：交互与文件同线（Enter/失焦提交、Esc 取消），
+ *  校验少一条扩展名规则；成功后 store.applyRenamedFolder 搬整个子树 + refreshDocs 对齐 roots。 */
+export async function renameFolder(s: Store, oldPath: string, newName: string): Promise<boolean> {
+  const name = newName.trim();
+  const bad = validateDirName(name);
+  if (bad) { s.toast(bad); return false; }
+  if (name === leafNameOf(oldPath)) return true;   // 完全同名 = 空操作（只改大小写不算）
+  try {
+    const next = await api.renameDir(oldPath, name);
+    s.applyRenamedFolder(oldPath, next);
+    void s.refreshDocs();
+    s.toast(`已重命名文件夹为「${name}」`);
+    return true;
+  } catch (e) {
+    s.toast("重命名失败：" + renameErrText(ui.fmtErr(e)));
+    return false;
   }
 }
 

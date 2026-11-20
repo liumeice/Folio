@@ -24,6 +24,7 @@ const KEYMAP: [string, string][] = [
   ["Alt ← / Alt →", "后退 / 前进（同文档回当时行）"],
   ["↑ ↓ ← →", "大纲内：移动 / 收起 / 展开（Enter 或空格跳转）"],
   ["Home", "回到顶部（输入焦点内不劫持光标）"],
+  ["F2", "重命名选中的文件或文件夹（目录树内，就地编辑）"],
   ["Esc", "关弹层 → 清高亮 → 退专注 → 编辑中放弃修改"],
   ["Ctrl Q", "退出（有未保存内容需确认）"],
 ];
@@ -712,6 +713,8 @@ export function ContextMenu() {
     ui.setCtxMenu(null);
     // UI-15/统一口径：菜单动作失败一律顶部提示，不再无声吞掉
     try {
+      // 重命名 = 只进就地编辑态（Enter/失焦提交、Esc 取消，见 SidePanels::RenameBox）
+      if (item === "rename") { ui.setRenaming({ kind: "file", path: m.path }); return; }
       if (item === "pin") { await api.setPinned(m.id, !m.pinned); s.toast(m.pinned ? "已取消置顶" : "已置顶"); }
       // 从文档库移除 = 取消库成员身份：登记/进度/打开历史都留着，重扫该目录会再入库
       else if (item === "unlibrary") {
@@ -750,11 +753,26 @@ export function ContextMenu() {
     <Show when={ui.ctxMenu()} keyed>{(tt) => (
       tt.kind === "editor"
         ? <EditorCtxMenu tt={tt as CtxTarget & { kind: "editor" }} />
-        : <div class="ctxmenu" style={{ left: tt.x + "px", top: tt.y + "px" }} onClick={(e) => e.stopPropagation()}>
+        : tt.kind === "dir"
+          /* 目录树文件夹菜单（增强 2026-11-20）：暂只有「重命名」一项，位置与文档菜单同一套 left/top */
+          ? <div class="ctxmenu" style={{ left: tt.x + "px", top: tt.y + "px" }} onClick={(e) => e.stopPropagation()}>
+              <div class="mi" onClick={() => {
+                ui.setCtxMenu(null);
+                ui.setRenaming({ kind: "dir", path: tt.path });
+              }}>
+                <svg class="ico ico-14"><use href="#i-edit" /></svg><span class="t">重命名</span>
+              </div>
+            </div>
+          : <div class="ctxmenu" style={{ left: tt.x + "px", top: tt.y + "px" }} onClick={(e) => e.stopPropagation()}>
             {/* 文件夹/历史是两套清单：置顶与「从文件夹移除」只对文件夹成员开放，「从最近打开移除」只在历史面板开放 */}
             {(() => { const d = tt as CtxTarget & { kind: "doc" }; return (<>
               <Show when={d.meta.inLibrary}>
                 {item(d.meta.pinned ? "取消置顶" : "置顶", "pin", d, "i-arrow-up")}
+              </Show>
+              {/* 重命名只在文件夹目录树开放（需求方 2026-11-20）：历史面板同文件走这里也能改，
+                  但入口口径是目录树；内置文档不许改（帮助链接按文件名找它） */}
+              <Show when={d.from === "library" && !d.meta.builtin}>
+                {item("重命名", "rename", d, "i-edit")}
               </Show>
               {item("打开所在目录", "reveal", d, "i-folder-open")}
               {item("复制路径", "path", d, "i-copy")}

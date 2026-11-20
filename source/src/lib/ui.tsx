@@ -152,9 +152,15 @@ export function setAllOutlineOpen(keys: readonly number[], open: boolean) {
  * （曾经的 kind:"roots" 分支随 v4 单库策略删除：库根管理并入 chip 自身。） */
 export type CtxTarget =
   | { kind: "doc"; from?: "library" | "recents"; x: number; y: number; meta: DocMeta }
+  | { kind: "dir"; x: number; y: number; path: string }
   | { kind: "editor"; x: number; y: number; hasSelection: boolean }
   | null;
 export const [ctxMenu, setCtxMenu] = createSignal<CtxTarget>(null);
+/** 目录树就地重命名的目标（null=无编辑态）。文件与文件夹共用一条编辑线，kind 决定校验与提交走哪条 IPC。
+ *  瞬时视图状态：提交成功/取消只复位这里，数据同步由 store.applyRenamed / applyRenamedFolder 一处完成
+ *  （《Folio-目录树文件重命名方案》§4.3/§8）。 */
+export type RenameTarget = { kind: "file" | "dir"; path: string } | null;
+export const [renaming, setRenaming] = createSignal<RenameTarget>(null);
 
 /** 错误文案人性化（UI 规范 v1.2 §8.7 L2：失败=动词+原因，白话，不泄原始英文栈串）。
  * Rust 侧错误以 String 过 IPC（STD-02 现状），这里把已知的 CoreError 措辞映射成中文；

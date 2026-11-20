@@ -170,6 +170,23 @@ async fn save_doc(path: String, content: String, force: Option<bool>, state: Sta
     spawn_db(&state, move |db| commands::save(db, &path, &content, force.unwrap_or(false))).await
 }
 
+/// 目录树「重命名」：磁盘改名 + 登记行 path/slug 更新（doc_id 不动）。
+/// `new_name` 只是文件名（validate_file_name 禁一切分隔符），目标恒在原文档目录内；
+/// `path` 走 reject_dotdot 同 SEC-02 口径。失败=原名不动（见 commands::rename）。
+#[tauri::command]
+async fn rename_doc(path: String, new_name: String, state: State<'_, AppState>) -> Result<DocMeta, String> {
+    reject_dotdot(&path)?; // SEC-02
+    spawn_db(&state, move |db| commands::rename(db, &path, &new_name)).await
+}
+
+/// 目录树文件夹「重命名」：磁盘改名 + 子树文档路径/库根登记单事务换前缀（增强 2026-11-20）。
+/// `new_name` 禁一切分隔符；目标恒在父目录内；`path` 走 reject_dotdot 同 SEC-02 口径。
+#[tauri::command]
+async fn rename_dir(path: String, new_name: String, state: State<'_, AppState>) -> Result<String, String> {
+    reject_dotdot(&path)?; // SEC-02
+    spawn_db(&state, move |db| commands::rename_dir(db, &path, &new_name)).await
+}
+
 /// 源码格式化结果（与前端 `FormatResult` 一一对应；大纲行号按**格式化后**文本重算）。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -852,6 +869,8 @@ pub fn run() {
             open_doc,
             open_by_slug,
             save_doc,
+            rename_doc,
+            rename_dir,
             format_markdown,
             toggle_task,
             scan_folder,

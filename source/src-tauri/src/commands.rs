@@ -1,6 +1,6 @@
 //! 命令层纯逻辑（无 tauri 依赖，可单测的形态；IO 全部 spawn_blocking 进这里）。
 use folio_core::markdown;
-use folio_core::{DocFull, OutlineItem, Position, Result, ScanReport, SearchHit, SearchQuery, SearchScope};
+use folio_core::{DocFull, DocMeta, OutlineItem, Position, Result, ScanReport, SearchHit, SearchQuery, SearchScope};
 use folio_db::{Db, DocUpsert};
 use folio_fs as fs;
 use folio_search::{plan, Plan};
@@ -49,6 +49,16 @@ fn cache_put(key: String, stamp: (i64, u64, bool), src: String, outline: Vec<Out
             }
         }
         g.insert(key, (OPEN_SEQ.fetch_add(1, Ordering::Relaxed), OpenedDoc { stamp, src, outline }));
+    }
+}
+
+/// 重命名时搬运「打开篇」缓存的路径键：旧键删除、同内容挂到新键，
+/// 保存→重开零读盘快捷路不被改名打掉（《Folio-目录树文件重命名方案》§3.2）。
+fn cache_move_path(old: &str, new: &str) {
+    if let Ok(mut g) = open_cache().lock() {
+        if let Some(e) = g.remove(&old.to_lowercase()) {
+            g.insert(new.to_lowercase(), e);
+        }
     }
 }
 
@@ -240,6 +250,133 @@ pub fn toggle_task(db: &Arc<Db>, path: &str, nth: i64) -> Result<DocFull> {
         .ok_or_else(|| folio_core::CoreError::NotFound(format!("task #{nth}")))?;
     // 勾选路径 = 读盘-改写-写盘，天然基于最新内容，不占冲突检测（FR-7.5 注）
     save(db, path, &new_src, true)
+}
+
+/// 文件名校验（唯一权威口径，《Folio-目录树文件重命名方案》§3.1）：
+/// TS 镜像在 `src/lib/filename.ts`（错误码→人话文案），两侧规则一致——改一侧必双跑
+/// （tests/filename.test.ts 逐条镜像这里，测试向量同码）。
+pub fn validate_file_name(name: &str) -> Result<String> {
+    let t = name.trim();
+    if t.is_empty() {
+        return Err(folio_core::CoreError::Invalid("EMPTY".into()));
+    }
+    if t.chars()
+        .any(|c| matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || (c as u32) < 0x20)
+    {
+        return Err(folio_core::CoreError::Invalid("ILLEGAL_CHARS".into()));
+    }
+    if t.ends_with('.') || t.ends_with(' ') {
+        return Err(folio_core::CoreError::Invalid("BAD_END".into()));
+    }
+    if t.chars().count() > 255 {
+        return Err(folio_core::CoreError::Invalid("TOO_LONG".into()));
+    }
+    let lower = t.to_lowercase();
+    if !(lower.ends_with(".md") || lower.ends_with(".markdown") || lower.ends_with(".txt")) {
+        return Err(folio_core::CoreError::Invalid("BAD_EXT".into()));
+    }
+    Ok(t.to_string())
+}
+
+/// 目录树「重命名」（《Folio-目录树文件重命名方案》）：磁盘改名 → 落库更新 path/slug；
+/// doc_id 原地不动，进度/历史/FTS 零重写。**落库失败回滚磁盘**，任何失败都保留原名，
+/// 绝不产生「盘上已改、库里没改」的半完成状态（验收要点最后一条）。
+pub fn rename(db: &Arc<Db>, old_path: &str, new_name: &str) -> Result<DocMeta> {
+    let name = validate_file_name(new_name)?;
+    let meta = db.doc_by_path(old_path)?;
+    let old = PathBuf::from(&meta.path);
+    let parent = old
+        .parent()
+        .ok_or_else(|| folio_core::CoreError::Invalid("NO_DIR".into()))?
+        .to_string_lossy()
+        .to_string();
+    let new = PathBuf::from(parent).join(&name);
+    let new_str = new.to_string_lossy().to_string();
+    if new_str == meta.path {
+        return Ok(meta); // 完全同名 = 空操作
+    }
+    // Windows 文件系统不区分大小写：只改大小写 =「同一个文件」，重名检查必须放行（case_only），
+    // 但 fs::rename 与库行仍要更新成新大小写形态。
+    let case_only = new_str.to_lowercase() == meta.path.to_lowercase();
+    if !case_only {
+        if new.exists() || db.doc_by_path(&new_str).is_ok() {
+            return Err(folio_core::CoreError::Invalid("EXISTS".into()));
+        }
+    }
+    std::fs::rename(&old, &new)?;
+    match db.rename_doc(meta.id, &new) {
+        Ok(m) => {
+            cache_move_path(&meta.path, &new_str);
+            invalidate_search_cache(Some(&meta.path));
+            invalidate_search_cache(Some(&new_str));
+            Ok(m)
+        }
+        Err(e) => {
+            let _ = std::fs::rename(&new, &old); // 回滚磁盘
+            Err(e)
+        }
+    }
+}
+
+/// 目录名校验：文件规则去掉扩展名一项（文件夹无扩展名概念）。
+/// TS 镜像 `src/lib/filename.ts::validateDirName`，改一侧必双跑。
+pub fn validate_dir_name(name: &str) -> Result<String> {
+    let t = name.trim();
+    if t.is_empty() {
+        return Err(folio_core::CoreError::Invalid("EMPTY".into()));
+    }
+    if t.chars()
+        .any(|c| matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || (c as u32) < 0x20)
+    {
+        return Err(folio_core::CoreError::Invalid("ILLEGAL_CHARS".into()));
+    }
+    if t.ends_with('.') || t.ends_with(' ') {
+        return Err(folio_core::CoreError::Invalid("BAD_END".into()));
+    }
+    if t.chars().count() > 255 {
+        return Err(folio_core::CoreError::Invalid("TOO_LONG".into()));
+    }
+    Ok(t.to_string())
+}
+
+/// 文件夹「重命名」（增强 2026-11-20）：磁盘 rename → 子树文档路径 + roots 登记单事务换前缀。
+/// 落库失败回滚磁盘；任何失败都不产生「盘已挪、库还在旧路」的半完成状态。
+/// 成功后逐篇搬运打开篇缓存路径键，并全清搜索分节缓存（路径批量变，逐篇作废不如一把清）。
+pub fn rename_dir(db: &Arc<Db>, old_path: &str, new_name: &str) -> Result<String> {
+    let name = validate_dir_name(new_name)?;
+    let old = PathBuf::from(old_path);
+    if !old.is_dir() {
+        return Err(folio_core::CoreError::NotFound(old_path.to_string()));
+    }
+    let parent = old
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| folio_core::CoreError::Invalid("NO_DIR".into()))?
+        .to_path_buf();
+    let new = parent.join(&name);
+    let new_str = new.to_string_lossy().to_string();
+    let old_str = old.to_string_lossy().to_string();
+    if new_str == old_str {
+        return Ok(new_str); // 完全同名 = 空操作
+    }
+    let case_only = new_str.to_lowercase() == old_str.to_lowercase();
+    if !case_only && new.exists() {
+        return Err(folio_core::CoreError::Invalid("EXISTS".into()));
+    }
+    std::fs::rename(&old, &new)?;
+    match db.rename_dir(&old, &new) {
+        Ok(moved) => {
+            for (o, n) in moved {
+                cache_move_path(&o, &n);
+            }
+            invalidate_search_cache(None);
+            Ok(new_str)
+        }
+        Err(e) => {
+            let _ = std::fs::rename(&new, &old); // 回滚磁盘
+            Err(e)
+        }
+    }
 }
 
 /// 库根规范化（v5 毒路径源头掐断）：裸盘符 `D:` 补成 `D:\`——
@@ -609,6 +746,114 @@ pub async fn run_export_images(html_path: &Path, items: Vec<ImageRef>) -> Vec<Im
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_file_name_vectors() {
+        // 与 tests/filename.test.ts 逐条镜像——改一侧必双跑
+        assert_eq!(validate_file_name(" 报告.md ").unwrap(), "报告.md");
+        assert!(matches!(validate_file_name("   "), Err(folio_core::CoreError::Invalid(c)) if c == "EMPTY"));
+        assert!(matches!(validate_file_name("a/b.md"), Err(folio_core::CoreError::Invalid(c)) if c == "ILLEGAL_CHARS"));
+        assert!(matches!(validate_file_name("a:b.md"), Err(folio_core::CoreError::Invalid(c)) if c == "ILLEGAL_CHARS"));
+        assert!(matches!(validate_file_name("尾点."), Err(folio_core::CoreError::Invalid(c)) if c == "BAD_END"));
+        assert!(validate_file_name("名 字.md").is_ok(), "中间空格合法");
+        assert!(matches!(validate_file_name("名字. "), Err(folio_core::CoreError::Invalid(c)) if c == "BAD_END"), "尾随空格先 trim，剩下句点结尾仍非法");
+        assert!(matches!(validate_file_name("bad?.md"), Err(folio_core::CoreError::Invalid(c)) if c == "ILLEGAL_CHARS"));
+        assert!(matches!(validate_file_name("noext"), Err(folio_core::CoreError::Invalid(c)) if c == "BAD_EXT"));
+        assert!(matches!(validate_file_name("photo.PNG"), Err(folio_core::CoreError::Invalid(c)) if c == "BAD_EXT"));
+        assert!(validate_file_name("a.MD").is_ok());
+        assert!(validate_file_name("x.txt").is_ok());
+        let long = "名".repeat(252) + ".md";
+        assert!(validate_file_name(&long).is_ok());
+        let too_long = "名".repeat(253) + ".md";
+        assert!(matches!(validate_file_name(&too_long), Err(folio_core::CoreError::Invalid(c)) if c == "TOO_LONG"));
+    }
+
+    #[test]
+    fn rename_moves_file_and_row_but_keeps_id() {
+        let dir = std::env::temp_dir().join("folio-cmd-rename");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Arc::new(Db::open(&dir.join("f.db")).unwrap());
+        let old = dir.join("甲.md");
+        std::fs::write(&old, "# 标题甲\n\n正文").unwrap();
+        let m0 = db.upsert_document(&old, "# 标题甲\n\n正文", true).unwrap();
+
+        let m1 = rename(&db, &old.to_string_lossy(), "乙.md").unwrap();
+        assert_eq!(m1.id, m0.id, "doc_id 原地不动");
+        assert_eq!(m1.file_name, "乙.md");
+        assert_eq!(m1.title, "标题甲", "首行 H1 是标题来源，改名不许动它");
+        assert!(!old.exists() && dir.join("乙.md").exists(), "磁盘文件已改名");
+        assert!(db.doc_by_path(&m1.path).is_ok() && db.doc_by_path(&old.to_string_lossy()).is_err());
+
+        // 失败面：校验拒绝 / 重名拒绝 / 失败后原名原样（验收「不产生半完成状态」）
+        assert!(rename(&db, &m1.path, "").is_err());
+        assert!(rename(&db, &m1.path, "bad/name.md").is_err());
+        assert!(rename(&db, &m1.path, "noext").is_err());
+        std::fs::write(dir.join("已存在.md"), "x").unwrap();
+        assert!(matches!(
+            rename(&db, &m1.path, "已存在.md"),
+            Err(folio_core::CoreError::Invalid(c)) if c == "EXISTS"
+        ));
+        assert!(dir.join("乙.md").exists() && dir.join("已存在.md").exists(), "失败保留原名");
+
+        // 大小写改名（同文件）：不判重名，形态落库
+        let m2 = rename(&db, &m1.path, "乙.MD").unwrap();
+        assert_eq!(m2.file_name, "乙.MD");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_dir_name_vectors() {
+        // 与 tests/filename.test.ts 目录段镜像
+        assert_eq!(validate_dir_name(" 备份 2024 ").unwrap(), "备份 2024");
+        assert!(validate_dir_name("笔记.2024").is_ok(), "目录名中段句点合法，且没有扩展名规则");
+        assert!(matches!(validate_dir_name("   "), Err(folio_core::CoreError::Invalid(c)) if c == "EMPTY"));
+        assert!(matches!(validate_dir_name("a:b"), Err(folio_core::CoreError::Invalid(c)) if c == "ILLEGAL_CHARS"));
+        assert!(matches!(validate_dir_name("尾点."), Err(folio_core::CoreError::Invalid(c)) if c == "BAD_END"));
+        let too_long = "目".repeat(256);
+        assert!(matches!(validate_dir_name(&too_long), Err(folio_core::CoreError::Invalid(c)) if c == "TOO_LONG"));
+    }
+
+    #[test]
+    fn rename_dir_moves_subtree_and_roots() {
+        let base = std::env::temp_dir().join("folio-cmd-renamedir");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let sub = base.join("笔记");
+        std::fs::create_dir_all(sub.join("子")).unwrap();
+        std::fs::write(sub.join("a.md"), "# A").unwrap();
+        std::fs::write(sub.join("子").join("b.md"), "# B").unwrap();
+        let db = Arc::new(Db::open(&base.join("f.db")).unwrap());
+        let ma = db.upsert_document(&sub.join("a.md"), "# A", true).unwrap();
+        db.upsert_document(&sub.join("子").join("b.md"), "# B", true).unwrap();
+        db.add_root(&sub.to_string_lossy()).unwrap();
+
+        // 撞名拒绝且现场不动
+        std::fs::create_dir(base.join("占用")).unwrap();
+        assert!(matches!(
+            rename_dir(&db, &sub.to_string_lossy(), "占用"),
+            Err(folio_core::CoreError::Invalid(c)) if c == "EXISTS"
+        ));
+        assert!(sub.join("a.md").exists());
+
+        // 成功：磁盘子树 + 文档路径 + 库根一起换前缀；id/slug 不动
+        let newp = rename_dir(&db, &sub.to_string_lossy(), "新笔记").unwrap();
+        let newsub = base.join("新笔记");
+        assert_eq!(newp, newsub.to_string_lossy());
+        assert!(newsub.join("a.md").exists() && newsub.join("子").join("b.md").exists());
+        assert!(!sub.exists(), "旧目录不许残留");
+        let mb = db.doc_by_path(&newsub.join("a.md").to_string_lossy()).unwrap();
+        assert_eq!(mb.id, ma.id, "doc_id 原地不动");
+        assert_eq!(mb.slug, ma.slug, "slug 不随目录名变");
+        assert_eq!(mb.dir, newsub.to_string_lossy(), "dir 同步换前缀");
+        let roots = db.list_roots().unwrap();
+        assert!(roots.iter().any(|r| r.to_lowercase() == newp.to_lowercase()), "库根登记跟走：{roots:?}");
+        assert_eq!(db.list_docs().unwrap().len(), 2);
+        assert!(db.doc_by_path(&newsub.join("子").join("b.md").to_string_lossy()).is_ok());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn plan_image_names_dedups_and_disambiguates() {
