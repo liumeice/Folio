@@ -51,12 +51,72 @@ fn save_conflict_then_force() {
     std::thread::sleep(std::time::Duration::from_millis(1100));
     std::fs::write(&f, "# 外部改动\n").unwrap();
 
-    let err = save(&db, f.to_str().unwrap(), "# 我的编辑\n", false).unwrap_err();
+    let err = save(&db, f.to_str().unwrap(), "# 我的编辑\n", false, "utf-8").unwrap_err();
     assert!(format!("{}", err).contains("CONFLICT"), "外部更新应触发冲突拦截");
 
-    let ok = save(&db, f.to_str().unwrap(), "# 我的编辑\n", true).unwrap();
+    let ok = save(&db, f.to_str().unwrap(), "# 我的编辑\n", true, "utf-8").unwrap();
     assert_eq!(ok.src, "# 我的编辑\n");
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "# 我的编辑\n");
+}
+
+#[test]
+fn gbk_open_save_reopen_keeps_codepage() {
+    // GBK/GB18030 端到端（《GBK编码检测》核心链）：打开解码对、标注对，保存沿用来源编码
+    // 把 GBK 字节原样回写（绝不静默转 UTF-8 毁码页），重开仍正确；显式改 utf-8 才转码。
+    let (db, dir) = setup("gbk");
+    let f = dir.join("g.md");
+    let zh = "# 中文标题\n\n这是一段足够长的中文内容，用于让编码检测器判定为 GBK 码页：\
+              程序、编辑器、阅读、收藏、笔记、工具、文件夹、搜索、索引、标题、段落、引用、代码、表格。\n";
+    std::fs::write(&f, folio_fs::encode_bytes(zh, "gbk")).unwrap();
+    assert!(std::fs::read(&f).is_ok_and(|b| std::str::from_utf8(&b).is_err()), "fixture 必须非 UTF-8");
+
+    let opened = doc_full(&db, &f, true, true).unwrap();
+    assert_eq!(opened.src, zh, "GBK 应解码成正确中文");
+    assert!(opened.encoding == "gbk" || opened.encoding == "gb18030", "编码标注：{}", opened.encoding);
+
+    let edited = format!("{}新增一行回写验证。\n", zh);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let saved = save(&db, f.to_str().unwrap(), &edited, true, &opened.encoding).unwrap();
+    assert_eq!(saved.encoding, opened.encoding, "保存须沿用来源编码");
+    let raw = std::fs::read(&f).unwrap();
+    assert!(std::str::from_utf8(&raw).is_err(), "GBK 文档保存后不能被写成 UTF-8 字节");
+    assert_eq!(folio_fs::decode_bytes(&raw).0, edited, "磁盘 GBK 字节解码应等于编辑后内容");
+
+    let again = doc_full(&db, &f, true, true).unwrap();
+    assert_eq!(again.src, edited, "重开解码一致");
+    assert!(again.encoding == "gbk" || again.encoding == "gb18030");
+
+    // 反证：encoding 参数确实在起作用——显式 utf-8 才会转成 UTF-8 字节
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    save(&db, f.to_str().unwrap(), &edited, true, "utf-8").unwrap();
+    assert!(std::fs::read(&f).is_ok_and(|b| std::str::from_utf8(&b).is_ok()), "显式 utf-8 应写成 UTF-8 字节");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn utf16_open_save_reopen_keeps_codepage() {
+    // UTF-16 端到端（与 GBK 同一条链）：BOM 嗅探在严格 UTF-8 之前，保存按来源端序回写（带 BOM）
+    let (db, dir) = setup("utf16");
+    let f = dir.join("u.md");
+    let zh = "# Unicode 标题\n\n一段足够长的中文内容用于编码判定：\
+              程序、编辑器、阅读、收藏、笔记、工具、文件夹、搜索、索引、标题、段落、引用、代码、表格。\n";
+    std::fs::write(&f, folio_fs::encode_bytes(zh, "utf-16le")).unwrap();
+
+    let opened = doc_full(&db, &f, true, true).unwrap();
+    assert_eq!(opened.src, zh, "UTF-16LE 应解码成正确中文（不是一串 NUL）");
+    assert_eq!(opened.encoding, "utf-16le");
+
+    let edited = format!("{}新增一行回写验证。\n", zh);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    save(&db, f.to_str().unwrap(), &edited, true, &opened.encoding).unwrap();
+    let raw = std::fs::read(&f).unwrap();
+    assert!(raw.starts_with(&[0xFF, 0xFE]), "回写必须仍是 LE+BOM 字节");
+    assert_eq!(folio_fs::decode_bytes(&raw).0, edited, "BOM 后内容解码应等于编辑后文本");
+
+    let again = doc_full(&db, &f, true, true).unwrap();
+    assert_eq!(again.src, edited);
+    assert_eq!(again.encoding, "utf-16le", "重开标注仍是 utf-16le");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

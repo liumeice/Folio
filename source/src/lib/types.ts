@@ -43,6 +43,9 @@ export interface DocFull {
   meta: DocMeta;
   src: string;
   outline: OutlineItem[];
+  /** 来源编码标签（utf-8 / gbk / gb18030，2026-11-20 GBK 支持）：src 恒为解码后的 UTF-8
+   *  内存文本，本标签只决定保存/另存为回写磁盘用哪套字节（缺省按 utf-8）。 */
+  encoding: string;
 }
 
 export interface Position {

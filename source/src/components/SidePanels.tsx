@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onMount } from "soli
 import { useStore, type SideView } from "../lib/store";
 import * as ui from "../lib/ui";
 import { pickAndOpen, pickFolderAndScan, confirmBox, renameFile, renameFolder } from "../lib/actions";
+import { encLabel } from "../lib/encoding";
 import { baseNameLen } from "../lib/filename";
 import { api } from "../lib/api";
 import type { DocMeta, RecentDoc, RecentReport } from "../lib/types";
@@ -672,7 +673,7 @@ export function StatusBar() {
       {/* 正文口径字数（公式/图表源码不计，2026-11-17 需求定夺）：从 src 现算，不走 DB 旧口径 */}
       <span class="si">{s.current() ? countWords(s.current()!.src).toLocaleString() + " 字" : "— 字"}</span>
       <span class="si">{s.current()?.meta.secCount ?? "—"} 节</span>
-      <span class="si" id="stat-enc" onClick={() => ui.setPropsOpen(true)} title="查看文档信息">UTF-8</span>
+      <span class="si" id="stat-enc" onClick={() => ui.setPropsOpen(true)} title="查看文档信息">{encLabel(s.current()?.encoding)}</span>
       {/* 百分比定宽槽：位数变化不抖动（样式见 app.css .pct-slot） */}
       <span class="si">阅读 <span class="pct-slot">{Math.round(ui.readPct() * 100)}%</span></span>
       <span class="si acc" id="stat-link-btn" title="点击复制当前文档链接"

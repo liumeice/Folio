@@ -41,8 +41,8 @@ async function apiOpenDoc(path: string): Promise<DocFull> {
 async function apiOpenBySlug(slug: string): Promise<DocFull> {
   return isTauri ? invoke("open_by_slug", { slug }) : mock.openSlug(slug);
 }
-async function apiSaveDoc(path: string, content: string, force = false): Promise<DocFull> {
-  return isTauri ? invoke("save_doc", { path, content, force }) : mock.save(path, content);
+async function apiSaveDoc(path: string, content: string, force = false, encoding?: string): Promise<DocFull> {
+  return isTauri ? invoke("save_doc", { path, content, force, encoding }) : mock.save(path, content);
 }
 /** 目录树「重命名」（rename_doc 命令）：磁盘改名 + 登记行 path/slug 更新，doc_id 不动。
  *  浏览器回退层只在 mock 清单里改 path/fileName（无磁盘概念），行为口径以 Rust 为准。 */
@@ -402,9 +402,10 @@ async function apiDeleteScratch(path: string): Promise<void> {
   if (isTauri) { await invoke("delete_scratch", { path }); return; }
   mock.persist(mock.docs().filter((d) => d.path !== path));
 }
-/** 通用写文本（保存对话框确认后落盘；FR-13.1 同款 write_file） */
-async function apiWriteFile(path: string, content: string): Promise<void> {
-  if (isTauri) { await invoke("write_file", { path, content }); return; }
+/** 通用写文本（保存对话框确认后落盘；FR-13.1 同款 write_file）。
+ *  encoding 缺省 utf-8；另存为 GBK 文档时必须回传来源编码，否则新文件被静默转码毁掉原码页。 */
+async function apiWriteFile(path: string, content: string, encoding?: string): Promise<void> {
+  if (isTauri) { await invoke("write_file", { path, content, encoding }); return; }
   mock.put(path, path.split(/[\\/]/).pop() || path, content);
 }
 
@@ -469,6 +470,7 @@ function toFull(d: MockDoc): DocFull {
     },
     src: d.src,
     outline: headingsOf(d.src),
+    encoding: "utf-8",   // 浏览器回退层无编码检测：一律 utf-8
   };
 }
 

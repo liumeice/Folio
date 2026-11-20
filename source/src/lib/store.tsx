@@ -586,7 +586,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       }
     }
     try {
-      const next = await api.saveDoc(cur.meta.path, editText(), force);
+      const next = await api.saveDoc(cur.meta.path, editText(), force, cur.encoding);
       cancelDraftTimers();               // 防抖快照/草稿写入不得在保存后再把旧文本写回 localStorage
       setDisk(next.meta.id, next.src);   // 写盘成功 ⇒ 磁盘现状前移，脏自然归零
       if (mode() === "edit") {
@@ -668,14 +668,14 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     try {
       const norm = (p: string) => p.replace(/[\\/]+/g, "/").toLowerCase();
       if (norm(path) === norm(cur.meta.path)) {
-        // 选回原路径＝就地覆盖：写盘即磁盘现状前移，不切页签
-        await api.writeFile(path, content);
+        // 选回原路径＝就地覆盖：写盘即磁盘现状前移，不切页签（编码随来源，GBK 文档不被转码）
+        await api.writeFile(path, content, cur.encoding);
         setDisk(cur.meta.id, content);
         if (mode() === "edit") { setDraftSrc(content); endEdit(); } else recomputeDirty();
         toast(`已另存为 ${cur.meta.fileName}`);
         return true;
       }
-      await api.writeFile(path, content);
+      await api.writeFile(path, content, cur.encoding);
       const next = await api.openDoc(path);
       const oldId = cur.meta.id;
       if (mode() === "edit") endEdit();

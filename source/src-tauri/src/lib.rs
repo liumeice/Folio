@@ -165,9 +165,10 @@ async fn open_by_slug(slug: String, state: State<'_, AppState>) -> Result<DocFul
 }
 
 #[tauri::command]
-async fn save_doc(path: String, content: String, force: Option<bool>, state: State<'_, AppState>) -> Result<DocFull, String> {
+async fn save_doc(path: String, content: String, force: Option<bool>, encoding: Option<String>, state: State<'_, AppState>) -> Result<DocFull, String> {
     reject_dotdot(&path)?; // SEC-02
-    spawn_db(&state, move |db| commands::save(db, &path, &content, force.unwrap_or(false))).await
+    let enc = encoding.unwrap_or_default();
+    spawn_db(&state, move |db| commands::save(db, &path, &content, force.unwrap_or(false), &enc)).await
 }
 
 /// 目录树「重命名」：磁盘改名 + 登记行 path/slug 更新（doc_id 不动）。
@@ -458,14 +459,29 @@ async fn export_pdf(_app: AppHandle, _state: State<'_, AppState>, _path: String,
 }
 
 
-/// 导出等通用写出（路径由前端 save 对话框确定，FR-13.1）
+/// 导出等通用写出（路径由前端 save 对话框确定，FR-13.1）。
+/// encoding=Some("gbk/gb18030") 时按 GB18030 字节回写（另存为 GBK 文档保码页）；
+/// 缺省 / utf-8 → 纯 UTF-8 无 BOM（HTML 导出等维持原样）。
 #[tauri::command]
-async fn write_file(path: String, content: String) -> Result<(), String> {
+async fn write_file(path: String, content: String, encoding: Option<String>) -> Result<(), String> {
     let p = guarded_path(&path)?;
-    tauri::async_runtime::spawn_blocking(move || folio_fs::write_text(&p, &content))
-        .await
-        .map_err(errstr)?
-        .map_err(errstr)
+    let enc = encoding.unwrap_or_else(|| "utf-8".to_string());
+    tauri::async_runtime::spawn_blocking(move || {
+        let r = if enc == "utf-8" {
+            folio_fs::write_text(&p, &content)
+        } else {
+            // 非 UTF-8 来源（gbk/gb18030/utf-16le/utf-16be）：按编码字节回写，另存为不掉码页
+            folio_fs::write_md_enc(&p, &content, &enc)
+        };
+        if r.is_ok() && enc != "utf-8" {
+            // 清掉该路径的旧搜索分节缓存，DB 重登记由后续 openDoc 走正常漏斗
+            commands::invalidate_search_cache(Some(&p.to_string_lossy()));
+        }
+        r
+    })
+    .await
+    .map_err(errstr)?
+    .map_err(errstr)
 }
 
 /// 导出 HTML 图片随行（FR-13.1，需求方 2026-11-17）：本地按路径复制、远程 Rust 侧下载

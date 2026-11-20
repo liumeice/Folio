@@ -16,8 +16,69 @@ pub fn is_supported(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 读取 Markdown：去 BOM；非法字节 lossy（原型契约：UTF-8 优先，坏文件不致命）
-pub fn read_md(path: &Path) -> Result<String> {
+/// 字节 → (解码文本, 编码标签)。口径（2026-11-20 GBK/GB18030 + UTF-16）：
+///  - BOM 嗅探最先行：FF FE → utf-16le、FE FF → utf-16be（**纯 ASCII 的 UTF-16 恰好也是合法
+///    UTF-8**，不先拦会读出一串 NUL）；EF BB BF 走下方 UTF-8 路剥除；
+///  - 无 BOM：严格 UTF-8 合法且无 NUL → utf-8（ASCII 也走这条）；否则 chardetng 猜测——
+///    猜中 GBK/GB18030 → GB18030 解码（GBK 是子集，无损）；猜中 UTF-16LE/BE（ASCII 密集的 0x00
+///    分布可靠，纯 CJK 无 BOM 端序天然歧义不承诺）→ 按端序解码；其余编码（Big5/Shift-Jis/单字节
+///    乱猜）**不硬解**、退回 lossy UTF-8——宁可保真乱码，不可猜错把好文件解码成张冠李戴的汉字。
+///  检测预算：只喂前 64KB（中文码页判定足够，整读大文件喂猜误判更快）。
+pub fn decode_bytes(bytes: &[u8]) -> (String, String) {
+    // BOM 嗅探必须最先行：纯 ASCII 的 UTF-16 恰好也是合法 UTF-8，晚一步就读出一串 NUL
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        let (cow, _, _) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+        return (cow.into_owned(), "utf-16le".into());
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        let (cow, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+        return (cow.into_owned(), "utf-16be".into());
+    }
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        // 含 NUL 的「合法 UTF-8」实为无 BOM UTF-16 的偶数位错位形态，交给检测器裁决
+        if !s.contains('\0') {
+            return (s.strip_prefix('\u{FEFF}').unwrap_or(s).to_string(), "utf-8".into());
+        }
+    }
+    let mut det = chardetng::EncodingDetector::new();
+    det.feed(&bytes[..bytes.len().min(64 * 1024)], bytes.len() <= 64 * 1024);
+    let enc = det.guess(None, true);
+    if enc == encoding_rs::GBK || enc == encoding_rs::GB18030 {
+        let label = if enc == encoding_rs::GBK { "gbk" } else { "gb18030" };
+        let (cow, _, _had_err) = encoding_rs::GB18030.decode(bytes);
+        return (cow.into_owned(), label.into());
+    }
+    // 无 BOM 但 ASCII 段密集的 UTF-16：chardetng 能靠 0x00 分布猜中端序；
+    // 纯 CJK 无 BOM 时端序天然歧义（无空字节可依据），不承诺识别——记事本/VS 写 UTF-16 都带 BOM
+    if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE {
+        let (cow, _, _) = enc.decode(bytes);
+        let label = if enc == encoding_rs::UTF_16LE { "utf-16le" } else { "utf-16be" };
+        return (cow.into_owned(), label.into());
+    }
+    (String::from_utf8_lossy(bytes).into_owned(), "utf-8".into())
+}
+
+/// 文本 → 落盘字节：gbk/gb18030 按 GB18030 编码回写（GBK 码位字节与 GBK 相同，罕见字走四字节区间）；
+/// utf-16le/be 手写编码（BOM + encode_utf16 按端序展开——**encoding_rs 只做 UTF-16 解码**，
+/// 它的 `.encode()` 对 UTF-16 会悄悄退回 UTF-8，探针实测，不可依赖）；其余（含 utf-8）纯 UTF-8、不写 BOM。
+pub fn encode_bytes(text: &str, enc: &str) -> Vec<u8> {
+    match enc {
+        "gbk" | "gb18030" => encoding_rs::GB18030.encode(text).0.into_owned(),
+        "utf-16le" | "utf-16be" => {
+            let le = enc == "utf-16le";
+            let mut out = Vec::with_capacity(2 + text.encode_utf16().count() * 2);
+            out.extend_from_slice(if le { &[0xFF, 0xFE] } else { &[0xFE, 0xFF] });
+            for u in text.encode_utf16() {
+                out.extend_from_slice(&if le { u.to_le_bytes() } else { u.to_be_bytes() });
+            }
+            out
+        }
+        _ => text.as_bytes().to_vec(),
+    }
+}
+
+/// 读取 Markdown（解码 + 编码标签）：GBK/GB18030 中文文档 2026-11-20 起支持。
+pub fn read_md_dec(path: &Path) -> Result<(String, String)> {
     if !path.is_file() {
         return Err(CoreError::NotFound(path.display().to_string()));
     }
@@ -25,13 +86,23 @@ pub fn read_md(path: &Path) -> Result<String> {
         return Err(CoreError::Unsupported(path.display().to_string()));
     }
     let bytes = fs::read(path)?;
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    Ok(text.strip_prefix('\u{FEFF}').map(str::to_string).unwrap_or(text))
+    Ok(decode_bytes(&bytes))
 }
 
-/// 写回：先写临时文件再原子改名，避免半写状态丢原文
+/// 读取 Markdown：只取文本（内部与 read_md_dec 同一解码——搜索/扫描/大纲等
+/// 所有字节入口自动获得同样的 GBK 解码，不再 lossy 出乱码）。
+pub fn read_md(path: &Path) -> Result<String> {
+    Ok(read_md_dec(path)?.0)
+}
+
+/// 写回：先写临时文件再原子改名，避免半写状态丢原文。按来源编码回写（utf-8 默认）。
 pub fn write_md(path: &Path, content: &str) -> Result<()> {
-    write_text(path, content)
+    write_md_enc(path, content, "utf-8")
+}
+
+/// 按指定编码原子写：gbk/gb18030 回写 GB18030 字节，其余 UTF-8 无 BOM。
+pub fn write_md_enc(path: &Path, content: &str, enc: &str) -> Result<()> {
+    write_bytes(path, &encode_bytes(content, enc))
 }
 
 /// 通用读文本：不受 `is_supported` 扩展名白名单限制（导出的 settings.json 等也读得动）。
@@ -47,11 +118,16 @@ pub fn read_text(path: &Path) -> Result<String> {
 
 /// 通用原子写（导出 HTML 等非 md 目标也走这条，FR-13.1）
 pub fn write_text(path: &Path, content: &str) -> Result<()> {
+    write_bytes(path, content.as_bytes())
+}
+
+/// 字节级原子写：临时文件 + 改名，避免半写状态丢原文
+pub fn write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("folio-tmp");
-    fs::write(&tmp, content)?;
+    fs::write(&tmp, bytes)?;
     if path.exists() {
         fs::remove_file(path)?; // Windows 上 rename 不覆盖既有文件
     }
@@ -319,6 +395,81 @@ mod tests {
         fs::write(&f, "\u{FEFF}# bom").unwrap();
         assert_eq!(read_md(&f).unwrap(), "# bom");
         assert!(!f.with_extension("folio-tmp").exists());
+    }
+
+    #[test]
+    fn gbk_detect_decode_and_roundtrip() {
+        // 真实 GBK 码页字节：足够长的中文段落喂给 chardetng
+        let zh = "# 字体下载说明\n\n\
+            这是一个中文文档，包含常见汉字用于编码检测：程序编辑器阅读收藏笔记\
+            工具文件夹搜索索引标题段落引用代码表格链接图片导出主题设置字体\n";
+        let (gbk_bytes, _, _) = encoding_rs::GBK.encode(zh);
+        let (text, label) = decode_bytes(&gbk_bytes);
+        assert_eq!(text, zh, "GBK 字节必须解回原文：{label}");
+        assert!(label == "gbk" || label == "gb18030", "标签报码族：{label}");
+        // 回写按 GB18030 编码，再解必须无损
+        let again = encode_bytes(&text, &label);
+        let (text2, _) = decode_bytes(&again);
+        assert_eq!(text2, zh, "GBK→GB18030→GBK 往返无损");
+        // UTF-8 与 BOM 走严格路，不碰检测器
+        assert_eq!(decode_bytes("中文".as_bytes()).1, "utf-8");
+        assert_eq!(decode_bytes("\u{FEFF}hi".as_bytes()).0, "hi");
+        // 猜不中的垃圾字节保真 lossy（不张冠李戴硬解）；注意别用 FF FE 开头（那是 LE BOM）
+        let junk = [0x80u8, 0x80, 0x80, 0x80, 0x80];
+        assert_eq!(decode_bytes(&junk).1, "utf-8");
+    }
+
+    #[test]
+    fn utf16_bom_and_no_bom_roundtrip() {
+        // 关键防线：encode_bytes 必须真写成 UTF-16（encoding_rs 的 .encode 会把 UTF-16 悄悄退成 UTF-8，2026-11-20 实测）
+        let zh = "# Unicode 测试文档\n\n一段足够长的中文，让 UTF-16 即使没有 BOM 也能被检测器认出来：\
+                  程序、编辑器、阅读、收藏、笔记、工具、文件夹、搜索、索引、标题、段落、引用。\n";
+        // BOM LE：往返必须字节级一致（我方编码器带 BOM）
+        let le = encode_bytes(zh, "utf-16le");
+        assert_eq!(&le[..2], &[0xFF, 0xFE], "LE 首字节必须是 BOM");
+        assert_eq!(le.len(), 2 + zh.encode_utf16().count() * 2, "LE 长度 = BOM + 每码元 2 字节");
+        let (t1, l1) = decode_bytes(&le);
+        assert_eq!(t1, zh);
+        assert_eq!(l1, "utf-16le");
+        assert_eq!(encode_bytes(&t1, &l1), le, "LE 往返字节一致");
+        // BOM BE
+        let be = encode_bytes(zh, "utf-16be");
+        assert_eq!(&be[..2], &[0xFE, 0xFF], "BE 首字节必须是 BOM");
+        let (t2, l2) = decode_bytes(&be);
+        assert_eq!(t2, zh);
+        assert_eq!(l2, "utf-16be");
+        assert_eq!(encode_bytes(&t2, &l2), be, "BE 往返字节一致");
+        // 无 BOM 纯中文 UTF-16LE（剥掉 BOM 两字节）：端序天然歧义（CJK 码元无空字节可依据），
+        // 明确不承诺识别——现状实测 chardetng 猜不中，落回 lossy utf-8 保真路，不许崩、不许硬解成
+        // 张冠李戴。记事本/VS 写 UTF-16 一律带 BOM，带 BOM 的上面已全功能支持。
+        let (t3, l3) = decode_bytes(&le[2..]);
+        assert_eq!(l3, "utf-8", "无 BOM CJK UTF-16 不硬猜，按 fallback 标注");
+        assert!(!t3.is_empty(), "fallback 也必须出文本（lossy），绝不报错打断打开");
+        // 纯 ASCII 的 UTF-16：合法 UTF-8 + NUL 的陷阱形态，BOM 嗅探必须先拦
+        let ascii = "hello world\n";
+        let ale = encode_bytes(ascii, "utf-16le");
+        let (t4, l4) = decode_bytes(&ale);
+        assert_eq!(t4, ascii, "ASCII UTF-16 不许读出一串 NUL");
+        assert_eq!(l4, "utf-16le");
+        // UTF-8 BOM 仍走 utf-8 剥除路
+        let (t5, l5) = decode_bytes("\u{FEFF}hi".as_bytes());
+        assert_eq!((t5.as_str(), l5.as_str()), ("hi", "utf-8"));
+    }
+
+    #[test]
+    fn write_md_enc_respects_label() {
+        let dir = std::env::temp_dir().join("folio-fs-enc-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("g.md");
+        let zh = "中文回写测试，需要足够多的汉字让检测器认得出码页：程序编辑器阅读收藏笔记工具。\n";
+        write_md_enc(&f, zh, "gb18030").unwrap();
+        let raw = fs::read(&f).unwrap();
+        assert!(std::str::from_utf8(&raw).is_err(), "必须真是 GB 族字节，不是 UTF-8");
+        let (text, label) = read_md_dec(&f).unwrap();
+        assert_eq!(text, zh);
+        assert!(label == "gbk" || label == "gb18030", "{label}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

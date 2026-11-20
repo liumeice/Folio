@@ -6,6 +6,7 @@ import { escapeHtml } from "../lib/md";
 import { countWords } from "../lib/wordcount";
 import { api, isTauri } from "../lib/api";
 import { revealInFolder, confirmBox, pickFolderAndScan } from "../lib/actions";
+import { encLabel } from "../lib/encoding";
 import { APP_VERSION, IS_DEV } from "../lib/version";
 import type { CtxTarget } from "../lib/ui";
 import type { CalloutKind, EditorCmd, ListKind, WrapKind } from "../lib/mdInsert";
@@ -185,7 +186,7 @@ export function PropsModal() {
       ["大小", (c.meta.size / 1024).toFixed(1) + " KB"],
       ["字数", countWords(c.src).toLocaleString() + " 字（只统计正文，不含公式和图表源码）"],
       ["小节 / 标题", c.meta.secCount + " 节 / " + c.outline.length + " 条"],
-      ["编码", "UTF-8"],
+      ["编码", encLabel(c.encoding)],
       ["修改时间", new Date(c.meta.mtime * 1000).toLocaleString()],
       ["当前章节", s.activeSec() != null ? (c.outline[s.activeSec()! - 1]?.text ?? "—") : "—"],
       ["阅读进度", Math.round(ui.readPct() * 100) + "%"],

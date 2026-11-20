@@ -8,3 +8,5 @@ description = "文件系统访问：扫描 / 读取 / 写回 / 元信息（同�
 
 [dependencies]
 folio-core.workspace = true
+chardetng.workspace = true
+encoding_rs.workspace = true

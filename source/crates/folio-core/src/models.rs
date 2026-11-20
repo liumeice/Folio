@@ -56,6 +56,14 @@ pub struct DocFull {
     pub meta: DocMeta,
     pub src: String,
     pub outline: Vec<OutlineItem>,
+    /// 来源编码标签（utf-8 / gbk / gb18030，2026-11-20 GBK 支持）：src 恒为解码后的
+    /// UTF-8 内存文本，此标签只决定「保存/另存为回写磁盘用哪套字节」。
+    #[serde(default = "default_encoding")]
+    pub encoding: String,
+}
+
+fn default_encoding() -> String {
+    "utf-8".to_string()
 }
 
 /// 大纲条目。anchor 即 data-sec 序号（文档内自增），历史/进度锚定优先用它，文本兜底

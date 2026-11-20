@@ -31,13 +31,14 @@ struct OpenedDoc {
     stamp: (i64, u64, bool), // mtime, size, in_library
     src: String,
     outline: Vec<OutlineItem>,
+    enc: String, // 来源编码标签（utf-8/gbk/gb18030）：缓存命中也要如实带出，供保存回写
 }
 static OPEN_SEQ: AtomicU64 = AtomicU64::new(0);
 static OPEN_CACHE: OnceLock<Mutex<HashMap<String, (u64, OpenedDoc)>>> = OnceLock::new();
 fn open_cache() -> &'static Mutex<HashMap<String, (u64, OpenedDoc)>> {
     OPEN_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
-fn cache_put(key: String, stamp: (i64, u64, bool), src: String, outline: Vec<OutlineItem>) {
+fn cache_put(key: String, stamp: (i64, u64, bool), src: String, outline: Vec<OutlineItem>, enc: String) {
     if stamp.0 == 0 {
         return; // 无可靠 mtime（特殊路径）不缓存
     }
@@ -48,7 +49,7 @@ fn cache_put(key: String, stamp: (i64, u64, bool), src: String, outline: Vec<Out
                 g.remove(&k);
             }
         }
-        g.insert(key, (OPEN_SEQ.fetch_add(1, Ordering::Relaxed), OpenedDoc { stamp, src, outline }));
+        g.insert(key, (OPEN_SEQ.fetch_add(1, Ordering::Relaxed), OpenedDoc { stamp, src, outline, enc }));
     }
 }
 
@@ -182,6 +183,7 @@ fn doc_full_uncached(db: &Arc<Db>, path: &Path, in_library: bool) -> Result<DocF
                                 src: en.1.src.clone(),
                                 outline: en.1.outline.clone(),
                                 meta: e.clone(),
+                                encoding: en.1.enc.clone(),
                             });
                         }
                     }
@@ -190,15 +192,15 @@ fn doc_full_uncached(db: &Arc<Db>, path: &Path, in_library: bool) -> Result<DocF
         }
     }
 
-    let src = fs::read_md(path)?;
+    let (src, encoding) = fs::read_md_dec(path)?; // GBK/GB18030 中文文档在此解码，标签随文带出
     let outline = outline_of(&src);
     // P1-5：打开只读化——未变则复用登记，跳过 markdown::stats 与 FTS trigram 重写
     let meta = match existing {
         Some(e) if e.mtime == mtime && e.size == size && e.in_library == in_library => e,
         _ => db.upsert_document(path, &src, in_library)?,
     };
-    cache_put(key, (mtime, size, in_library), src.clone(), outline.clone());
-    Ok(DocFull { src, outline, meta })
+    cache_put(key, (mtime, size, in_library), src.clone(), outline.clone(), encoding.clone());
+    Ok(DocFull { src, outline, meta, encoding })
 }
 
 pub fn open_by_slug(db: &Arc<Db>, slug: &str) -> Result<DocFull> {
@@ -208,8 +210,11 @@ pub fn open_by_slug(db: &Arc<Db>, slug: &str) -> Result<DocFull> {
 
 /// 保存（FR-7.5）：非 force 时，若磁盘 mtime 晚于登记 mtime ——判定外部已修改，
 /// 返回 "CONFLICT" 错误串，由前端弹「覆盖 / 重新加载」二选一后再带 force 重试。
-pub fn save(db: &Arc<Db>, path: &str, content: &str, force: bool) -> Result<DocFull> {
+/// `encoding` = 该文档打开时检出的来源编码（gbk/gb18030 按原码页回写，其余 UTF-8；
+/// 空串按 utf-8）——GBK 文档保存一次就转码毁掉原文的事不许发生。
+pub fn save(db: &Arc<Db>, path: &str, content: &str, force: bool, encoding: &str) -> Result<DocFull> {
     let p = PathBuf::from(path);
+    let enc = if encoding.is_empty() { "utf-8" } else { encoding };
     if !force {
         if let Ok(existing) = db.doc_by_path(path) {
             let disk = fs::mtime_secs(&p);
@@ -218,7 +223,7 @@ pub fn save(db: &Arc<Db>, path: &str, content: &str, force: bool) -> Result<DocF
             }
         }
     }
-    fs::write_md(&p, content)?;
+    fs::write_md_enc(&p, content, enc)?;
     invalidate_search_cache(Some(path)); // 正文已变：该篇的搜索分节缓存立刻作废
     // v3：保存不许改变库成员身份。旧代码硬写 true，会把「仅最近打开」的文件悄悄塞进库。
     // 有登记行 → 沿用其归属；新文件（理论上不会走到）→ 按库根判定。
@@ -235,8 +240,9 @@ pub fn save(db: &Arc<Db>, path: &str, content: &str, force: bool) -> Result<DocF
         (fs::mtime_secs(&p), fs::file_size(&p), in_library),
         src.clone(),
         outline.clone(),
+        enc.to_string(),
     );
-    Ok(DocFull { src, outline, meta })
+    Ok(DocFull { src, outline, meta, encoding: enc.to_string() })
 }
 
 /// 复选框回写：nth 与渲染端同一围栏坐标系（folio-core::markdown 单点实现）
@@ -245,11 +251,11 @@ pub fn toggle_task(db: &Arc<Db>, path: &str, nth: i64) -> Result<DocFull> {
         return Err(folio_core::CoreError::Invalid("nth < 0".into()));
     }
     let p = PathBuf::from(path);
-    let src = fs::read_md(&p)?;
+    let (src, enc) = fs::read_md_dec(&p)?;
     let new_src = markdown::toggle_task(&src, nth as usize)
         .ok_or_else(|| folio_core::CoreError::NotFound(format!("task #{nth}")))?;
-    // 勾选路径 = 读盘-改写-写盘，天然基于最新内容，不占冲突检测（FR-7.5 注）
-    save(db, path, &new_src, true)
+    // 勾选路径 = 读盘-改写-写盘，天然基于最新内容，不占冲突检测（FR-7.5 注）；编码随来源回写
+    save(db, path, &new_src, true, &enc)
 }
 
 /// 文件名校验（唯一权威口径，《Folio-目录树文件重命名方案》§3.1）：
