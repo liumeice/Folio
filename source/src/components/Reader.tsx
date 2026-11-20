@@ -202,7 +202,12 @@ export default function Reader() {
     article.innerHTML = mdToHtml(doc.src);
     performance.mark("folio:render:innerHTML");
     performance.measure("folio:render", "folio:render:start", "folio:render:innerHTML");
-    applyColorChips(article);   // 色值前置色块（规范 §4.5）：纯同步 DOM 扫描，随首屏一起出现
+    // 色值前置色块（规范 §4.5）。性能审查 v3.0 P1-2：两处改动——
+    // ① src 预筛：正文没有任何颜色 token 的文档直接跳过（大文档省 55–63 ms DOM 遍历）；
+    // ② 有颜色的延后一帧：色块纯装饰，不参与锚点/大纲/进度几何，首帧文字先出。
+    if (/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(doc.src)) {
+      requestAnimationFrame(() => { if (seq === renderSeq) applyColorChips(article); });
+    }
     const h1 = article.querySelector("h1");
     if (h1) {
       // 字数/阅读时长按正文口径现算（公式/图表源码不计，需求方 2026-11-17；lib/wordcount.ts 与 Rust stats 同规则）

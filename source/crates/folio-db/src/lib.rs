@@ -257,33 +257,72 @@ impl Db {
 
     /// P1-6 补：FTS5 段再合并。整批移除文档后，fts5 索引 b 树留下大量未合并段碎片
     /// （实测 167KB 正文被 14.7MB 陈旧段包裹）；VACUUM 不处理这类"活数据"，必须先 optimize。
-    /// 触发条件保守：索引块总量 >1MB 且 >8× 正文字节——正常 trigram 比约 4:1，命中即碎片级。
-    pub fn optimize_fts_if_stale(&self) -> Result<()> {
+    ///
+    /// 性能审查 v3.0 P0-2 修正（2026-11-20）两处：
+    /// ① 单位混用——`length(body)` 是**字符数**（1 汉字 ≈3 字节），`length(block)` 是字节数，
+    ///    旧阈值 8× 在字节/字符口径下实际 ≈24×，永远不触发（实测库膨胀到 3.89× 仍判 false）。
+    ///    正文改按 `length(CAST(body AS BLOB))` 取字节，阈值收紧为 **3×**（紧凑态实测 2.06×）。
+    /// ② 判据改走**读连接**——这两条 SUM 在膨胀库上实测 80–92 ms，旧版整个包在 with_conn 里，
+    ///    一次"什么都不用做"的检查就把 record_recent/保存挡在写锁外。只有真要 optimize 才取写锁。
+    /// 新增段数判据：`docs_fts_idx` 行数 >5000（本次实测膨胀库 12,506）同样触发。
+    /// 返回是否实际执行了 optimize（供维护日志/测试）。
+    pub fn optimize_fts_if_stale(&self) -> Result<bool> {
+        // (blocks_bytes, body_bytes, segs) 三判据走读连接；实测算数见 fts_maintenance_stats。
+        let (blocks, body_bytes, segs) = self.fts_maintenance_stats()?;
+        if !Self::fts_should_optimize(blocks, body_bytes, segs) {
+            return Ok(false);
+        }
         self.with_conn(|c| {
-            let body: i64 =
-                c.query_row("SELECT coalesce(sum(length(body)),0) FROM docs_fts", [], |r| r.get(0))?;
+            c.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')", [])?;
+            Ok(())
+        })?;
+        Ok(true)
+    }
+
+    /// 维护判据的原始数值（读连接）：`(索引块字节, 正文字节, 段记录数)`。
+    /// 正文用 `length(CAST(body AS BLOB))` 取字节——审查 v3.0 P0-2 的单位修正点，
+    /// 独立出来供测试直接核对字节口径，不依赖 FTS5 自动合并的实际碎片程度。
+    pub fn fts_maintenance_stats(&self) -> Result<(i64, i64, i64)> {
+        self.with_read(|c| {
+            let body_bytes: i64 = c.query_row(
+                "SELECT coalesce(sum(length(CAST(body AS BLOB))),0) FROM docs_fts",
+                [],
+                |r| r.get(0),
+            )?;
             let blocks: i64 = c
                 .query_row("SELECT coalesce(sum(length(block)),0) FROM docs_fts_data", [], |r| r.get(0))
                 .unwrap_or(0);
-            if blocks > 1_048_576 && blocks > body.saturating_mul(8) {
-                c.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')", [])?;
-            }
-            Ok(())
+            let segs: i64 = c
+                .query_row("SELECT count(*) FROM docs_fts_idx", [], |r| r.get(0))
+                .unwrap_or(0);
+            Ok((blocks, body_bytes, segs))
         })
+    }
+
+    /// 判据纯函数（无 IO，可测）：索引块 >1MB 且（块 >3×正文字节 或 段记录 >5000）。
+    /// 3× 依据紧凑 trigram 实测比 ≈2.06 字节/字节；5000 段依据膨胀库实测 12506。
+    fn fts_should_optimize(blocks: i64, body_bytes: i64, segs: i64) -> bool {
+        blocks > 1_048_576 && (blocks > body_bytes.saturating_mul(3) || segs > 5_000)
     }
 
     /// P1-6：空闲页 >1000 且占库 1/4 以上时做一次 VACUUM；清完即不再触发。
     /// 阈值取 1/4 的缘由：整批移除库根（如换文档目录）会留下 40% 级 freelist，
-    /// 若仍要求"过半"则长期不回收。
-    pub fn vacuum_if_bloated(&self) -> Result<()> {
-        self.with_conn(|c| {
+    /// 若仍要求"过半"则长期不回收。审查 v3.0 P0-3：page/freelist 两条 PRAGMA 走读连接，
+    /// 不满足条件时不再空占写锁（VACUUM 本身需要独占写锁，维持 with_conn）。
+    pub fn vacuum_if_bloated(&self) -> Result<bool> {
+        let (pages, free) = self.with_read(|c| {
             let pages: i64 = c.query_row("PRAGMA page_count", [], |r| r.get(0))?;
             let free: i64 = c.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
-            if free > 1024 && free * 4 >= pages {
-                c.execute("VACUUM", [])?;
-            }
+            Ok((pages, free))
+        })?;
+        if free <= 1024 || free * 4 < pages {
+            return Ok(false);
+        }
+        self.with_conn(|c| {
+            c.execute("VACUUM", [])?;
             Ok(())
-        })
+        })?;
+        Ok(true)
     }
 
     pub fn doc_by_path(&self, path: &str) -> Result<DocMeta> {
@@ -889,6 +928,31 @@ mod tests {
         let p = dir.join(name);
         std::fs::write(&p, content).unwrap();
         p
+    }
+
+    #[test]
+    fn fts_maintenance_threshold_is_byte_based() {
+        // 审查 v3.0 P0-2 回归，两层：①判据纯函数的字节算术（阈值/段数边界）；
+        // ②stats 的真实取数——CJK 正文的 body_bytes 必须是 UTF-8 字节数而非字符数
+        //（旧实现用 length(body) 字符数×8，本次实测膨胀库 56.23MB 对 82.7MB 恒 false）。
+        let f = Db::fts_should_optimize;
+        assert!(!f(1_000_000, 100, 0), "块 <1MB 不触发（小库段记录噪声不算膨胀）");
+        assert!(f(60_000_000, 14_500_000, 0), "3.89× 字节比命中——旧字符口径此处不触发");
+        assert!(!f(29_800_000, 14_500_000, 0), "紧凑态 2.06× 不触发");
+        assert!(f(2_000_000, 1_900_000, 5_001), "段记录超 5000 兜底触发");
+        assert!(!f(2_000_000, 1_900_000, 5_000), "段数=5000 恰好不触发");
+
+        let (db, dir) = tmp_db("maint");
+        let cjk = "汉字编码测试内容用于核对字节口径。".repeat(900); // 13,500 字符 ≈ 40.5KB UTF-8
+        let p = dir.join("m0.md");
+        db.upsert_document(&p, &cjk, true).unwrap();
+        let (blocks, body_bytes, segs) = db.fts_maintenance_stats().unwrap();
+        assert_eq!(body_bytes, cjk.len() as i64, "body_bytes=UTF-8 字节数");
+        assert_eq!(body_bytes, cjk.chars().count() as i64 * 3, "字节恰为字符数×3（全 CJK）——旧 length(body) 会拿到 1/3 的字符数");
+        assert!(segs > 0 && blocks > 0, "trigram 索引确有块与段：blocks={blocks} segs={segs}");
+        assert!(!db.optimize_fts_if_stale().unwrap(), "刚写完的紧凑库不该 optimize");
+        assert!(!db.vacuum_if_bloated().unwrap(), "健康库不该 VACUUM");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

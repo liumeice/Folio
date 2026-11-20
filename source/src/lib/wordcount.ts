@@ -13,7 +13,22 @@ function isSkippedFence(line: string): boolean {
   return body === "math" || body === "mermaid";
 }
 
+/* 性能审查 v3.0 P1-2：字数在首屏被算两遍——Reader.tsx 的 .sub 行与 SidePanels 状态栏都调
+ * countWords(同一 doc.src)。加单槽引用记忆：两处调用命中的是同一字符串引用（current() 与
+ * Reader 的 curDoc 同源），=== 走指针相等即刻返回，省掉第二遍 ~25ms 全量扫描。
+ * 只缓存最后一份 src：任何输入仍返回正确值（无脏读），内存上限一份正文。 */
+let memoSrc: string | null = null;
+let memoVal = 0;
+
 export function countWords(src: string): number {
+  if (src === memoSrc) return memoVal;
+  const n = countWordsRaw(src);
+  memoSrc = src;
+  memoVal = n;
+  return n;
+}
+
+function countWordsRaw(src: string): number {
   const lines = src.replace(/\r\n/g, "\n").split("\n");
   const kept: string[] = [];
   let inCode = false;

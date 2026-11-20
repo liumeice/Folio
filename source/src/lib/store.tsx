@@ -331,7 +331,11 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   }
 
   async function switchTo(doc: DocFull, opts?: { secText?: string | null; record?: boolean }) {
-    await flushPosition(); // 落盘「离开处」的位置（N4）
+    // 落盘「离开处」的位置（N4）。审查 v3.0 P0-3：不 await——flushPosition 的同步前缀
+    // （读 current()/posSource、更新 positionsMap/history）在 await 之前就已完成，后面只剩
+    // 一次 savePosition IPC；写锁忙时（扫描/optimize/VACUUM）它会把切页签整个卡住。
+    // 退出链仍强制 await（quitApp/beforeunload/closeTab），最坏情况硬杀丢一次防抖窗口内的位置。
+    void flushPosition();
     // 手动保存模式下阅读态也可能挂脏（打勾）：不保存就切走 = 丢改动，故脏必存，模式无关（§6.4）
     if (dirty()) await save(`切换文档：已自动保存「${current()?.meta.fileName ?? ""}」的修改`);
     else if (mode() === "edit") endEdit();
@@ -892,7 +896,10 @@ export function StoreProvider(props: ParentProps): JSX.Element {
         await dropMissingFromRecents(restore.id);
       }
     }
-    dismissSplash(); // 内容决策已定（正文上屏 / 空态），揭幕
+    // 审查 v3.0 P2-2：骨架揭幕推迟到「首帧绘制之后」。setDoc 只更新信号，Reader 的
+    // mdToHtml/innerHTML/布局/绘制还在后面的 effect + 双 rAF 里；立即揭幕会先露约 0.5 s 空阅读区。
+    // 双 rAF 等一次真实绘制完成（与 Reader 计时口径一致），main.tsx 另有 5 s 兜底不受影响。
+    requestAnimationFrame(() => requestAnimationFrame(dismissSplash));
     try {
       for (const raw of pending) {
         if (raw.startsWith("folio://")) {
