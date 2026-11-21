@@ -94,6 +94,37 @@ function walk(node: Element, doc: Document): void {
   // 注释节点保留（无害），processing instruction 会被 DOMParser 吞掉
 }
 
+// ── 行内 HTML 单标签净化（GFM 6.10，2026-11-21 P0）──
+// 行内标签是与 Markdown 文本流交错出现的（Press <kbd>Ctrl</kbd>+<kbd>C</kbd>），
+// 不能整段走 DOMParser——半截开始标签会被自动补出闭标签、污染输出流。
+// 这里对单个标签 token 做轻量净化：标签名不在 ALLOW（含 DROP/未知）返回 null，
+// 调用方按 tag-filter 语义转义为可见文本（比静默删除更不易丢内容）；
+// 白名单标签则属性走 ALLOW_ATTR 过滤 + on 前缀/srcdoc 剥离 + href/src scheme 复核。
+export function sanitizeInlineTag(frag: string): string | null {
+  const m = frag.match(/^<(\/?)([A-Za-z][A-Za-z0-9-]*)((?:\s+[^<>]*?)?)(\/?)>$/s);
+  if (!m) return null;
+  const [, slash, name, attrs] = m;
+  if (name.length > 999) return null; // CC 6.2（P2）：标签名 >999 字符不成标签——调用方转义可见
+  // 大小写：name.toLowerCase() 用 Unicode 折叠（K→k 等），标签名本体只收 ASCII 字母，
+  // 与 DOMParser 的 ASCII 折叠在 ALLOW 成员（全 ASCII 小写）上判等结果一致
+  const lower = name.toLowerCase();
+  if (!ALLOW.has(lower)) return null;
+  if (slash) return `</${lower}>`; // 闭标签：开标签已白名单化，闭标签同名放行
+  const kept: string[] = [];
+  const attrRe = /([A-Za-z_:][A-Za-z0-9_:.-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  let a: RegExpExecArray | null;
+  while ((a = attrRe.exec(attrs)) !== null) {
+    const nameOk = a[1].toLowerCase();
+    if (nameOk.startsWith("on") || nameOk === "srcdoc" || nameOk === "formaction" || !ALLOW_ATTR.has(nameOk)) continue;
+    const val = a[2] ?? a[3] ?? a[4] ?? "";
+    if ((nameOk === "href" || nameOk === "src") && !safeUrl(nameOk, val)) continue;
+    kept.push(`${nameOk}="${val.replace(/"/g, "&quot;")}"`);
+  }
+  // XHTML 自闭斜杠统一丢弃（HTML5 里 br/hr/img 本就 void，`<br/>`→`<br>` 与 GitHub 输出一致）
+  const sp = kept.length ? " " + kept.join(" ") : "";
+  return `<${lower}${sp}>`;
+}
+
 export function sanitizeHtml(raw: string): string {
   if (typeof DOMParser === "undefined") {
     // 无 DOM 环境（node 直跑测试的保守路径）：整体转义为文本，绝不裸注入

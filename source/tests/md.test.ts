@@ -86,9 +86,121 @@ test("表格/标题/任务清单块层不回归", () => {
   assert.ok(h.includes('data-task="1"'), "任务项");
 });
 
-test("~~~ 不再当围栏（与 Rust 口径统一）", () => {
-  const h = mdToHtml("~~~\n# 井号仍在大纲\n~~~");
-  assert.ok(h.includes('data-sec="1"'), "~~~ 内标题参与编号（与 folio-core 一致）");
+/* 2026-11-21 第二档：围栏从"只认 ```（toggle 式）"升级为 ```/~~~ 配对（闭栏=同字符且长度≥开栏）。
+ * 本测试与 folio-core second_batch_kinds_gfm 镜像双跑。 */
+test("~~~ 当围栏 + 变长配对（第二档，与 folio-core 镜像）", () => {
+  const h = mdToHtml("~~~\n# 假标题(围栏内)\n~~~\n\n# 真标题");
+  assert.ok(h.includes("<pre"), "~~~ 块渲染为代码： " + h);
+  assert.ok(!h.includes("data-sec-text=\"假标题(围栏内)\""), "~~~ 内标题不参与编号");
+  assert.ok(h.includes('data-sec="1"') && h.includes("真标题"), "闭栏后恢复大纲");
+  const t = mdToHtml("````md\n``` js\n# 内层是内容\n```\n````\n# 出栏\n");
+  assert.ok(!t.includes('data-sec-text="内层是内容"'), "四反引号内三反引号是内容（短闭无效）");
+  assert.ok(t.includes('data-sec="1"') && t.includes("出栏"), "长栏被同行数长栏关闭");
+  const u = mdToHtml("~~~\n```\n# 仍围栏内\n");
+  assert.ok(u.includes("# 仍围栏内"), "未闭合围栏吃到 EOF，整段是代码");
+  assert.ok(!u.includes("data-sec"), "异种闭栏不闭合：~~~ 内 ``` 只是内容");
+});
+
+test("第二档·Setext 标题：=→h1、-→h2；锚点行号记段落首行（Rust second_batch_kinds_gfm 镜像）", () => {
+  const h = mdToHtml("标题一\n=====\n\n小节\n---\n\n正文\n");
+  assert.ok(h.includes('data-sec-text="标题一"'), "标题一=h1：" + h);
+  assert.ok(h.match(/<h1[^>]*data-line-start="0"/), "= 出 h1，块锚从段落首行起");
+  assert.ok(h.includes('data-sec-text="小节"') && h.match(/<h2[^>]*data-line-start="3"/), "- 出 h2，行号=段落首行 3");
+  const hr = mdToHtml("段落\n\n---\n\n再段\n===\n");
+  assert.ok(hr.includes("<hr"), "空行断开：--- 是 hr 不是 setext");
+  assert.equal((hr.match(/data-sec=/g) ?? []).length, 1, "只有贴段落的 === 计标题");
+  assert.equal((mdToHtml("---\n正文\n").match(/data-sec=/g) ?? []).length, 0, "无前置段落 --- 不占号");
+  const multi = mdToHtml("首行\n次行\n===\n");
+  assert.ok(multi.includes('data-sec-text="首行 次行"'), "多行段落升格：逐行连接 " + multi);
+  // 代码围栏内的 ===/--- 不是 setext（fi 行不接段落）
+  const fence = mdToHtml("段落\n```\n===\n```\n");
+  assert.equal((fence.match(/data-sec=/g) ?? []).length, 0, "围栏内 === 只是代码");
+});
+
+test("第二档·缩进代码与懒延续（Rust line_kinds 三分流镜像）", () => {
+  const h = mdToHtml("# 前\n\n      # 缩进代码\n");
+  assert.equal((h.match(/data-sec=/g) ?? []).length, 1, "非列表语境深缩进 # = 缩进代码不计");
+  assert.ok(h.includes('<code class="language-text">  # 缩进代码</code>'), "6 列只剥 4 列，余 2 列保留在代码内：" + h.slice(-220));
+  const lazy = mdToHtml("段落文字\n    # 懒延续\n");
+  assert.equal((lazy.match(/data-sec=/g) ?? []).length, 0, "贴段落的 ≥4 列 = 懒延续正文");
+  assert.ok(lazy.includes("# 懒延续"), "正文仍可见");
+  const inList = mdToHtml("- a\n    # 项内标题\n");
+  assert.ok(inList.includes('data-sec="1"'), "列表后 4 列 ATX：宽松口径计标题（已批准偏差）");
+  const tab = mdToHtml("\t# 制表符标题\n");
+  assert.equal((tab.match(/data-sec=/g) ?? []).length, 0, "Tab=4 列：顶格 tab 的 ATX 是缩进代码");
+  // 代码运行吸收空行：``` 在 code run 内只是内容（Rust prev==Code 分支）
+  const run = mdToHtml("    a\n\n    ```\n\n尾段\n");
+  assert.ok(run.includes("<pre"), "``` 行被代码 run 吸收");
+  assert.ok(run.includes("尾段"), "run 止于非缩进行");
+});
+
+test("第二档·任务坐标：围栏/缩进代码/懒延续假任务全出局（Rust second_batch_task_coordinate 镜像）", () => {
+  const src = "~~~\n- [ ] 围栏内假\n~~~\n\n```js\n- [ ] 反引号内假\n```\n\n# 标题\n\n    - [ ] 缩进代码假\n\ntext\n    - [ ] 懒延续假\n\n- [ ] 真一\n";
+  const out = flipTaskInSrc(src, 0);
+  assert.ok(out!.includes("- [x] 真一"), "有且仅有一个真任务：" + out);
+  assert.equal(flipTaskInSrc(out!, 1), null, "假任务全部出局");
+});
+
+test("P2·输入预处理：裸 CR 分行、NUL→U+FFFD（↔ Rust p2_batch_input_normalization）", () => {
+  const h = mdToHtml("# 标题一\r# 标题二\r\n正文\r    # 代码行\r");
+  assert.equal((h.match(/data-sec=/g) ?? []).length, 2, "裸 CR 分行、分行后 4 列=懒延续：" + h.slice(0, 200));
+  assert.ok(h.includes('data-sec-text="标题二"'), "第二行标题按行界识别");
+  const nul = mdToHtml("# 标题" + String.fromCharCode(0) + "甲\n");
+  assert.ok(nul.includes("标题" + String.fromCharCode(0xFFFD) + "甲"), "NUL 以 U+FFFD 显示");
+  assert.ok(!nul.includes(String.fromCharCode(0)), "输出不含裸 NUL");
+  assert.equal(flipTaskInSrc("- [ ] a\r- [ ] b\n", 1), "- [ ] a\r- [x] b\n", "混合行尾逐字节保留（↔ Rust toggle）");
+  assert.equal(flipTaskInSrc("  1. [ ] x\n", 0), "  1. [x] x\n");
+});
+
+test("P2·邮箱自动链接收紧（cmark-gfm localpart）与标签名 999 上限、空 tbody 钉桩", () => {
+  assert.ok(!mdToHtml("x a.@b.com y").includes("mailto:"), "localpart 尾点不自动链接");
+  assert.ok(!mdToHtml("x a..b@c.io y").includes("mailto:"), "连续特殊符不自动链接");
+  assert.ok(!mdToHtml("x +tag@y.com y").includes("mailto:"), "起始特殊符不自动链接");
+  assert.ok(mdToHtml("联络 foo.bar+b@sub.example.com 谢谢").includes('href="mailto:foo.bar+b@sub.example.com"'), "合法形态照常链接");
+  const long = mdToHtml("甲 <" + "b".repeat(1000) + ">x");
+  assert.ok(long.includes("&lt;"), "标签名 >999 字符不成标签（转义可见）：" + long.slice(0, 60));
+  assert.ok(mdToHtml("甲 <kbd>K</kbd> 尾").includes("<kbd>K</kbd>"), "正常标签不受影响");
+  assert.ok(!mdToHtml("| a | b |\n|---|---|\n").includes("<tbody"), "只有表头的表格不输出空 tbody");
+  const t = mdToHtml("- a\n\t- b\n");
+  assert.equal((t.match(/<ul/g) ?? []).length, 2, "Tab 缩进按 4 列制表位算嵌套深度：" + t);
+});
+
+test("第三档·audit 4.6-c/4.7-c/6.7-a：HTML 块起始白名单、定义不打断段落、alt 实体透传", () => {
+  // 4.6-c：行首行内标签带同行内容 → 段落，不再吞掉后续 Markdown
+  const sp = mdToHtml("<span>hi</span>\n**bold**");
+  assert.ok(sp.includes("<span>hi</span>") && sp.includes("<strong>bold</strong>"), sp);
+  // 类型 6 块标签：行首可带后续内容仍开块（rawblk 包裹、块内不跑内联解析）。
+  // 注：md.test 无 jsdom，sanitizeHtml 走全转义回退——结构断言在 html.test.ts（有 DOM）做。
+  const dt = mdToHtml("<details>\n<summary>x</summary>\n*不强调*\n</details>");
+  assert.ok(dt.includes('class="rawblk"') && !dt.includes("<em>"), "类型 6 开块、块内不做内联：" + dt.slice(0, 60));
+  // 类型 7：非块标签独占整行才开块
+  const alone = mdToHtml("<span>\nhi\n</span>");
+  assert.ok(alone.includes('class="rawblk"'), "整行单标签=类型 7 块：" + alone.slice(0, 60));
+  // 4.7-c：紧邻段落的定义行不成立（段落文本、不注册）；空行后恢复可注册
+  const dp = mdToHtml("para\n[x]: /u\n\n用 [x] 尾");
+  assert.ok(dp.includes("[x]: /u") && !dp.includes('href="/u"'), dp.slice(0, 120));
+  const dd = mdToHtml("[a]: /1\n[b]: /2\n\n见 [a] 与 [b]");
+  assert.ok(dd.includes('href="/1"') && dd.includes('href="/2"'), "连排定义都成立：" + dd);
+  const ok2 = mdToHtml("段落\n\n[x]: /u\n\n用 [x]");
+  assert.ok(ok2.includes('href="/u"'), "空行断开后定义成立");
+  // 6.7-a：alt/title 实体透传（浏览器解码），字面 & 仍安全转义
+  const im = mdToHtml("![AT&amp;T](/u)");
+  assert.ok(im.includes('alt="AT&amp;T"') && !im.includes("&amp;amp;"), im);
+  assert.ok(mdToHtml("![AT&T](/u)").includes('alt="AT&amp;T"'), "字面 & 转成实体");
+  assert.ok(mdToHtml('[x](/u "a &amp; b")').includes('title="a &amp; b"'), "title 同通道");
+});
+
+test("第二档·P1 内联收尾：全空格代码段、标题转义引号、嵌套链接、引用懒延续", () => {
+  assert.ok(mdToHtml("`   `").includes("<code>   </code>"), "纯空白 code span 不剥空格（CC 6.1）");
+  const t = mdToHtml('[x](u "a\\"b")');
+  assert.ok(t.includes('title="a&quot;b"') && t.includes('href="u"'), "title 内转义引号不截断：" + t);
+  const nest = mdToHtml("[外 [内](i) 还](o)");
+  assert.ok(!nest.includes('<a href="o"'), "外层嵌套链接不成立：" + nest);
+  assert.ok(nest.includes('<a href="i"'), "内层链接照常");
+  const q = mdToHtml("> 第一行\n懒延续第二行\n\n完");
+  assert.ok(/<blockquote[^>]*>(?:(?!<\/blockquote>)[\s\S])*?懒延续第二行/.test(q), "懒延续行并入引用块：" + q);
+  const q2 = mdToHtml("> 引用\n- 列表项不并入");
+  assert.ok(!/<blockquote[^>]*>(?:(?!<\/blockquote>)[\s\S])*?列表项/.test(q2), "列表行开新块，不懒并入：" + q2);
 });
 
 test("GFM Callout：五类类型 → 图标+色类+默认标题", () => {
@@ -117,7 +229,8 @@ test("表格：代码段内的 | 不分列（用户样例）", () => {
   assert.ok(h.includes("<table>"), "仍是表格");
   const rows = h.match(/<tr[^>]*>.*?<\/tr>/gs) ?? [];
   assert.equal(rows.length, 2, "表头 1 行 + 数据 1 行");
-  assert.equal((rows[1].match(/<td>/g) ?? []).length, 3, "数据行恰好 3 列");
+  // GFM 4.10（2026-11-21 P0）：数据行多于表头列数的单元**截断**——表头 2 列则数据行也 2 列
+  assert.equal((rows[1].match(/<td>/g) ?? []).length, 2, "数据行截断到表头列数");
   assert.ok(h.includes("<code>cat file | claude -p &quot;query&quot;</code>"), "代码段完整：\n" + h);
   assert.ok(h.includes("<td>处理管道内容</td>"), "中间列不错位");
 });
@@ -131,28 +244,29 @@ test("表格对齐：分隔行冒号标记落到 th/td 的 inline text-align（2
   assert.ok(h.includes('<td style="text-align:center">a</td>') && h.includes('<td style="text-align:center">e</td>'), "数据行居中（两行都生效）");
   assert.ok(h.includes('<td style="text-align:right">b</td>'), "数据行右");
   assert.ok(h.includes("<td>d</td>"), "数据行默认列无样式");
-  // 行溢出列数：数据行比表头多出的单元不越界取对齐（undefined→无样式）
+  // 行溢出列数（GFM 4.10）：数据行比表头多出的单元截断丢弃
   const o = mdToHtml("| a | b |\n| :-: | :-: |\n| 1 | 2 | 3 |");
-  assert.ok(o.includes("<td>3</td>"), "溢出列沿用默认");
+  assert.ok(!o.includes("3"), "第 3 列被截断");
+  assert.ok(o.includes('<td style="text-align:center">2</td>'), "表头内列正常");
   // 坐标记账不受影响
   assert.ok(h.includes('data-line-start="2" data-line-end="2"'), "首数据行子锚不变");
 });
 
-test("表格单元格：<br> 系放行作格内换行，其余 HTML 仍转义（2026-11-21 口径）", () => {
-  const h = mdToHtml("| 表头一<br>二 | 甲 |\n| - | - |\n| a<br>b | c<BR/>d | e<br />f | <b>粗</b> <script>x</script> |");
-  // 表头与正文单元都放行四种写法：<br> <BR/> <br />（大小写/自闭合/带空格）
-  assert.ok(h.includes("<th>表头一<br>二</th>"), "表头 <br>：" + h.slice(0, 120));
+test("表格单元格：<br> 系换行 + 行内 HTML 白名单口径（2026-11-21 P0）", () => {
+  const h = mdToHtml("| 表头一<br>二 | 甲 | 乙 | 丙 |\n| - | - | - | - |\n| a<br>b | c<BR/>d | e<br />f | <b>粗</b> <script>x</script> |");
+  // 表头与正文单元放行四种写法：<br> <BR/> <br />（大小写/自闭合归一）
+  assert.ok(h.includes("<th>表头一<br>二</th>"), "表头 <br>：" + h.slice(0, 160));
   assert.ok(h.includes("<td>a<br>b</td>"), "正文 <br>");
-  assert.ok(h.includes("<td>c<br>d</td>"), "<BR/> 与 <br /> 归一为 <br>");
-  // 净化面不扩大：其余标签照旧转义
-  assert.ok(h.includes("&lt;b&gt;粗&lt;/b&gt;"), "<b> 仍转义");
-  assert.ok(h.includes("&lt;script&gt;"), "script 仍转义");
-  // 坐标记账不动：表头/数据行的 tr 子锚照旧
-  assert.ok(h.includes('<div class="tw-tbl" data-line-start="0" data-line-end="2">'), "表格起止不变");
-  assert.ok(h.includes('<tr data-line-start="2" data-line-end="2">'), "数据行子锚不变");
-  // 非表格语境不受影响：段落里的 <br> 仍走原路径（行内转义）
-  const p = mdToHtml("段落 <br> 换行");
-  assert.ok(p.includes("&lt;br&gt;"), "段落单元格外的 <br> 保持转义");
+  assert.ok(h.includes("<td>c<br>d</td>"), "<BR/> 归一为 <br>");
+  assert.ok(h.includes("<td>e<br>f</td>"), "<br /> 归一为 <br>");
+  // 行内 HTML 白名单：ALLOW 标签真渲染；script 不在名单 → tag-filter 转义可见（比删除不易丢内容）
+  assert.ok(h.includes("<b>粗</b>"), "b 标签渲染");
+  assert.ok(h.includes("&lt;script&gt;") && !h.includes("<script>"), "script 转义为文本");
+  // 段落语境同口径：行内 <br>/<kbd> 放行，未知/危险标签转义
+  const p2 = mdToHtml("段落 <br>换行 与 <kbd>Ctrl</kbd>、<blink>x</blink>");
+  assert.ok(p2.includes("段落 <br>换行"), "段内 <br> 放行");
+  assert.ok(p2.includes("<kbd>Ctrl</kbd>"), "段内 kbd 放行");
+  assert.ok(p2.includes("&lt;blink&gt;x&lt;/blink&gt;"), "未知标签转义可见");
 });
 
 test("表格：转义 \\| 作为字面量不分列", () => {
@@ -160,7 +274,7 @@ test("表格：转义 \\| 作为字面量不分列", () => {
   const body = h.slice(h.indexOf("<tbody>"));
   assert.equal((body.match(/<td>/g) ?? []).length, 2, "应恰好 2 列：" + body);
   assert.ok(body.includes("x | y"), "转义还原为字面 |：" + body);
-});
+})
 
 test("GFM emoji：点名符号与别名替换", () => {
   const h = mdToHtml(":rocket: :thumbsup: :star: :warning: :white_check_mark: :+1: :-1: :bug:");
@@ -235,13 +349,17 @@ test("CON-01 边界：\"- [ ]x\"（]) 后无空格）也算任务——Rust task
   assert.equal((h.match(/data-task/g) ?? []).length, 2, h);
 });
 
-test("CON-02：引用块/提示块标题不占 data-sec、id 不重复；缩进标题与裸 # 按 Rust 口径计数", () => {
+test("CON-02：引用块/提示块标题不占 data-sec、id 不重复；≥4 列缩进 ATX 归缩进代码（第二档），裸 # 照常占号", () => {
   const h = mdToHtml("# Top\n\n> # Quoted\n\n## Sub\n\n> [!NOTE]\n> # InCallout\n\n    # Indented\n\n#\n");
   assert.equal((h.match(/id="sec-1"/g) ?? []).length, 1, "不得有重复 id");
-  assert.equal((h.match(/data-sec=/g) ?? []).length, 4, "Top/Sub/Indented/裸# 四个锚点：" + h);
-  assert.ok(h.includes('data-sec="3"') && h.includes('data-sec="4"'), "缩进与空标题占号（与 headings() 一致）");
+  assert.equal((h.match(/data-sec=/g) ?? []).length, 3, "Top/Sub/裸# 三个锚点——Indented 变缩进代码：" + h);
+  assert.ok(h.includes('<code class="language-text"># Indented</code>'), "4 列缩进 ATX=缩进代码（Rust line_kinds 记 Code，Quote 行在前）");
+  assert.ok(h.includes('data-sec="3"'), "裸 # 仍占号（与 headings() 一致）");
   assert.ok(h.includes('<h1 data-line-start="2" data-line-end="2">Quoted</h1>'), "引用块标题渲染但无锚点（行锚按 baseLine 记绝对行）");
   assert.ok(h.includes('<h1 data-line-start="7" data-line-end="7">InCallout</h1>'), "提示块标题同理");
+  // 2 列缩进（<4 列）仍是标题——Rust headings_accept_indent_and_bare_hash_reject_quote_prefix 镜像
+  const two = mdToHtml("# Top\n\n  # Indented2\n\n#\n");
+  assert.equal((two.match(/data-sec=/g) ?? []).length, 3, "≤3 列缩进 ATX 照常计标题");
 });
 
 /* ══════ 滚动同步 v1.2：块锚 data-line-start/end 记账回归 ══════ */
@@ -253,7 +371,7 @@ test("块锚：标题行号与源行一致；段/围栏/表格/列表各记起�
   assert.ok(h.includes('<div class="codeblock" data-line-start="5" data-line-end="7">'), "围栏整体含界行");
   assert.ok(h.includes('<pre data-line-start="6" data-line-end="6">'), "pre 子锚只含内容行");
   assert.ok(h.includes('<div class="tw-tbl" data-line-start="9" data-line-end="11">'), "表格起止");
-  assert.ok(/<li data-line-start="13" data-line-end="13">\n甲\n<\/li>/.test(h), "li 逐项行锚（三段式输出）");
+  assert.ok(/<li data-line-start="13" data-line-end="13">甲<\/li>/.test(h), "li 逐项行锚（第三档起容器内连续拼接，行锚属性不依赖换行）");
   assert.ok(/<ul data-line-start="13" data-line-end="14">/.test(h), "ul 容器回填起止");
 });
 

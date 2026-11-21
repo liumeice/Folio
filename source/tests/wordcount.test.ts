@@ -31,3 +31,8 @@ test("码点计数：emoji 算 1（UTF-16 length 陷阱，对齐 Rust chars()）
   assert.equal(countWords("😀"), 1);
   assert.equal(countWords("😀😀 文字"), 4);
 });
+
+test("第二档：~~~ 围栏同跳、变长配对（与 Rust stats 同值）", () => {
+  assert.equal(countWords("~~~mermaid\ngraph TD\nA-->B\n~~~\n"), 0, "~~~mermaid 整块剔除");
+  assert.equal(countWords("~~~\nx\n~~~~\n"), 8, "~~~ 被更长的 ~~~~ 关闭：3+1+4 全计");
+});

@@ -4,13 +4,15 @@
  * 与 Rust folio-core::markdown::stats 的 word_count 逐行同规则（权威=两侧各自的钉桩测试，
  * fixture 数值必须一致：tests/wordcount.test.ts ↔ markdown.rs::tests）。 */
 
-const FENCE_RE = /^\s*```/;
+import { fenceClose, fenceInfo, fenceOpen, splitSrcLines, type Fence } from "./md.ts";
+
 const MATH_FENCE_RE = /^\s*\$\$\s*$/;
 
-/** 围栏语言是否"非正文块"（math/mermaid，大小写不敏感；``` 裸关闭返回 false） */
+/** 围栏语言是否"非正文块"（math/mermaid，大小写不敏感；info 取首词，裸关闭返回 false；
+ *  与 Rust markdown.rs is_skipped_fence/fence_info 同口径——2026-11-21 第二档） */
 function isSkippedFence(line: string): boolean {
-  const body = line.trim().slice(3).trim().toLowerCase();
-  return body === "math" || body === "mermaid";
+  const w = fenceInfo(line).toLowerCase();
+  return w === "math" || w === "mermaid";
 }
 
 /* 性能审查 v3.0 P1-2：字数在首屏被算两遍——Reader.tsx 的 .sub 行与 SidePanels 状态栏都调
@@ -29,26 +31,29 @@ export function countWords(src: string): number {
 }
 
 function countWordsRaw(src: string): number {
-  const lines = src.replace(/\r\n/g, "\n").split("\n");
+  const lines = splitSrcLines(src); // P2：裸 CR/NUL 输入预处理与 md.ts、Rust normalize() 同源
   const kept: string[] = [];
-  let inCode = false;
+  let fence: Fence | null = null;
   let codeSkipped = false;
   let inMath = false;
   for (const ln of lines) {
-    if (!inCode && !inMath && FENCE_RE.test(ln)) { // ``` 开栏：判定跳过与否
-      inCode = true;
-      codeSkipped = isSkippedFence(ln);
-      if (!codeSkipped) kept.push(ln); // 普通代码块的围栏标记照旧计入
-      continue;
-    }
-    if (inCode) {
-      if (FENCE_RE.test(ln)) { // 闭栏（与 Rust is_fence 同判定）
-        inCode = false;
+    if (fence) {
+      if (fenceClose(ln, fence)) { // 闭栏：同字符且长度 ≥ 开栏（↔ Rust prose_chars，2026-11-21 第二档配对）
+        fence = null;
         if (!codeSkipped) kept.push(ln);
       } else if (!codeSkipped) {
         kept.push(ln);
       }
       continue;
+    }
+    if (!inMath) {
+      const fo = fenceOpen(ln); // 开栏（``` 与 ~~~）：判定跳过与否
+      if (fo) {
+        fence = fo;
+        codeSkipped = isSkippedFence(ln);
+        if (!codeSkipped) kept.push(ln); // 普通代码块的围栏标记照旧计入
+        continue;
+      }
     }
     if (MATH_FENCE_RE.test(ln)) { inMath = !inMath; continue; } // $$ 开/闭界行本身不计（必须 toggle！漏关会吞掉全文）
     if (inMath) continue;

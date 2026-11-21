@@ -7,7 +7,7 @@ import type {
 } from "./types";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { RANGE, clampNum } from "./typography";
-import { headingMatch, isFenceLine } from "./md";
+import { flipTaskInSrc, headingsOfSrc } from "./md";
 import { countWords } from "./wordcount";
 
 /** 「此电脑」虚拟节点的路径哨兵（与 folio-fs::MY_PC 一致） */
@@ -425,22 +425,10 @@ interface MockDoc {
 }
 const LS_KEY = "folio-browser-mock";
 
-/* CON-07：mock 与正式版共用同一判定函数（围栏/标题），杜绝「演示环境大纲与 Rust 不一致」。 */
+/* CON-07：mock 与正式版共用同一判定函数（第二档起 = md.ts 的 nextKind 状态机 + Setext，
+ * headingsOfSrc 是 Rust headings() 的整体镜像），杜绝「演示环境大纲与 Rust 不一致」。 */
 function headingsOf(src: string) {
-  const out: { sec: number; level: number; text: string; line: number }[] = [];
-  const lines = src.replace(/\r\n/g, "\n").split("\n");
-  let inFence = false;
-  lines.forEach((raw, line) => {
-    if (isFenceLine(raw)) {
-      inFence = !inFence;
-      return;
-    }
-    if (inFence) return;
-    const m = headingMatch(raw);
-    if (!m) return;
-    out.push({ sec: out.length + 1, level: m.level, text: m.text, line });
-  });
-  return out;
+  return headingsOfSrc(src);
 }
 
 function statsOf(src: string) {
@@ -604,24 +592,10 @@ const mock = {
     const docs = this.docs();
     const d = docs.find((x) => x.path === p);
     if (!d) throw new Error("not found: " + p);
-    let seen = 0;
-    let inFence = false;
-    const rows = d.src.split("\n");
-    for (let i = 0; i < rows.length; i++) {
-      if (isFenceLine(rows[i])) {
-        inFence = !inFence;
-        continue;
-      }
-      if (inFence) continue;
-      const m = rows[i].match(/^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]/);
-      if (!m) continue;
-      if (seen === nth) {
-        rows[i] = m[1] + "[" + (m[2].trim() === "" ? "x" : " ") + "]" + rows[i].slice(m[0].length);
-        break;
-      }
-      seen++;
-    }
-    d.src = rows.join("\n");
+    // 第二档：mock 直接走 flipTaskInSrc（Rust toggle_task 的 TS 权威镜像）——
+    // 配对围栏 / 缩进代码 / 懒延续里的假任务与正式版同一套出局规则。
+    const flipped = flipTaskInSrc(d.src, nth);
+    if (flipped !== null) d.src = flipped;
     this.persist(docs);
     return toFull(d);
   },

@@ -1,7 +1,8 @@
 //! Markdown 源码保守格式化器（《Folio 源码自动格式化方案》v1.0 §3，2026-11-18）。
 //!
 //! 契约（与 markdown.rs / md.ts 同一坐标系）：
-//! - 围栏只认 ```（`~~~` 不算），直接复用 `markdown::is_fence`；
+//! - 围栏认 ``` 与 ~~~（GFM 4.5，2026-11-21 第二档），开启/闭合复用 `markdown::fence_open/fence_close`
+//!   （同字符、闭不短于开）；
 //! - 围栏、缩进代码块（4 空格 / Tab 起头）、HTML 块、`$$` 数学块、frontmatter 内部逐字节保留；
 //! - 只改结构空白与标记，不重排段落 / 不折行 / 不动链接图片 / 不重排表格列宽；
 //! - 幂等：`format(format(x)) == format(x)`。
@@ -11,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::markdown::is_fence;
+use crate::markdown::{fence_close, fence_open};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -487,9 +488,17 @@ fn is_table_delim(line: &str) -> bool {
 }
 
 /// 开围栏行的语言名转小写（只动第一个词；meta 与缩进原样保留）。
+/// 开启行规范化：info 首词小写（Js → js），标记长度/缩进原样保留。
+/// 2026-11-21 第二档：` 与 ~ 两类标记都支持（首字节决定字符）。
 fn normalize_fence_open(line: &str) -> String {
     let (ind, rest) = split_indent(line);
-    let ticks = rest.bytes().take_while(|b| *b == b'`').count();
+    let marker = rest.as_bytes().first().copied();
+    let is_tick = matches!(marker, Some(b'`') | Some(b'~'));
+    let ticks = if is_tick {
+        rest.bytes().take_while(|b| *b == marker.unwrap()).count()
+    } else {
+        0
+    };
     if ticks < 3 {
         return line.to_string();
     }
@@ -608,8 +617,9 @@ pub fn format_markdown(src: &str, opt: &FormatOptions) -> FormatResult {
     let mut in_html = false;
     // 缩进代码块（评审 P1-1）：4 空格 / Tab 起头的内容逐字节保留，直到出现非缩进行
     let mut in_indented = false;
-    // 当前围栏的开围栏缩进与反引号长度（评审 P1-2：补闭合时必须同长同缩进）
+    // 当前围栏的开围栏缩进、标记字符与长度（评审 P1-2 + 2026-11-21 第二档：` 与 ~ 两类，补闭合同字符同长）
     let mut fence_indent = String::new();
+    let mut fence_char = '`';
     let mut fence_ticks = 3usize;
     let mut blank_run = 0usize;
 
@@ -635,10 +645,10 @@ pub fn format_markdown(src: &str, opt: &FormatOptions) -> FormatResult {
             in_indented = false; // 缩进结束，本行回到常规流程
         }
 
-        // 围栏内部：逐字节保留，只认闭合围栏
+        // 围栏内部：逐字节保留，只认同字符且不短于开栏的闭合围栏
         if in_fence {
             out.push(raw.to_string());
-            if is_fence(raw) {
+            if fence_close(raw, (fence_char, fence_ticks)) {
                 in_fence = false;
             }
             i += 1;
@@ -676,10 +686,11 @@ pub fn format_markdown(src: &str, opt: &FormatOptions) -> FormatResult {
             continue;
         }
 
-        if is_fence(raw) {
-            let (fi, frest) = split_indent(raw);
+        if let Some((c, n)) = fence_open(raw) {
+            let (fi, _) = split_indent(raw);
             fence_indent = raw[..fi].to_string();
-            fence_ticks = frest.bytes().take_while(|b| *b == b'`').count().max(3);
+            fence_char = c;
+            fence_ticks = n;
             out.push(if opt.normalize_fences {
                 normalize_fence_open(raw)
             } else {
@@ -744,9 +755,9 @@ pub fn format_markdown(src: &str, opt: &FormatOptions) -> FormatResult {
     }
 
     if in_fence && opt.normalize_fences {
-        // 同缩进 + 同长度反引号：CommonMark 要求闭合围栏不短于开启围栏，
+        // 同缩进 + 同字符 + 同长度：CommonMark 要求闭合围栏不短于开启围栏，
         // 否则标准渲染器不会把这里当闭合（评审 P1-2）
-        out.push(format!("{}{}", fence_indent, "`".repeat(fence_ticks)));
+        out.push(format!("{}{}", fence_indent, fence_char.to_string().repeat(fence_ticks)));
         warnings.push("已补全未闭合的代码围栏".to_string());
     }
 

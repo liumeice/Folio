@@ -18,12 +18,14 @@ test("README 式徽章块原样生效：p/img/a/align 保留，块在空行处�
   assert.ok(!h.includes("&lt;p"), "不再以字面文本显示 HTML");
 });
 
-test("安全：script/style/iframe/object 整枝删除（内容也消失）", () => {
+test("安全：tagfilter 语义（第三档翻转）——行首独占的危险标签转义可见；块标签表内仍整枝删除", () => {
   const h = mdToHtml("<script>alert(1)</script>\n\n<style>body{background:url(evil)}</style>\n\n<iframe src=\"https://evil/x\"></iframe><object data=\"y\"></object>");
-  assert.ok(!h.includes("<script"), "script 标签消失");
-  assert.ok(!h.includes("alert(1)"), "脚本内容也被带走");
-  assert.ok(!h.includes("<style") && !h.includes("background:url"), "style 消失");
-  assert.ok(!h.includes("<iframe") && !h.includes("<object"), "外联容器消失");
+  assert.ok(!h.includes("<script"), "script 标签本体绝不注入");
+  assert.ok(h.includes("&lt;script&gt;") && h.includes("alert(1)"), "转义可见、内容不静默丢（GFM tagfilter / audit 6.11-a）：" + h.slice(0, 120));
+  assert.ok(!h.includes("<style") && h.includes("&lt;style&gt;"), "style 同理转义可见");
+  assert.ok(!h.includes("<iframe") && !h.includes("<object"), "iframe/object 属类型 6 块标签表：整枝删除维持");
+  const inj = mdToHtml("<div>\n<script>alert(2)</script>\n</div>");
+  assert.ok(!inj.includes("alert(2)"), "块净化路径（DOMParser）删除分支不受影响");
 });
 
 test("安全：on* 事件属性与 javascript: / 混淆 URL 一律剥掉", () => {
@@ -37,6 +39,28 @@ test("安全：form/input/base/link/meta 禁用；未知标签拆壳保文字", 
   const h = mdToHtml("<form action=\"https://evil/c\"><input name=x></form>\n\n<base href=\"https://evil/\">\n\n<font color=red>保留我</font>");
   assert.ok(!h.includes("<form") && !h.includes("<input") && !h.includes("<base"), "表单/劫持面消失：" + h);
   assert.ok(h.includes("保留我") && !h.includes("<font"), "未知标签拆壳保内容");
+});
+
+test("第三档·HTML 块终止模式（CC 类型 1/2/3/5）：DOCTYPE 直出、注释跨空行、pre 吃到闭标签", () => {
+  const dt = mdToHtml("<!DOCTYPE html>");
+  assert.ok(dt.includes("<!DOCTYPE html>"), "DOCTYPE 声明原文保留：" + dt.slice(0, 80));
+  const cmt = mdToHtml("<!--\n\ncomment\n-->");
+  assert.ok(!cmt.includes("<p") && /<!--[\s\S]*comment[\s\S]*-->/.test(cmt), "注释块跨空行不断：" + cmt.slice(0, 80));
+  const pre = mdToHtml("<pre>\nline1\n\nline2\n</pre>\n\n正文");
+  assert.ok(pre.includes("<pre>") && pre.includes("line2") && pre.includes("正文"), "pre 类型1吃到 </pre>：");
+  // 类型 6 仍以空行收块（README 徽章块不回归）：空行后的内容跳出块
+  const div = mdToHtml("<div>\na\n\nb\n</div>");
+  assert.ok(div.includes("<div>") && div.includes("a"), "div 开块");
+  assert.ok(/<p[^>]*>b<\/p>/.test(div), "空行后 b 成为独立段落（类型 6 空行收块）：" + div);
+});
+
+test("第三档·HTML 块起始白名单（真 DOM 侧结构断言）：类型 6/7 才开块，行首行内标签归段落", () => {
+  const dt = mdToHtml("<details>\n<summary>x</summary>\n*不强调*\n</details>");
+  assert.ok(dt.includes("<details>") && dt.includes("<summary>x</summary>") && !dt.includes("<em>不强调</em>"), dt.slice(0, 120));
+  const sp = mdToHtml("<span>hi</span>\n**bold**");
+  assert.ok(sp.includes("<p") && sp.includes("<span>hi</span>") && sp.includes("<strong>bold</strong>"), "audit 4.6-c 场景：" + sp.slice(0, 120));
+  const div = mdToHtml("<div>\n*hi*\n</div>");
+  assert.ok(div.includes("<div>") && !div.includes("<em>hi</em>"), "div 块语义维持");
 });
 
 test("无害标签保结构：details/summary/table/align 等", () => {
@@ -53,9 +77,14 @@ test("坐标不变量：HTML 块内的 \"# \" 行仍占 data-sec（Rust 不认 h
   assert.ok(h.includes("# 潜伏标题"), "块内文本原样在净化输出里");
 });
 
-test("已知边界：段落中部的行内 HTML 仍按字面显示（仅块级起头才走内嵌）", () => {
-  const h = mdToHtml("文本 <b>粗</b> 尾");
-  assert.ok(h.includes("&lt;b&gt;"), "非块起头不内嵌（与 GitHub 差异已在报告披露）：" + h);
+test("行内 HTML 已放行（GFM 6.10，2026-11-21 P0）：ALLOW 标签渲染、未知/危险标签转义", () => {
+  const h = mdToHtml("文本 <b>粗</b>、<kbd>K</kbd>、<blink>x</blink>、<script>y</script> 尾");
+  assert.ok(h.includes("<b>粗</b>") && h.includes("<kbd>K</kbd>"), "白名单标签渲染：" + h);
+  assert.ok(h.includes("&lt;blink&gt;x&lt;/blink&gt;"), "未知标签转义为可见文本");
+  assert.ok(h.includes("&lt;script&gt;") && !h.includes("<script>y</script>"), "危险标签转义（不执行也不静默丢）");
+  const x = mdToHtml('<a href="javascript:alert(1)" onclick="bad()">t</a> 与 <img src=x onerror=alert(2)>');
+  assert.ok(!x.includes("javascript:") && !x.includes("onclick") && !x.includes("onerror"), "行内属性净化：scheme/on* 全剥");
+  assert.ok(x.includes("<a>t</a>"), "a 保结构去危险属性");
 });
 
 test("连续图片横向排列（需求补充）：纯图片段= imgrow；混文本段/单图不受牵连", () => {
