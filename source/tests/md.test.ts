@@ -122,6 +122,39 @@ test("表格：代码段内的 | 不分列（用户样例）", () => {
   assert.ok(h.includes("<td>处理管道内容</td>"), "中间列不错位");
 });
 
+test("表格对齐：分隔行冒号标记落到 th/td 的 inline text-align（2026-11-21 需求）", () => {
+  const h = mdToHtml("| 中 | 右 | 左 | 默认 |\n| :---: | ---: | :--- | --- |\n| a | b | c | d |\n| e | f | g | h |");
+  // 表头与数据行都带同款对齐样式；无冒号列不输出 style
+  assert.ok(h.includes('<th style="text-align:center">中</th>'), "表头居中：" + h.slice(0, 160));
+  assert.ok(h.includes('<th style="text-align:right">右</th>'), "表头右");
+  assert.ok(h.includes("<th>默认</th>"), "默认列不带样式");
+  assert.ok(h.includes('<td style="text-align:center">a</td>') && h.includes('<td style="text-align:center">e</td>'), "数据行居中（两行都生效）");
+  assert.ok(h.includes('<td style="text-align:right">b</td>'), "数据行右");
+  assert.ok(h.includes("<td>d</td>"), "数据行默认列无样式");
+  // 行溢出列数：数据行比表头多出的单元不越界取对齐（undefined→无样式）
+  const o = mdToHtml("| a | b |\n| :-: | :-: |\n| 1 | 2 | 3 |");
+  assert.ok(o.includes("<td>3</td>"), "溢出列沿用默认");
+  // 坐标记账不受影响
+  assert.ok(h.includes('data-line-start="2" data-line-end="2"'), "首数据行子锚不变");
+});
+
+test("表格单元格：<br> 系放行作格内换行，其余 HTML 仍转义（2026-11-21 口径）", () => {
+  const h = mdToHtml("| 表头一<br>二 | 甲 |\n| - | - |\n| a<br>b | c<BR/>d | e<br />f | <b>粗</b> <script>x</script> |");
+  // 表头与正文单元都放行四种写法：<br> <BR/> <br />（大小写/自闭合/带空格）
+  assert.ok(h.includes("<th>表头一<br>二</th>"), "表头 <br>：" + h.slice(0, 120));
+  assert.ok(h.includes("<td>a<br>b</td>"), "正文 <br>");
+  assert.ok(h.includes("<td>c<br>d</td>"), "<BR/> 与 <br /> 归一为 <br>");
+  // 净化面不扩大：其余标签照旧转义
+  assert.ok(h.includes("&lt;b&gt;粗&lt;/b&gt;"), "<b> 仍转义");
+  assert.ok(h.includes("&lt;script&gt;"), "script 仍转义");
+  // 坐标记账不动：表头/数据行的 tr 子锚照旧
+  assert.ok(h.includes('<div class="tw-tbl" data-line-start="0" data-line-end="2">'), "表格起止不变");
+  assert.ok(h.includes('<tr data-line-start="2" data-line-end="2">'), "数据行子锚不变");
+  // 非表格语境不受影响：段落里的 <br> 仍走原路径（行内转义）
+  const p = mdToHtml("段落 <br> 换行");
+  assert.ok(p.includes("&lt;br&gt;"), "段落单元格外的 <br> 保持转义");
+});
+
 test("表格：转义 \\| 作为字面量不分列", () => {
   const h = mdToHtml("| a | b |\n| - | - |\n| x \\| y | z |");
   const body = h.slice(h.indexOf("<tbody>"));

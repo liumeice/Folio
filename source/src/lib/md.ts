@@ -296,6 +296,19 @@ export function renderInline(src: string, defs: Defs): string {
 /* ══════════════ 块层 ══════════════ */
 
 /** 表格分列：代码段内的 |、反斜杠转义 \| 都不算分隔符（GFM 语义） */
+/** 表格分隔行单元 → GFM 对齐（:---=left，---:=right，:---:=center，无冒号=默认不输出）。
+ *  非对齐单元（空/异常形态）返回 ""，单元格不带样式（2026-11-21 需求：| :---: | 生效）。 */
+function cellAlign(raw: string): string {
+  const s = raw.trim();
+  if (!/^:?-+:?$/.test(s)) return "";
+  const left = s.startsWith(":");
+  const right = s.endsWith(":");
+  if (left && right) return "center";
+  if (right) return "right";
+  if (left) return "left";
+  return "";
+}
+
 function splitRow(s: string): string[] {
   const cells: string[] = [];
   let cur = "";
@@ -700,19 +713,29 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       closeListsHere();
       const t0 = i;
       const header = splitRow(line);
+      // GFM 对齐（需求方 2026-11-21：|:---:| 居中要生效）：分隔行 `:---`=左、`---:`=右、`:---:`=中。
+      // 输出走单元格的 inline style——作者 CSS `.prose thead th{text-align:left}` 会盖掉 align 属性的
+      // 呈现性提示，只有 inline 样式能赢；无冒号列不输出样式（保持默认左对齐）。列数超出对齐表时不越界。
+      const aligns = splitRow(lines[i + 1]).map(cellAlign);
+      const al = (k: number) => (aligns[k] ? ` style="text-align:${aligns[k]}"` : "");
       i += 2;
       const rows: string[][] = [];
       while (i < lines.length && /\|/.test(lines[i]) && !/^\s*$/.test(lines[i])) {
         rows.push(splitRow(lines[i]));
         i++;
       }
+      // 单元格行内渲染（需求方 2026-11-21，GFM 单元格口径）：放行 <br>/<br/>/<br /> 作格内换行——
+      // 做法是把 inline() 转义后的字面形态还原成真标签，其余 HTML（<b>/<script>…）维持全转义，
+      // 净化面不扩大。源文本行号/坐标记账零影响（单元格不换源行）。渲染单源在 md.ts，
+      // Rust markdown.rs 不产出显示 HTML，无对侧改动；tests/md.test.ts 有钉桩。
+      const cell = (s: string) => inline(s).replace(/&lt;br(\s*\/?)&gt;/gi, "<br>");
       // 表体行与源行逐行 1:1（表头 t0、分隔行 t0+1、第 k 数据行 t0+2+k）；tr 子锚（方案 §4.1(a)）
       let t = `<div class="tw-tbl"${LA(t0, Math.max(t0 + 1 + rows.length, t0))}><table><thead><tr${LA(t0, t0)}>`;
-      header.forEach((c) => (t += "<th>" + inline(c) + "</th>"));
+      header.forEach((c, k) => (t += "<th" + al(k) + ">" + cell(c) + "</th>"));
       t += "</tr></thead><tbody>";
       rows.forEach((r, k) => {
         t += `<tr${LA(t0 + 2 + k, t0 + 2 + k)}>`;
-        r.forEach((c) => (t += "<td>" + inline(c) + "</td>"));
+        r.forEach((c, j) => (t += "<td" + al(j) + ">" + cell(c) + "</td>"));
         t += "</tr>";
       });
       t += "</tbody></table></div>";
