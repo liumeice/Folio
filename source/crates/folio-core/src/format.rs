@@ -3,7 +3,13 @@
 //! 契约（与 markdown.rs / md.ts 同一坐标系）：
 //! - 围栏认 ``` 与 ~~~（GFM 4.5，2026-11-21 第二档），开启/闭合复用 `markdown::fence_open/fence_close`
 //!   （同字符、闭不短于开）；
+//! - HTML 块按 CommonMark 4.6 七类分终止模式，起始/终止判定逐条镜像 `md.ts::isHtmlBlockStart`
+//!   与块终止状态机（完善性检查 2026-11-22 §2/§6）：注释吃到 `-->`、声明吃到 `>`、
+//!   script/pre/style/textarea 吃到同名闭标签（以上空行不算界）、类型 6/7 才吃空行；
+//! - 表格体在块级结构起点终止（↔ `md.ts::TABLE_STOP`），且表头/分隔行列数须一致（§3）；
+//! - frontmatter 判定复用 `markdown::front_matter_end`（与解析器同一实现，§4）；
 //! - 围栏、缩进代码块（4 空格 / Tab 起头）、HTML 块、`$$` 数学块、frontmatter 内部逐字节保留；
+//! - 只处理顶层结构：引用标记后、列表项内容等容器内部保持原样（§5，递归化为中期项）；
 //! - 只改结构空白与标记，不重排段落 / 不折行 / 不动链接图片 / 不重排表格列宽；
 //! - 幂等：`format(format(x)) == format(x)`。
 //!
@@ -12,7 +18,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::markdown::{fence_close, fence_open};
+use crate::markdown::{fence_close, fence_open, front_matter_end};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -103,32 +109,125 @@ fn is_math_fence(line: &str) -> bool {
     line.trim() == "$$"
 }
 
-/// 与 md.ts::HTML_BLOCK_RE 近似：≤3 空格缩进的 `<!--` 或 `<tag…` / `</tag>`。
-/// 块内不格式化（保守；Rust 侧大纲口径与 HTML 无关，跳过不会造成坐标错位）。
-fn is_html_block_start(line: &str) -> bool {
+/// CommonMark 4.6 类型 6 块标签表（↔ md.ts HTML_BLOCK_TAGS，规范原单、含已废弃项保持同集合）。
+fn is_block_tag(name_lower: &str) -> bool {
+    matches!(
+        name_lower,
+        "address" | "article" | "aside" | "base" | "basefont" | "blockquote" | "body" | "caption"
+            | "center" | "col" | "colgroup" | "dd" | "details" | "dialog" | "dir" | "div" | "dl"
+            | "dt" | "fieldset" | "figcaption" | "figure" | "footer" | "form" | "frame"
+            | "frameset" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "head" | "header" | "hr"
+            | "html" | "iframe" | "legend" | "li" | "link" | "main" | "menu" | "menuitem" | "nav"
+            | "noframes" | "ol" | "optgroup" | "option" | "p" | "param" | "search" | "section"
+            | "summary" | "table" | "tbody" | "td" | "tfoot" | "th" | "thead" | "title" | "tr"
+            | "track" | "ul"
+    )
+}
+
+/// 类型 7 判定（↔ md.ts `/^ {0,3}<\/?[A-Za-z][A-Za-z0-9-]*(?:[\s/][^<>]*)?>$/`）：
+/// 完整单标签独占整行。`rest` 已去掉 ≤3 个前导空格且以 `<` 开头。
+/// 刻意不复刻 JS `\s` 的 NBSP 角落：属性区首字符只认 ASCII 空白与 `/`。
+fn is_type7_line(rest: &str) -> bool {
+    let rb = rest.as_bytes();
+    let mut p = 1usize; // 跳过 '<'
+    if p < rb.len() && rb[p] == b'/' {
+        p += 1;
+    }
+    if p >= rb.len() || !rb[p].is_ascii_alphabetic() {
+        return false;
+    }
+    while p < rb.len() && (rb[p].is_ascii_alphanumeric() || rb[p] == b'-') {
+        p += 1;
+    }
+    if p >= rb.len() {
+        return false; // 标签名后直接行尾，没有 '>'
+    }
+    if rb[p] == b'>' {
+        return p + 1 == rb.len();
+    }
+    if rb[p] != b'/' && !rb[p].is_ascii_whitespace() {
+        return false;
+    }
+    rb[rb.len() - 1] == b'>' && rb[p..rb.len() - 1].iter().all(|c| *c != b'<' && *c != b'>')
+}
+
+/// HTML 块的终止模式（↔ md.ts 块终止状态机；完善性检查 2026-11-22 §2）。
+/// 旧实现统一「第一个空行结束」，导致 script / 注释等块跨空行时块内 Markdown-looking 行被改坏。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HtmlEnd {
+    /// 类型 2 注释 `<!--`：吃到含 `-->` 的行，空行不算界
+    Comment,
+    /// 类型 3/5 声明与处理指令（`<!` / `<?`，含 `<![CDATA[`）：吃到含 `>` 的行
+    Decl,
+    /// 类型 1 script / pre / style / textarea：吃到含同名 `</tag>` 的行（存小写名）
+    Type1(String),
+    /// 类型 6 块标签表 / 类型 7 完整单标签行：吃到空行（空行本身不算块内容）
+    Blank,
+}
+
+/// 本行是否终止该 HTML 块（↔ md.ts done 判定，含起始行自身即可收口的场景）。
+fn html_done(mode: &HtmlEnd, line: &str) -> bool {
+    match mode {
+        HtmlEnd::Comment => line.contains("-->"),
+        HtmlEnd::Decl => line.contains('>'),
+        HtmlEnd::Type1(t) => contains_ci(line, &format!("</{t}>")),
+        HtmlEnd::Blank => line.trim().is_empty(),
+    }
+}
+
+/// ASCII 大小写不敏感的子串判定（↔ JS `/…/i.test`）。
+fn contains_ci(hay: &str, needle: &str) -> bool {
+    let (hb, nb) = (hay.as_bytes(), needle.as_bytes());
+    hb.len() >= nb.len()
+        && hb.windows(nb.len())
+            .any(|w| w.iter().zip(nb).all(|(a, b)| a.eq_ignore_ascii_case(b)))
+}
+
+/// HTML 块起始判定 + 终止模式（↔ md.ts::isHtmlBlockStart 同判定表；完善性检查 §2/§6）。
+/// 缩进至多 3 个空格（Tab 不算，同 md.ts 正则的 `^ {0,3}`）；
+/// `<span>hi</span>` 这类「带内容的行内标签行」不再开块——它按普通行走后续规则。
+fn html_block_start(line: &str) -> Option<HtmlEnd> {
     let b = line.as_bytes();
-    let mut i = 0;
-    while i < b.len() && i < 4 && b[i] == b' ' {
-        i += 1;
+    let mut k = 0usize;
+    while k < b.len() && k < 3 && b[k] == b' ' {
+        k += 1;
     }
-    if i > 3 || i >= b.len() || b[i] != b'<' {
-        return false;
+    let rb = &b[k..];
+    if rb.len() < 2 || rb[0] != b'<' {
+        return None;
     }
-    if line[i..].starts_with("<!--") {
-        return true;
+    if rb[1] == b'!' {
+        return Some(if rb.starts_with(b"<!--") { HtmlEnd::Comment } else { HtmlEnd::Decl });
     }
-    let mut j = i + 1;
-    if j < b.len() && b[j] == b'/' {
-        j += 1;
+    if rb[1] == b'?' {
+        return Some(HtmlEnd::Decl);
     }
-    if j >= b.len() || !b[j].is_ascii_alphabetic() {
-        return false;
+    let rest = &line[k..];
+    let opening = rb[1] != b'/'; // 类型 1 只认开标签（↔ md.ts `<(script|…)` 不带 `/?`）
+    let mut p = if opening { 1 } else { 2 };
+    if p >= rb.len() || !rb[p].is_ascii_alphabetic() {
+        return None;
     }
-    j += 1;
-    while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'-') {
-        j += 1;
+    let name0 = p;
+    while p < rb.len() && (rb[p].is_ascii_alphanumeric() || rb[p] == b'-') {
+        p += 1;
     }
-    j >= b.len() || matches!(b[j], b' ' | b'\t' | b'/' | b'>' | b'\n' | b'\r')
+    if p >= rb.len() {
+        return None; // ↔ md.ts：标签名后即行尾时 `/^[>/\s]/.test("")` 为 false
+    }
+    let after = rest[p..].chars().next()?;
+    if !(after == '>' || after == '/' || after.is_whitespace()) {
+        return None;
+    }
+    // p.. 起点为 ASCII 标签名边界，name0/p 字节切片安全
+    let name = rest[name0..p].to_ascii_lowercase();
+    if opening && matches!(name.as_str(), "script" | "pre" | "style" | "textarea") {
+        return Some(HtmlEnd::Type1(name));
+    }
+    if is_block_tag(&name) || is_type7_line(rest) {
+        return Some(HtmlEnd::Blank);
+    }
+    None
 }
 
 /// 主题分隔线（`---` / `***` / `___`）：不是列表标记，不补空格。
@@ -159,27 +258,9 @@ fn is_thematic_break(s: &str) -> bool {
     count >= 3
 }
 
-/// 若首行是 frontmatter 的 `---`，返回闭合界行下标。
-/// 收紧判定（评审 P3-5）：块内必须至少有一行像 YAML 键值对（非空、非注释、含 `:`），
-/// 且闭合界行须在前 100 行内——避免把「主题分隔线 → 正文 → 主题分隔线」误当 frontmatter
-/// 整块冻结（那会悄悄跳过正文格式化）。找不到可信闭合就按普通主题分隔线处理。
-fn frontmatter_end(rows: &[&str]) -> Option<usize> {
-    if !rows.first().map(|r| r.trim() == "---").unwrap_or(false) {
-        return None;
-    }
-    let limit = rows.len().min(100);
-    for i in 1..limit {
-        let t = rows[i].trim();
-        if t == "---" || t == "..." {
-            let looks_yaml = rows[1..i].iter().any(|r| {
-                let s = r.trim_start();
-                !s.is_empty() && !s.starts_with('#') && s.contains(':')
-            });
-            return if looks_yaml { Some(i) } else { None };
-        }
-    }
-    None
-}
+// frontmatter 判定不再自带一套近似规则（完善性检查 2026-11-22 §4）：
+// 直接复用 `markdown::front_matter_end`——与大纲/行种类状态机、md.ts::frontMatterEnd 同一判据
+// （首行 trim_end 恰 `---`；body 去空行后全部像 YAML 键值/序列/注释/引号行；无行数上限）。
 
 /// ATX 标题：`##标题` → `## 标题`。只补一个空格，标题级别与文字不动。
 /// 排除 `#!`（shebang）；`#话题` 这类歧义按方案 §3.1 第 1 条归为标题修正。
@@ -372,6 +453,62 @@ fn utf8_len(b: u8) -> usize {
     } else {
         1
     }
+}
+
+/// 表格体终止判据（↔ md.ts::TABLE_STOP，GFM 4.10「beginning of another block-level structure」；
+/// 完善性检查 2026-11-22 §3）：ATX 标题 / 引用 / 围栏样行 / 分隔线 / 列表项起点（标记后紧跟空格或 Tab）。
+/// 表后的块级行即使含竖线也不再被当表格行改动。
+/// 刻意不复刻 JS 正则 `\s`/`\d` 的 Unicode 角落：`#` 后与标记后只认 ASCII 空白。
+fn is_table_stop(line: &str) -> bool {
+    let b = line.as_bytes();
+    let mut k = 0usize;
+    while k < b.len() && k < 3 && b[k] == b' ' {
+        k += 1;
+    }
+    let s = &line[k..];
+    let Some(&c0) = s.as_bytes().first() else { return false };
+    if c0 == b'>' || s.starts_with("```") || s.starts_with("~~~") {
+        return true;
+    }
+    if c0 == b'#' {
+        let hashes = s.bytes().take_while(|c| *c == b'#').count();
+        return (1..=6).contains(&hashes)
+            && s.as_bytes().get(hashes).is_some_and(u8::is_ascii_whitespace);
+    }
+    if matches!(c0, b'-' | b'*' | b'_') {
+        // hr 分支在前（`- - -` 两条都命中，结果一致）；列表分支要求标记后紧跟空格/Tab
+        if is_hr_rest(s) {
+            return true;
+        }
+        return (c0 == b'-' || c0 == b'*' || c0 == b'+')
+            && matches!(s.as_bytes().get(1), Some(b' ') | Some(b'\t'));
+    }
+    if c0.is_ascii_digit() {
+        let digits = s.bytes().take_while(|c| c.is_ascii_digit()).count();
+        return matches!(s.as_bytes().get(digits), Some(b'.') | Some(b')'))
+            && matches!(s.as_bytes().get(digits + 1), Some(b' ') | Some(b'\t'));
+    }
+    false
+}
+
+/// 分隔线体（↔ TABLE_STOP 的 `([-*_])(?:\s*\1){2,}\s*$` 分支）：≥3 个同字符、字符间可夹空白、只许行尾留白。
+fn is_hr_rest(s: &str) -> bool {
+    let mut it = s.chars();
+    let Some(m) = it.next() else { return false };
+    if !matches!(m, '-' | '*' | '_') {
+        return false;
+    }
+    let mut count = 1usize;
+    for c in it {
+        if c.is_whitespace() {
+            continue;
+        }
+        if c != m {
+            return false;
+        }
+        count += 1;
+    }
+    count >= 3
 }
 
 /// 表格行拆分（GFM）：代码段里的 `|`、反斜杠转义 `\|` 都不算分隔符。
@@ -609,12 +746,13 @@ pub fn format_markdown(src: &str, opt: &FormatOptions) -> FormatResult {
     }
 
     let n = rows.len();
-    let fm_end = frontmatter_end(&rows);
+    let fm_end = front_matter_end(&rows);
     let mut out: Vec<String> = Vec::with_capacity(n + 2);
     let mut i = 0usize;
     let mut in_fence = false;
     let mut in_math = false;
-    let mut in_html = false;
+    // HTML 块状态：Some(模式) 表示块内，终止判据按 CC 4.6 类型分支（↔ md.ts，见 html_block_start）
+    let mut html_mode: Option<HtmlEnd> = None;
     // 缩进代码块（评审 P1-1）：4 空格 / Tab 起头的内容逐字节保留，直到出现非缩进行
     let mut in_indented = false;
     // 当前围栏的开围栏缩进、标记字符与长度（评审 P1-2 + 2026-11-21 第二档：` 与 ~ 两类，补闭合同字符同长）
@@ -663,14 +801,23 @@ pub fn format_markdown(src: &str, opt: &FormatOptions) -> FormatResult {
             i += 1;
             continue;
         }
-        // HTML 块内部：原样保留，空行结束块
-        if in_html {
-            if raw.trim().is_empty() {
-                in_html = false;
-                blank_run = 1;
-                out.push(String::new());
-            } else {
-                out.push(raw.to_string());
+        // HTML 块内部：原样保留；终止口径按块类型分支（完善性检查 §2）
+        if let Some(mode) = &html_mode {
+            if *mode == HtmlEnd::Blank {
+                // 类型 6/7：空行收块，空行本身不算块内容（与 md.ts 一致，留给空行压缩规则）
+                if raw.trim().is_empty() {
+                    html_mode = None;
+                    blank_run = 1;
+                    out.push(String::new());
+                } else {
+                    out.push(raw.to_string());
+                }
+                i += 1;
+                continue;
+            }
+            out.push(raw.to_string());
+            if html_done(mode, raw) {
+                html_mode = None;
             }
             i += 1;
             continue;
@@ -708,25 +855,42 @@ pub fn format_markdown(src: &str, opt: &FormatOptions) -> FormatResult {
             i += 1;
             continue;
         }
-        if is_html_block_start(raw) {
+        if let Some(mode) = html_block_start(raw) {
             out.push(raw.to_string());
-            in_html = true;
+            // 起始行自身即可收口（单行注释 `<!--x-->`、`<!DOCTYPE html>` ↔ md.ts done 初值）；
+            // `<pre>x</pre>` 这类带内容的行压根不命中起始判定（类型 7 要求整行恰为一个标签）
+            if !html_done(&mode, raw) {
+                html_mode = Some(mode);
+            }
             blank_run = 0;
             i += 1;
             continue;
         }
 
-        // GFM 表格块：表头行 + 分隔行 + 连续含 | 的行
-        if opt.trim_table_cells && i + 1 < n && raw.contains('|') && is_table_delim(rows[i + 1]) {
-            out.push(normalize_table_row(raw));
-            out.push(normalize_table_row(rows[i + 1]));
-            i += 2;
-            while i < n && !rows[i].trim().is_empty() && rows[i].contains('|') {
-                out.push(normalize_table_row(rows[i]));
-                i += 1;
+        // GFM 表格块：表头行 + 分隔行 + 连续表体行。两条与渲染器的对齐（完善性检查 §3）：
+        //  - 表头与分隔行列数须一致，否则不构成表格（↔ md.ts 列数门槛），整组退回普通行；
+        //  - 表体在 TABLE_STOP（ATX/引用/围栏/hr/列表起点）处终止，块级行不再被误改。
+        if opt.trim_table_cells
+            && i + 1 < n
+            && raw.contains('|')
+            && !is_table_stop(raw)
+            && is_table_delim(rows[i + 1])
+        {
+            let same_cols = match (split_table_cells(raw), split_table_cells(rows[i + 1])) {
+                (Some(h), Some(d)) => h.2.len() == d.2.len(),
+                _ => false,
+            };
+            if same_cols {
+                out.push(normalize_table_row(raw));
+                out.push(normalize_table_row(rows[i + 1]));
+                i += 2;
+                while i < n && !rows[i].trim().is_empty() && rows[i].contains('|') && !is_table_stop(rows[i]) {
+                    out.push(normalize_table_row(rows[i]));
+                    i += 1;
+                }
+                blank_run = 0;
+                continue;
             }
-            blank_run = 0;
-            continue;
         }
 
         if raw.trim().is_empty() {
@@ -759,6 +923,10 @@ pub fn format_markdown(src: &str, opt: &FormatOptions) -> FormatResult {
         // 否则标准渲染器不会把这里当闭合（评审 P1-2）
         out.push(format!("{}{}", fence_indent, fence_char.to_string().repeat(fence_ticks)));
         warnings.push("已补全未闭合的代码围栏".to_string());
+    }
+    // 未闭合 $$ 数学块：其后内容已整段原样保留（不猜测闭合位置），但用户应知道（完善性检查 §7.2）
+    if in_math {
+        warnings.push("数学块 $$ 未闭合，闭界之后的内容按原样保留".to_string());
     }
 
     let mut text = out.join(eol);
@@ -1010,5 +1178,113 @@ mod tests {
         assert_eq!(format_markdown("a\nb\n", &opt).text, "a\r\nb\r\n");
         opt.eol = EolStyle::Lf;
         assert_eq!(format_markdown("a\r\nb\r\n", &opt).text, "a\nb\n");
+    }
+
+    /* ── 完善性检查（2026-11-22）回归用例：HTML 分型终止 / TABLE_STOP / frontmatter 同口径 ── */
+
+    #[test]
+    fn html_type1_spans_blank_lines() {
+        // §2（P0）：script/pre/style/textarea 吃到同名闭标签，空行不算界、块内逐字节保留
+        for tag in ["script", "pre", "style", "textarea"] {
+            let src = format!("<{tag}>\nvar x = 1;\n\n##标题\n</{tag}>\n");
+            assert_eq!(fmt(&src), src, "类型 1 {tag} 块内不得改动");
+        }
+        // 大小写与属性写法（↔ md.ts 的 /i 与 (?![\w-]) 口径）
+        assert_eq!(fmt("<SCRIPT>\n\n##A\n</ScRiPt>\n##标题\n"), "<SCRIPT>\n\n##A\n</ScRiPt>\n## 标题\n");
+        assert_eq!(fmt("<pre class=\"x\">\n\n##标题\n</pre>\n"), "<pre class=\"x\">\n\n##标题\n</pre>\n");
+        // 未闭合类型 1：块吞到 EOF，全篇原样（与渲染器一致）
+        assert_eq!(fmt("<pre>\n\n##标题\n"), "<pre>\n\n##标题\n");
+    }
+
+    #[test]
+    fn html_comment_and_decl_span_blank_lines() {
+        // §2：注释吃到 `-->`、声明/处理指令吃到 `>`，跨空行不失效
+        assert_eq!(
+            fmt("<!-- 说明\n\n##标题\n-->\n##标题2\n"),
+            "<!-- 说明\n\n##标题\n-->\n## 标题2\n"
+        );
+        assert_eq!(fmt("<!-- x -->\n##标题\n"), "<!-- x -->\n## 标题\n", "单行注释同行收口");
+        assert_eq!(fmt("<?php\n##标题\n?>\n"), "<?php\n##标题\n?>\n");
+        assert_eq!(fmt("<!DOCTYPE html>\n##标题\n"), "<!DOCTYPE html>\n## 标题\n", "声明行自带 '>' 即刻收口");
+        assert_eq!(
+            fmt("<![CDATA[\n##标题\n\n]]>\n##标题2\n"),
+            "<![CDATA[\n##标题\n\n]]>\n## 标题2\n"
+        );
+    }
+
+    #[test]
+    fn html_start_narrows_to_block_types() {
+        // §6（P2）：行内标签行不再开块，后续标题照常格式化
+        assert_eq!(fmt("<span>hi</span>\n##标题\n"), "<span>hi</span>\n## 标题\n");
+        assert_eq!(fmt("<span class=\"a\">hi</span>\n##标题\n"), "<span class=\"a\">hi</span>\n## 标题\n");
+        assert_eq!(fmt("<pre>x</pre>\n##标题\n"), "<pre>x</pre>\n## 标题\n", "同行开闭不是块");
+        assert_eq!(fmt("<div\n##标题\n"), "<div\n## 标题\n", "标签名后行尾不闭合，不成块");
+        // 类型 6/7 仍按空行收块
+        assert_eq!(fmt("<div>\n##标题\n\n##标题2\n"), "<div>\n##标题\n\n## 标题2\n");
+        assert_eq!(fmt("<custom-el>\n##标题\n\n##标题2\n"), "<custom-el>\n##标题\n\n## 标题2\n");
+    }
+
+    #[test]
+    fn table_body_stops_at_block_start() {
+        // §3（P1）：表后的块级行即使含竖线也不再被当表格行改动（↔ md.ts::TABLE_STOP）
+        assert_eq!(
+            fmt("| a | b |\n| - | - |\n| 1 | 2 |\n## 标题|x\n"),
+            "| a | b |\n| - | - |\n| 1 | 2 |\n## 标题|x\n"
+        );
+        assert_eq!(
+            fmt("| a | b |\n| - | - |\n| 1 | 2 |\n>quote|x\n"),
+            "| a | b |\n| - | - |\n| 1 | 2 |\n> quote|x\n"
+        );
+        assert_eq!(
+            fmt("| a | b |\n| - | - |\n| 1 | 2 |\n- item|x\n"),
+            "| a | b |\n| - | - |\n| 1 | 2 |\n- item|x\n"
+        );
+        // 围栏行终结表体后按围栏处理（语言名小写照常生效）
+        assert_eq!(
+            fmt("| a | b |\n| --- | --- |\n```JS|x\ny\n```\n"),
+            "| a | b |\n| --- | --- |\n```js|x\ny\n```\n"
+        );
+        // 普通段落行（无空格标记、无 # 空格）仍是表体行——与渲染器同口径
+        assert_eq!(
+            fmt("| a | b |\n| --- | --- |\n##标题|x\n"),
+            "| a | b |\n| --- | --- |\n##标题 | x\n",
+            "`##标题|x` 两侧都不算 TABLE_STOP，保持表体行"
+        );
+    }
+
+    #[test]
+    fn table_needs_matching_column_counts() {
+        // §3：表头与分隔行列数不一致 → 不构成表格，整组退回普通行
+        assert_eq!(fmt("| a | b |\n| - |\n"), "| a | b |\n| - |\n");
+        assert_eq!(fmt("a | b\n| - |\n"), "a | b\n| - |\n");
+        // 列数一致仍正常格式化
+        assert_eq!(fmt("|  a  |  b  |\n| --- | --- |\n"), "| a | b |\n| --- | --- |\n");
+    }
+
+    #[test]
+    fn frontmatter_judgment_mirrors_parser() {
+        // §4（P1）：判定与 markdown.rs::front_matter_end / md.ts::frontMatterEnd 同一实现
+        // 块内含非 YAML 行：解析器不认头部（普通 hr 序列），格式化器也不许冻结
+        assert_eq!(fmt("---\nfoo: bar\n##标题\n---\n"), "---\nfoo: bar\n## 标题\n---\n");
+        // 首行带前导空格：trim_end 口径，不是 frontmatter
+        assert_eq!(fmt("  ---\nfoo: bar\n---\n##标题\n"), "  ---\nfoo: bar\n---\n## 标题\n");
+        // 超过 100 行的可信 YAML 头部照样受保护（旧实现的 100 行上限已废除）
+        let mut big = String::from("---\n");
+        for k in 0..105 {
+            big.push_str(&format!("k{k}: v\n"));
+        }
+        big.push_str("---\n\n\n\n##标题\n");
+        let want = big.replace("\n\n\n\n##标题\n", "\n\n## 标题\n");
+        assert_eq!(fmt(&big), want, "长头部块内空行不得压缩");
+    }
+
+    #[test]
+    fn unclosed_math_warns() {
+        // §7.2：未闭合 $$ 不猜测闭界、内容原样保留，但要给出提示
+        let r = format_markdown("$$\n##标题\n", &FormatOptions::default());
+        assert_eq!(r.text, "$$\n##标题\n");
+        assert!(!r.changed);
+        assert_eq!(r.warnings.len(), 1);
+        assert!(r.warnings[0].contains("数学块"), "{:?}", r.warnings);
     }
 }

@@ -109,7 +109,8 @@ async function runFormat(s: Store) {
   }
   if (s.current()?.meta.id !== docId) return;   // 格式化期间已切换文档：结果作废
   if (!r.changed) {
-    s.toast(r.warnings[0] ?? "文档已是规范格式");
+    // 完善性检查 §7.2：警告可能多条（围栏补闭合、$$ 未闭合等），合并展示而不是只显示第一条
+    s.toast(r.warnings.length ? r.warnings.join("；") : "文档已是规范格式", r.warnings.length ? 3200 : undefined);
     return;
   }
 
@@ -135,7 +136,7 @@ async function runFormat(s: Store) {
   }
   s.applyFormatted(r);
   const msg = `已格式化：${r.changedLines} 处更改 · Ctrl+S 保存`;
-  s.toast(r.warnings.length ? `${msg}（${r.warnings[0]}）` : msg, 3200);
+  s.toast(r.warnings.length ? `${msg}（${r.warnings.join("；")}）` : msg, 3200);
 }
 
 const leaf = (p: string) => p.split(/[\\/]/).pop() ?? p;

@@ -252,7 +252,12 @@ svg{display:block}
 .prose ul,.prose ol{margin:0 0 var(--prose-para,15px);padding-left:26px}
 .prose li{margin:0 0 6px}
 .prose ul li::marker{color:var(--s-bullet)}
-.prose li:has(>.cbx){list-style:none;display:flex;gap:10px;align-items:flex-start;padding:3px 0;margin-left:-26px}
+.prose li:has(>.cbx){list-style:none;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;padding:3px 0;margin-left:-26px}
+.prose li:has(>.cbx)>.tline{flex:1 1 auto;min-width:0}
+/* 任务项带块级内容（嵌套列表/段落/引用/代码块/表格）：每条整行挂在文本列下方。
+   不换行时它们是 flex 行内项，会被横排到父任务文字右侧，缩进层级"看起来丢了"（2026-11-22 修复）。
+   27px = 勾选框 17 + 间距 10，与 .tline 首字对齐。 */
+.prose li:has(>.cbx)>:not(.cbx):not(.tline){flex:0 0 calc(100% - 27px);margin-left:27px}
 .prose li.done{color:var(--text-3)}
 .prose li.done .tline{text-decoration:line-through}
 .cbx{width:17px;height:17px;flex:none;margin-top:4px;border-radius:5px;border:1.5px solid var(--line-hi);display:grid;place-items:center;color:transparent;background:var(--bg-raise);cursor:pointer}
