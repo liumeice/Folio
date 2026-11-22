@@ -251,8 +251,11 @@ svg{display:block}
 .prose a{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
 .prose ul,.prose ol{margin:0 0 var(--prose-para,15px);padding-left:26px}
 .prose li{margin:0 0 6px}
-.prose ul li::marker{color:var(--s-bullet)}
+.prose ul > li::marker{color:var(--s-bullet)}
 .prose li:has(>.cbx){list-style:none;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;padding:3px 0;margin-left:-26px}
+/* 嵌套有序列表层级编号（需求 2026-11-22）：md.ts 给带有序祖先的子项拼 --mnr:'2.1. '，
+   标记按该串显示；顶层有序列表与脚注等无 --mnr 的走原生十进制，零回归。 */
+.prose li[style*="--mnr"]::marker{content:var(--mnr)}
 .prose li:has(>.cbx)>.tline{flex:1 1 auto;min-width:0}
 /* 任务项带块级内容（嵌套列表/段落/引用/代码块/表格）：每条整行挂在文本列下方。
    不换行时它们是 flex 行内项，会被横排到父任务文字右侧，缩进层级"看起来丢了"（2026-11-22 修复）。

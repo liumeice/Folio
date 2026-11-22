@@ -1213,6 +1213,9 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
     /** cmark 列模型（第六批 S3）：容器首标记列 / 最近一项内容列（续行、嵌套、闭合基准） */
     markerCol: number; contentCol: number;
     start: number; startNum: number; segs: string[]; openLi: LiRef | null;
+    /** 层级序号链（需求 2026-11-22）：seq=最近一项序号（-1=未出项）；curDisp=该项显示串；
+     *  prefix=本容器建栈时最近的有序祖先显示串（""=顶层观感，保留原生标记） */
+    seq: number; curDisp: string; prefix: string;
     /** loose 判定（CC 5.4，第三档 audit 5.2-d）：列表内部出现过空行 → 出栈时给纯文本项包 <p> */
     loose: boolean; pendingBlank: boolean;
     /** 延续判据（第三档 audit 5.4-c/f）：无序=项目符号字符、有序=分隔符（. 或 )）；变化即开新列表 */
@@ -1747,9 +1750,18 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       // loose 延续正文与子容器都插到闭标签前；行锚尾随正文扩到末行
       const pushLi = (attrs: string, inner: string) => {
         const l = listStack[listStack.length - 1];
+        // 层级序号（需求 2026-11-22）：有序容器按 startNum+顺延计 seq；
+        // 挂在已编号祖先之下时给该项拼显示串 "父.子"，--mnr 交给 CSS ::marker。
+        // 顶层（prefix=""）不挂属性——保持原生标记零回归；纯文本编号只影响显示，源码与坐标系不动。
+        let mnr = "";
+        if (l.type === "ol") {
+          l.seq = l.seq < 0 ? l.startNum : l.seq + 1;
+          l.curDisp = l.prefix ? `${l.prefix}.${l.seq}` : String(l.seq);
+          if (l.prefix) mnr = ` style="--mnr:'${l.curDisp}. '"`;
+        }
         const arr = l.segs;
         const tagIdx = arr.length;
-        arr.push(`<li${attrs}>`);
+        arr.push(`<li${attrs}${mnr}>`);
         arr.push(inner);
         arr.push("</li>");
         l.openLi = { arr, tagIdx, closeIdx: tagIdx + 2 };
@@ -1759,7 +1771,15 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
         accumulate(line); // 越界标记行按普通文本走段落/懒延续通道
         continue;
       }
-      if (!cont) listStack.push({ type, markerCol, contentCol, start: i, startNum, segs: [], openLi: null, loose: false, pendingBlank: false, marker: markChar });
+      if (!cont) {
+        // 前缀取最近的有序祖先（中间的无序列表不占号段，需求口径"更深层级依此类推"）
+        let prefix = "";
+        for (let z = listStack.length - 1; z >= 0; z--) {
+          const p = listStack[z];
+          if (p.type === "ol" && p.curDisp !== "") { prefix = p.curDisp; break; }
+        }
+        listStack.push({ type, markerCol, contentCol, start: i, startNum, segs: [], openLi: null, loose: false, pendingBlank: false, marker: markChar, seq: -1, curDisp: "", prefix });
+      }
       // 空行分开的兄弟项 → 当前容器整表转 loose（CC 5.4：一项 loose 全表 loose）。
       // 归属判定（#319）：空行只染「空行前最后一块内容所在的容器」——空行若发生在嵌套子表
       // 内部，外层兄弟项不因这个空行转 loose。lastContentEntry 在 pushLi/emitBlock/项内段落

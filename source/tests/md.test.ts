@@ -550,3 +550,26 @@ test("flip 与渲染同坐标系：$$ 内任务按 Rust 口径计数、引用不
   const h = mdToHtml(src);
   assert.equal((h.match(/data-task/g) ?? []).length, 3, h.slice(0, 400));
 });
+
+test("层级编号（需求 2026-11-22）：嵌套有序列表子级继承父级序号显示", () => {
+  const h = mdToHtml("1. 第一步\n2. 第二步\n   1. 大是大非\n   2. 阿迪斯发\n3. 第三步\n");
+  assert.ok(h.includes(`style="--mnr:'2.1. '"`), "二级第1项显示 2.1：" + h.slice(0, 300));
+  assert.ok(h.includes(`style="--mnr:'2.2. '"`), "二级第2项显示 2.2");
+  const tags = (h.match(/<li[^>]*>/g) ?? []);
+  assert.ok(!tags[0].includes("--mnr") && !tags[1].includes("--mnr") && !tags[4].includes("--mnr"), "顶层项不带 --mnr（原生标记零回归）");
+  // 三层：1 → 1.1 → 1.1.1
+  const d = mdToHtml("1. 一级\n   1. 二级\n      1. 三级\n");
+  assert.ok(d.includes(`style="--mnr:'1.1. '"`) && d.includes(`style="--mnr:'1.1.1. '"`), "深层依此类推");
+  // 中间无序层不占号段：1 > • > 1.1
+  const m = mdToHtml("1. 甲\n   - 要点\n     1. 子\n");
+  assert.ok(m.includes(`style="--mnr:'1.1. '"`), "子弹跳过编号链");
+  // 子列表作者起始编号参与拼接：项2 下 `5.` → 2.5
+  const s = mdToHtml("1. a\n2. b\n   5. 五\n   6. 六\n");
+  assert.ok(s.includes(`style="--mnr:'2.5. '"`) && s.includes(`style="--mnr:'2.6. '"`), "start 参与层级编号");
+  // 任务项作为父级同样续链
+  const t = mdToHtml("1. [ ] 任务\n   1. 子\n");
+  assert.ok(t.includes(`style="--mnr:'1.1. '"`), "任务父项续链");
+  // 脚注汇总 ol 不受波及（无 --mnr 属性）
+  const f = mdToHtml("引用[^1]\n\n[^1]: 注内容\n");
+  assert.ok(f.includes("<ol") && !f.includes("--mnr"), "脚注编号保持原生：" + f.slice(f.indexOf("<ol"), f.indexOf("<ol") + 120));
+});
