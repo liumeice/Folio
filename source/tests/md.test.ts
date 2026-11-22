@@ -67,14 +67,14 @@ test("snake_case 下划线不误斜体，**/~~ 正常", () => {
   assert.ok(h.includes("<del>删</del>"), h);
 });
 
-test("粗体内侧空白与嵌套引号：** 加粗，'引号' ** 仍是加粗（原型口径回归，2026-11-16）", () => {
-  // 原型正则 /\*\*([^*]+)\*\*/ 支持 ** 与内容间的空格；升级递归解析器时一度丢掉该容忍度
-  const h1 = mdToHtml("** 加粗，'引号' **");
-  assert.ok(h1.includes("<strong>加粗，'引号'</strong>"), h1);
-  // 无空格路径不回归（引号本就无辜）
+test("粗体内侧空白=字面文本（2026-11-22 需求方定夺：CommonMark 口径取代 2026-11-16 原型宽容度）", () => {
+  // cmark 6.5：定界符后紧跟空白不满足 left-flanking → 不成强调（官方例 #379/#391/#397），与 GitHub 实渲一致。
+  // 旧原型 /\*\*([^*]+)\*\*/ 的对称内侧空格宽容度据此废止；存量笔记里 `** 文字 **` 写法将显示为字面。
+  assert.ok(!mdToHtml("** 加粗，'引号' **").includes("<strong>"), "对称内侧空白 → 字面");
+  assert.ok(!mdToHtml("** foo bar**").includes("<strong>"), "非对称同样字面");
+  assert.ok(!mdToHtml("__ 同上 __").includes("<strong>"));
+  // 无空格路径正常渲染（引号本就无辜）
   assert.ok(mdToHtml("**加粗，'引号'**").includes("<strong>加粗，'引号'</strong>"));
-  // __ 粗体同规则；尾随空白不进 strong
-  assert.ok(mdToHtml("__ 同上 __").includes("<strong>同上</strong>"));
   // 空粗体 **** 仍不成立
   assert.ok(!mdToHtml("****").includes("<strong>"));
 });
@@ -165,6 +165,31 @@ test("P2·邮箱自动链接收紧（cmark-gfm localpart）与标签名 999 上�
   assert.equal((t.match(/<ul/g) ?? []).length, 2, "Tab 缩进按 4 列制表位算嵌套深度：" + t);
 });
 
+test("第五批·cmark 引擎+快赢：跨原子强调、dedent 围栏、info 反引号、数字标记上限、start=0", () => {
+  // cmark 分隔符栈：跨代码段/链接的强调配对（旧正则不可达）
+  assert.ok(mdToHtml("*a `*`*").includes("<em>a <code>*</code></em>"), "跨 code 配对");
+  assert.ok(mdToHtml("**foo [x](/u)**").includes("<strong>foo <a"), "跨 link 配对");
+  assert.ok(mdToHtml("*foo [bar](/url)*").includes("<em>foo <a"), "em 包 link");
+  assert.ok(!mdToHtml("** foo bar**").includes("<strong>"), "cmark flanking：开符后空白不成粗（#379）");
+  assert.ok(mdToHtml("пристаням_стремятся_").indexOf("<em>") === -1, "俄文词内下划线不强调（#362）");
+  // 硬换行进内联层：代码段/属性不再被控制符污染，段末反斜杠不丢
+  assert.ok(!mdToHtml("`code  \nspan`").includes(String.fromCharCode(2)), "code span 无控制符（#640）");
+  assert.equal(flipTaskInSrc("foo\\\n", 0), null);
+  assert.ok(mdToHtml("foo\\\n").includes("foo\\"), "段末反斜杠保留（#644）");
+  // 围栏内容按开栏缩进 dedent（#131-133）
+  const d = mdToHtml(" ```\n aaa\naaa\n ```\n");
+  assert.ok(/<code[^>]*>aaa\naaa<\/code>/.test(d), "dedent：" + d.slice(0, 220));
+  // CC 4.5 info 反引号拒开栏 / CC 5.2 数字标记 ≤9 位 / start=0 保真（↔ Rust cm_quick）
+  const ib = mdToHtml("``` ```\n# 真标题\n");
+  assert.ok(!ib.includes("language-```") && ib.includes('data-sec="1"'), "info 反引号：" + ib.slice(0, 140));
+  assert.equal((mdToHtml("1234567890. [ ] 十位\n").match(/data-task/g) ?? []).length, 0);
+  assert.equal(flipTaskInSrc("1234567890. [ ] x\n", 0), null, "十位标记不是任务");
+  assert.ok(flipTaskInSrc("0. [ ] a\n", 0)!.includes("[x]"), "0. 仍是任务");
+  assert.ok(mdToHtml("0. a\n").includes('start="0"'), "start=0");
+  // emoji 短码不再被定界符拆分打碎（文本并拢回归）
+  assert.ok(mdToHtml("通过 :white_check_mark: 标记").includes("✅"), "短码跨 _ 碎片合并");
+});
+
 test("GitHub 扩展·YAML front matter：元数据卡直出，区内不产标题/任务（↔ Rust front_matter_skipped）", () => {
   const src = "---\ntitle: 示例文档\ntags: [gfm, folio]\n---\n\n# 正文标题\n正文";
   const h = mdToHtml(src);
@@ -175,6 +200,14 @@ test("GitHub 扩展·YAML front matter：元数据卡直出，区内不产标题
   assert.equal((mdToHtml("---\n# 不是头部\n").match(/data-sec=/g) ?? []).length, 1, "无收口→普通 hr+ATX");
   assert.ok(flipTaskInSrc("---\n- [ ] yaml假任务\n---\n\n- [ ] 真\n", 0)!.includes("[x] 真"), "头部假任务出局");
   assert.ok(flipTaskInSrc("---\n- [ ] yaml\n---\n\n- [ ] a\n\n- [ ] b\n", 1)!.includes("[x] b"), "序号对齐");
+  // 收紧判据（↔ Rust #96/#98 防护）：裸文本/空 body 不算头部
+  const n96 = mdToHtml("---\nFoo\n---\nBar\n---\nBaz\n");
+  assert.equal((n96.match(/<h2[^>]*>/g) ?? []).length, 2, "#96 Foo/Bar 是 Setext h2 序列：" + n96.slice(0, 140));
+  assert.ok(!n96.includes("frontmatter"));
+  const n98 = mdToHtml("---\n---\n");
+  assert.equal((n98.match(/<hr/g) ?? []).length, 2, "#98 空 body 不算头部");
+  // 多键 YAML 仍是头部
+  assert.ok(mdToHtml("---\ntitle: T\ntags: [a]\nauthor: X\n---\n\n# 正文\n").includes("frontmatter"), "多键 YAML");
 });
 
 test("GitHub 扩展·脚注：首引编号/定义内嵌 Markdown/未定义回落/任务坐标占位（↔ 样例 8.5）", () => {

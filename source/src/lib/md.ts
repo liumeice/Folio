@@ -214,8 +214,169 @@ function trimUrlTail(u: string): string {
   return out;
 }
 
-function renderRun(seg: string, defs: Defs): string {
-  // 先收集 URL/邮箱两类候选及位置，按起点排序后线性拼接（重叠时先到者胜，与单趟扫描等价）
+/* ══════════════ 内联引擎 v2（2026-11-22，CommonMark 0.31.2 对齐）══════════════
+ * 三段流水线，替代旧的「正则强调 + 文本叶子」组合：
+ *   ① tokenize：字符扫描 → token 流（文本 / 原子 html / 链接[带子流]）；
+ *   ② applyEmphasis：文本内定界符 run 拆成 d-token → **cmark 分隔符栈**
+ *      （left/right flanking、`_` 词内限制、rule of 3、就近开符配对、部分消费留残符）；
+ *   ③ serialize：文本叶子做 GFM 自动链接 + ESCAPED 还原 + \n 硬换行判定 + emoji。
+ * 旧实现的 EMPH_RE/emphasisPass 无法表达跨原子嵌套（*a `x`* / **(*foo)）与 run 长度语义，
+ * CommonMark 审计 132 例强调题只过 60——此重写即其修复（audit-src.mjs 为回归门槛）。 */
+
+type Tok =
+  | { k: "t"; s: string }                                              // 原始文本（含 ESCAPED 占位与 \n）
+  | { k: "x"; s: string }                                              // 原子：code/行内 HTML/自动链接/公式/脚注/图片
+  | { k: "a"; pre: string; kids: Tok[]; post: string }                 // 链接：强调可跨过它，label 内部自成一层
+  | { k: "d"; ch: string; len: number; ol: number; o: boolean; c: boolean; dead?: boolean } // 定界符 run
+  | { k: "e"; tag: "em" | "strong" | "del"; kids: Tok[] };
+
+/** 字符分类（↔ cmark ISSPACE/ISPUNCT）：ASCII 标点全集 + Unicode P/S 类 */
+const CPUNCT = /[!-\/:-@\[-`{-~]|\p{P}|\p{S}/u;
+const isWs = (ch: string): boolean => ch !== "" && /\s/.test(ch);
+const isPn = (ch: string): boolean => ch !== "" && CPUNCT.test(ch);
+
+/** token 的首/末 flanking 字符（cmark scan_delimiters 同构）：原子与链接容器取其标签字符
+ *  （'<'/'>'，标点）——`*a `*`*`、`**foo [x](/u)**` 这类跨原子配对的内外侧判定全靠它；
+ *  越界/无邻 → ""（cmark 的 null 字符）。 */
+function firstVis(t: Tok | undefined): string {
+  if (!t) return "";
+  if (t.k === "t") return t.s[0] === ESCAPED ? (t.s[1] ?? "") : (t.s[0] ?? "");
+  if (t.k === "d") return t.ch;
+  if (t.k === "a") return "<";
+  if (t.k === "e") return firstVis(t.kids[0]);
+  return t.s[0] ?? ""; // x 原子：净化后 html 的首字符（'<'）
+}
+function lastVis(t: Tok | undefined): string {
+  if (!t) return "";
+  if (t.k === "t") {
+    const L = t.s.length;
+    if (L === 0) return "";
+    return t.s[L - 2] === ESCAPED ? t.s[L - 1] : t.s[L - 1];
+  }
+  if (t.k === "d") return t.ch;
+  if (t.k === "a") return ">";
+  if (t.k === "e") return lastVis(t.kids[t.kids.length - 1]);
+  return t.s[t.s.length - 1] ?? ""; // x 原子末字符（'>'）
+}
+
+/** ① 把文本 token 里的 `*`/`_`/`~` run 拆成 d-token，并按 cmark flanking 规则标定 canOpen/canClose。
+ *  ESCAPED 对整体跳过（反斜杠定界符不启动强调，CC 6.1）；`~` run >2 不成删除线（GFM）。 */
+function splitDelims(toks: Tok[]): Tok[] {
+  const out: Tok[] = [];
+  toks.forEach((tok, ni) => {
+    if (tok.k !== "t") { out.push(tok); return; }
+    const s = tok.s;
+    let last = 0;
+    let i = 0;
+    while (i < s.length) {
+      if (s[i] === ESCAPED) { i += 2; continue; }
+      const ch = s[i];
+      if (ch !== "*" && ch !== "_" && ch !== "~") { i++; continue; }
+      let run = 0;
+      while (i + run < s.length && s[i + run] === ch) run++;
+      if (ch === "~" && run > 2) { i += run; continue; } // 波浪 run>2 当普通文本（GFM 定界上限）
+      if (i > last) { out.push({ k: "t", s: s.slice(last, i) }); last = i; }
+      const before = i > 0 ? (s[i - 2] === ESCAPED ? s[i - 1] : s[i - 1]) : lastVis(toks[ni - 1]);
+      const after = i + run < s.length ? (s[i + run] === ESCAPED ? s[i + run + 1] : s[i + run]) : firstVis(toks[ni + 1]);
+      const lf = after !== "" && !isWs(after) && (!isPn(after) || before === "" || isWs(before) || isPn(before));
+      const rf = before !== "" && !isWs(before) && (!isPn(before) || after === "" || isWs(after) || isPn(after));
+      const o = ch !== "_" ? lf : lf && (!rf || isPn(before));
+      const c = ch !== "_" ? rf : rf && (!lf || isPn(after));
+      out.push({ k: "d", ch, len: run, ol: run, o, c });
+      i += run;
+      last = i;
+    }
+    if (last < s.length) out.push({ k: "t", s: s.slice(last) });
+  });
+  return out;
+}
+
+/** ② cmark process_emphasis：定界符从左到右扫，闭符回溯最近合法开符；
+ *  rule of 3、`~` 等长配对、部分消费（run 余数留在原位继续参与后续配对）。 */
+function emphasisStack(lst: Tok[]): Tok[] {
+  const dels = lst.filter((t): t is Extract<Tok, { k: "d" }> => t.k === "d");
+  const stack: Extract<Tok, { k: "d" }>[] = [];
+  for (const cl of dels) {
+    if (cl.dead) continue;
+    if (!cl.c) { if (cl.o) stack.push(cl); continue; }
+    while (cl.c && cl.len > 0) {
+      let oi = -1;
+      for (let si = stack.length - 1; si >= 0; si--) {
+        const op = stack[si];
+        if (op.dead || op.ch !== cl.ch || !op.o || op.len === 0) continue;
+        if (cl.ch === "~" && op.len !== cl.len) continue;                       // 删除线：run 必须等长
+        if ((cl.o || op.c) && cl.ol % 3 !== 0 && (op.ol + cl.ol) % 3 === 0) continue; // rule of 3（按原始 run 长）
+        oi = si; break;
+      }
+      if (oi < 0) break;
+      const op = stack[oi];
+      const use = cl.ch === "~" ? op.len : (op.len >= 2 && cl.len >= 2 ? 2 : 1);
+      const tag = cl.ch === "~" ? "del" : use === 2 ? "strong" : "em";
+      const oi2 = lst.indexOf(op);
+      const ci2 = lst.indexOf(cl);
+      if (oi2 === -1 || ci2 === -1 || ci2 <= oi2) { stack.length = oi; break; } // 防御：异侧（不该发生）
+      const kids = lst.splice(oi2 + 1, ci2 - oi2 - 1);
+      kids.forEach((kd) => { if (kd.k === "d") kd.dead = true; });
+      op.len -= use;
+      cl.len -= use;
+      lst.splice(oi2 + (op.len > 0 ? 1 : 0), 0, { k: "e", tag, kids });
+      stack.length = oi;
+      if (op.len > 0) stack.push(op);
+    }
+    if (cl.dead || cl.len === 0) continue;
+    if (cl.o) stack.push(cl); // 剩余闭符同时可作开符继续
+  }
+  return lst;
+}
+
+/** 残余 d-token → 字面文本（与相邻文本合并）；e 体只落字面（配对已在其内含处理），
+ *  a（链接）体是**全新定界符域**——无论出现在哪一层都要独立跑一遍 applyEmphasis（cmark 同构）。 */
+function literals(lst: Tok[]): Tok[] {
+  const out: Tok[] = [];
+  const pushT = (s: string) => { if (!s) return; const p = out[out.length - 1]; if (p && p.k === "t") p.s += s; else out.push({ k: "t", s }); };
+  for (const t of lst) {
+    if (t.k === "d") { pushT(t.ch.repeat(t.len)); continue; }
+    if (t.k === "t") { pushT(t.s); continue; } // 相邻文本必须并拢：emoji 短码等 token 级模式跨碎块失效（:white_check_mark: 教训）
+    if (t.k === "e") t.kids = literals(t.kids);
+    else if (t.k === "a") t.kids = applyEmphasis(t.kids);
+    out.push(t);
+  }
+  return out;
+}
+
+/** ② 主入口：本级 split→栈配对 → 残余定界符落字面；链接 label 重新起栈（cmark 同构）。 */
+function applyEmphasis(toks: Tok[]): Tok[] {
+  return literals(emphasisStack(splitDelims(toks)));
+}
+
+/* 文本叶子输出（P0-CM 改造）：ESCAPED+字符 → 转义后的字面字符（不再参与任何语法，GFM 6.1）；
+ * 硬换行判定挪到这里（CC 6.7）：\n 前 ≥2 空格/tab → <br>；\n 前行尾单个反斜杠（非 ESCAPED 对）
+ * → 吃掉反斜杠出 <br>；其余 \n 原样输出为软换行。块层不再预注入控制符——代码段/HTML 属性
+ * 里的行尾空格保持原字符（audit #640-643），段末反斜杠不再丢字符（#644）。 */
+function emitTextLeaf(t: string): string {
+  let out = "";
+  let last = 0;
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] === ESCAPED && i + 1 < t.length) {
+      out += escapeText(t.slice(last, i));
+      out += escapeHtml(t[i + 1]);
+      i++;
+      last = i + 1;
+    } else if (t[i] === "\n") {
+      const pre = t.slice(last, i);
+      if (/[ \t]{2,}$/.test(pre)) out += escapeText(pre.replace(/[ \t]+$/, "")) + "<br>";
+      else if (pre.endsWith("\\") && !(pre.length >= 2 && pre[pre.length - 2] === ESCAPED)) out += escapeText(pre.slice(0, -1)) + "<br>";
+      else out += escapeText(pre) + "\n";
+      last = i + 1;
+    }
+  }
+  out += escapeText(t.slice(last));
+  return out;
+}
+
+/** ③ 文本叶子序列化：GFM 自动链接（URL/邮箱候选，重叠先到胜，CC 6.9 语义在转义前扫描）
+ *  + ESCAPED 还原 + 硬换行 + emoji 短代码。强调配对已在 ② 完成，这里只剩行内链接。 */
+function leafHtml(seg: string): string {
   type Cand = { start: number; end: number; text: string; href: string; mail: boolean };
   const cands: Cand[] = [];
   let m: RegExpExecArray | null;
@@ -238,97 +399,40 @@ function renderRun(seg: string, defs: Defs): string {
   cands.sort((a, b) => a.start - b.start);
   let out = "";
   let last = 0;
-  for (const c of cands) {
-    if (c.start < last) continue;   // 与先到者重叠：跳过
-    out += emphasisPass(seg.slice(last, c.start));
-    const a = `<a href="${escapeHtml(c.href)}"${c.mail ? "" : ' target="_blank" rel="noopener"'}>${escapeHtml(c.text)}</a>`;
-    out += a;
-    last = c.end;
+  for (const cd of cands) {
+    if (cd.start < last) continue;   // 与先到者重叠：跳过
+    out += applyEmojis(emitTextLeaf(seg.slice(last, cd.start)));
+    out += `<a href="${escapeHtml(cd.href)}"${cd.mail ? "" : ' target="_blank" rel="noopener"'}>${escapeHtml(cd.text)}</a>`;
+    last = cd.end;
   }
-  out += emphasisPass(seg.slice(last));
-  void defs;
+  out += applyEmojis(emitTextLeaf(seg.slice(last)));
   return out;
 }
 
-/* 强调正则。粗体分支刻意允许定界符与内容之间的内侧空白并剔掉（星号星号+空格+加粗+空格+星号星号 → 加粗）：
- * 原型的粗体替换本就容忍这种写法，升级成递归解析器时一度比原型严格，属回归——
- * 带引号/逗号等内容的粗体（内侧有空格）因此整个不渲染。空格才是元凶，引号无辜。 */
-// 强调正则（2026-11-21 GFM P0 增量改造，ESCAPED 占位符以字符串拼接注入正则源）：
-//  - 三星号 x 三星 → em>strong；双星/双下划线匹配到的内容做递归再解析
-//    （旧版直接转义，粗体内嵌斜体会留字面星号）；
-//  - 下划线系词内不强调（foo__bar__baz 保持字面，GFM 6.4 词边界规则）；
-//  - 单波浪 x 波浪 删除线（GFM 6.5 允许单波浪，旧版只认双波浪；带词边界防 0~100~200 误伤）；
-//  - 转义优先：ESCAPED 占位符禁止出现在任何定界符侧（反斜杠星不启动强调，GFM 6.1）。
-//  单星/单下划线内容允许 \n（第三档 audit 6.4-c）：段内软换行的强调跨行配对（GFM 示例 365）。
-//  但内容仍禁同种定界符（*系不含*、_系不含_）——内层星号交给「粗体先匹配」的分支序处理，
-//  单层永不跨 ** 串配对，旧注释担心的「* 包 ** 半嵌套」输入（无换行）分支序已隔离，行为不变。
-const EMPH_RE = new RegExp(
-  "(?<!" + ESCAPED + ")\\*\\*\\*[ \\t]*([\\s\\S]+?)[ \\t]*\\*\\*\\*" +
-  "|(?<!" + ESCAPED + ")(\\*\\*)[ \\t]*([\\s\\S]+?)[ \\t]*\\2" +
-  "|(?<!\\w)(?<!" + ESCAPED + ")__[ \\t]*([\\s\\S]+?)[ \\t]__(?!\\w)" +
-  "|(?<![\\w\"'" + ESCAPED + "])\\*(?=\\S)([^*]*?\\S)\\*(?![\\w\"'" + ESCAPED + "])" +
-  "|(?<!\\w)(?<!" + ESCAPED + ")_(?=\\S)([^_]*?\\S)_(?!\\w)" +
-  "|(?<!" + ESCAPED + ")~~(?=\\S)([\\s\\S]*?\\S)~~" +
-  "|(?<![\\w~'" + ESCAPED + "])~(?=\\S)([^~\\n]*?\\S)~(?!\\w)",
-  "g",
-);
-
-function emphasisPass(text: string): string {
-  // 纯文本叶子：转义（实体保留、占位符还原）后再做 emoji 短代码替换（代码段/URL/属性不经过这里，天然免疫）
-  const esc = (t: string) => applyEmojis(emitTextLeaf(t));
-  const rec = (t: string) => emphasisPass(t);
+/** token 流 → HTML 字符串 */
+function serialize(lst: Tok[]): string {
   let out = "";
-  let last = 0;
-  let m: RegExpExecArray | null;
-  // 每调用一个独立实例：模块级 EMPH_RE 是 /g，rec() 递归复用同一对象会共享 lastIndex——
-  // 内层重置后外层从被扫内容的小偏移重启、重匹配已消费片段、输出无限增长（实测 RangeError:
-  // Invalid string length）。构造正则的成本 <0.05ms，1.27MB 文档按叶子段数量级可忽略。
-  const re = new RegExp(EMPH_RE.source, "g");
-  while ((m = re.exec(text)) !== null) {
-    out += esc(text.slice(last, m.index));
-    if (m[1] !== undefined) out += `<em><strong>${rec(m[1])}</strong></em>`;
-    else if (m[3] !== undefined) out += `<strong>${rec(m[3])}</strong>`;
-    else if (m[4] !== undefined) out += `<strong>${rec(m[4])}</strong>`;
-    else if (m[5] !== undefined) out += `<em>${rec(m[5])}</em>`;
-    else if (m[6] !== undefined) out += `<em>${rec(m[6])}</em>`;
-    else if (m[7] !== undefined) out += `<del>${rec(m[7])}</del>`;
-    else if (m[8] !== undefined) out += `<del>${rec(m[8])}</del>`;
-    last = m.index + m[0].length;
+  for (const t of lst) {
+    if (t.k === "t") out += leafHtml(t.s);
+    else if (t.k === "x") out += t.s;
+    else if (t.k === "a") out += t.pre + serialize(t.kids) + t.post;
+    else if (t.k === "e") out += `<${t.tag}>${serialize(t.kids)}</${t.tag}>`;
+    else out += escapeHtml(t.ch.repeat(t.len)); // 漏网 d（理论不可达）
   }
-  out += esc(text.slice(last));
   return out;
 }
 
-/* 文本叶子输出：ESCAPED+字符 → 转义后的字面字符（不再参与任何语法，GFM 6.1）；
- * BR_MARK → <br> 并吃掉紧随的换行；其余片段走 escapeText（合法实体原样保留）。 */
-function emitTextLeaf(t: string): string {
-  let out = "";
-  let last = 0;
-  for (let i = 0; i < t.length; i++) {
-    if (t[i] === ESCAPED && i + 1 < t.length) {
-      out += escapeText(t.slice(last, i));
-      out += escapeHtml(t[i + 1]);
-      i++;
-      last = i + 1;
-    } else if (t[i] === BR_MARK) {
-      out += escapeText(t.slice(last, i));
-      out += "<br>";
-      if (t[i + 1] === "\n") i++;
-      last = i + 1;
-    }
-  }
-  out += escapeText(t.slice(last));
-  return out;
-}
-
-export function renderInline(src: string, defs: Defs): string {
-  let out = "";
+/** ① 字符扫描 → token 流：文本累积；代码段/公式/脚注/自动链接/行内 HTML 产原子 x；
+ *  链接产 a 节点（label 子流递归 tokenize，强调配对在 ② 统一处理）。 */
+function tokenize(src: string, defs: Defs): Tok[] {
+  const toks: Tok[] = [];
   let buf = "";
   let i = 0;
   const n = src.length;
   const flush = () => {
-    if (buf) { out += renderRun(buf, defs); buf = ""; }
+    if (buf) { toks.push({ k: "t", s: buf }); buf = ""; }
   };
+  const atom = (html: string) => { flush(); toks.push({ k: "x", s: html }); };
   while (i < n) {
     const c = src[i];
     // 反斜杠转义 → ESCAPED 占位（GFM 6.1：转义字符此后不得参与强调/删除线配对）
@@ -342,15 +446,16 @@ export function renderInline(src: string, defs: Defs): string {
       for (;;) {
         j = src.indexOf(token, j);
         if (j === -1) break;
-        if (src[j + run] !== "`") { ci = j; break; }
-        j += run;
+        let r2 = 0;
+        while (src[j + r2] === "`") r2++;              // 此处反引号总长
+        if (r2 === run) { ci = j; break; }             // CC 6.1：闭合必须等长
+        j += r2;                                       // 不等长的 run 是内容，整体跳过再找
       }
       if (ci !== -1) {
-        flush();
-        let code = src.slice(i + run, ci);
-        // CC 6.1：首尾各一空格才剥一个，但**纯空白内容除外**（`` ` ` `` 要保留内容）
-        if (code.length > 2 && /\S/.test(code) && code.startsWith(" ") && code.endsWith(" ")) code = code.slice(1, -1);
-        out += `<code>${escapeHtml(code.replace(/\n/g, " "))}</code>`;
+        let code = src.slice(i + run, ci).replace(/\n/g, " ");
+        // CC 6.1：换行→空格之后，首尾各一个空格才剥一层；纯空格内容不剥
+        if (code.length > 1 && code.startsWith(" ") && code.endsWith(" ") && /\S/.test(code)) code = code.slice(1, -1);
+        atom(`<code>${escapeHtml(code)}</code>`);
         i = ci + run;
         continue;
       }
@@ -367,8 +472,7 @@ export function renderInline(src: string, defs: Defs): string {
         const closeIdx = src.indexOf("$$", i + 2);
         const body = closeIdx === -1 ? "" : src.slice(i + 2, closeIdx);
         if (closeIdx !== -1 && body.length > 0 && !/^\s|\s$|\n/.test(body)) {
-          flush();
-          out += `<span class="f-block" data-math="inline" data-lang="tex" data-code="${escapeHtml(body)}"></span>`;
+          atom(`<span class="f-block" data-math="inline" data-lang="tex" data-code="${escapeHtml(body)}"></span>`);
           i = closeIdx + 2;
           continue;
         }
@@ -391,8 +495,7 @@ export function renderInline(src: string, defs: Defs): string {
         if (hit !== -1) {
           const body = src.slice(i + 1, hit);
           if (body.length > 0 && !body.includes("\n")) {
-            flush();
-            out += `<span class="f-block" data-math="inline" data-lang="tex" data-code="${escapeHtml(body)}"></span>`;
+            atom(`<span class="f-block" data-math="inline" data-lang="tex" data-code="${escapeHtml(body)}"></span>`);
             i = hit + 1;
             continue;
           }
@@ -406,12 +509,11 @@ export function renderInline(src: string, defs: Defs): string {
       // 脚注引用 [^标签]：有定义有编号 → 上标链接；否则按普通中括号文本（GitHub 同款回落）
       const fr = /^\[\^([^\]\s]{1,64})\]/.exec(src.slice(i));
       if (fr) {
-        const n = FN.num.get(fr[1]);
-        if (n !== undefined) {
-          flush();
-          const idAttr = FN.seen.has(fr[1]) ? "" : ` id="fnref-${n}"`;
+        const nn = FN.num.get(fr[1]);
+        if (nn !== undefined) {
+          const idAttr = FN.seen.has(fr[1]) ? "" : ` id="fnref-${nn}"`;
           FN.seen.add(fr[1]);
-          out += `<sup class="fnref"${idAttr}><a href="#fn-${n}">[${n}]</a></sup>`;
+          atom(`<sup class="fnref"${idAttr}><a href="#fn-${nn}">[${nn}]</a></sup>`);
           i += fr[0].length;
           continue;
         }
@@ -425,22 +527,48 @@ export function renderInline(src: string, defs: Defs): string {
         const label = src.slice(open + 1, close);
         // CommonMark 6.7：链接不得嵌进链接——label 含真链接时外层不成立，
         // 把 "[" 当字面量从内部重扫（内层链接照常产出，落点同 commonmark.js）。图片豁免（[![a](i)](u) 合法）。
-        if (!isImg && renderInline(label, defs).includes("<a ")) { buf += c; i++; continue; }
+        let labelToks: Tok[] | null = null;
+        if (!isImg) {
+          labelToks = tokenize(label, defs);
+          if (labelToks.some((t) => t.k === "a")) { buf += c; i++; continue; }
+        }
         const j = close + 1;
+        let url: string | null = null;
+        let title = "";
+        let end = -1;
         if (src[j] === "(") {
-          if (src[j + 1] === ")") { flush(); out += emitLinkOrImg(isImg, label, "", "", defs); i = j + 2; continue; }
-          const tgt = parseInlineTarget(src, j);
-          if (tgt) { flush(); out += emitLinkOrImg(isImg, label, tgt.url, tgt.title, defs); i = tgt.end; continue; }
+          if (src[j + 1] === ")") { url = ""; end = j + 2; }
+          else {
+            const tgt = parseInlineTarget(src, j);
+            if (tgt) { url = tgt.url; title = tgt.title; end = tgt.end; }
+          }
         } else if (src[j] === "[") {
           const rc = matchBracket(src, j);
           if (rc !== -1) {
             const rl = src.slice(j + 1, rc);
             const def = defs.get(normLabel(rl === "" ? label : rl));
-            if (def) { flush(); out += emitLinkOrImg(isImg, label, def.url, def.title, defs); i = rc + 1; continue; }
+            if (def) { url = def.url; title = def.title; end = rc + 1; }
           }
         } else {
           const def = defs.get(normLabel(label));
-          if (def) { flush(); out += emitLinkOrImg(isImg, label, def.url, def.title, defs); i = j; continue; }
+          if (def) { url = def.url; title = def.title; end = j; }
+        }
+        if (url !== null) {
+          if (isImg) {
+            // alt 是文本语义（GFM 6.2/6.7-a）：实体透传；URL 属性维持字面化 escapeHtml。
+            // 远程图片自动加载（需求方 2026-11-16 定夺）：src 直出 + loading=lazy。
+            atom(`<img alt="${escapeText(flattenAlt(label))}" src="${escapeHtml(url)}"${title ? ` title="${escapeText(title)}"` : ""} loading="lazy">`);
+          } else {
+            flush();
+            toks.push({
+              k: "a",
+              pre: `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"${title ? ` title="${escapeText(title)}"` : ""}>`,
+              kids: labelToks!,
+              post: "</a>",
+            });
+          }
+          i = end;
+          continue;
         }
       }
     }
@@ -450,13 +578,12 @@ export function renderInline(src: string, defs: Defs): string {
         const inner = src.slice(i + 1, close);
         if (/^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*$/.test(inner)) {
           flush();
-          out += `<a href="${escapeHtml(inner)}" target="_blank" rel="noopener">${escapeHtml(inner)}</a>`;
+          atom(`<a href="${escapeHtml(inner)}" target="_blank" rel="noopener">${escapeHtml(inner)}</a>`);
           i = close + 1;
           continue;
         }
         if (/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(inner)) {
-          flush();
-          out += `<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`;
+          atom(`<a href="mailto:${escapeHtml(inner)}">${escapeHtml(inner)}</a>`);
           i = close + 1;
           continue;
         }
@@ -464,18 +591,16 @@ export function renderInline(src: string, defs: Defs): string {
       // GFM 6.10 行内原始 HTML（2026-11-21 P0）：<kbd>/<sup>/<span>/<br>/行内 <img>… 与文本流交错，
       // 单标签走 htmlsan.sanitizeInlineTag 白名单净化（DOMParser 会替半截开标签补闭、污染输出流，故不用它）；
       // 不允许的标签（含 DROP 与未知）按 tag-filter 语义**转义为可见文本**——比静默删除更不易丢内容。
-      // 净化产物直接进 out，不经过 renderRun，天然免疫后续强调/URL 再解析。
+      // 净化产物是原子 token，天然免疫强调配对与 URL 再解析。
       const tagM = /^<\/?[A-Za-z][A-Za-z0-9-]*(?:"[^"]*"|'[^']*'|[^<>"'`])*?>/.exec(src.slice(i));
       if (tagM) {
-        flush();
-        out += sanitizeInlineTag(tagM[0]) ?? escapeHtml(tagM[0]);
+        atom(sanitizeInlineTag(tagM[0]) ?? escapeHtml(tagM[0]));
         i += tagM[0].length;
         continue;
       }
       const cmtM = /^<!--[\s\S]*?(?:-->|$)/.exec(src.slice(i));
       if (cmtM) {
-        flush();
-        out += cmtM[0];   // 注释在 innerHTML 里惰性无害（与块级净化器同口径保留注释节点）
+        atom(cmtM[0]);   // 注释在 innerHTML 里惰性无害（与块级净化器同口径保留注释节点）
         i += cmtM[0].length;
         continue;
       }
@@ -484,7 +609,12 @@ export function renderInline(src: string, defs: Defs): string {
     i++;
   }
   flush();
-  return out;
+  return toks;
+}
+
+/** 内联渲染唯一入口：分词 → 分隔符栈强调 → 序列化 */
+export function renderInline(src: string, defs: Defs): string {
+  return serialize(applyEmphasis(tokenize(src, defs)));
 }
 
 /* ══════════════ 块层 ══════════════ */
@@ -621,7 +751,10 @@ export function fenceOpen(line: string): Fence | null {
   if (c !== "`" && c !== "~") return null;
   let n = 0;
   while (n < t.length && t[n] === c) n++;
-  return n >= 3 ? { ch: c, len: n } : null;
+  if (n < 3) return null;
+  // CC 4.5（第五批）：反引号围栏的 info string 不得再含反引号（``` ``` 不成栏）↔ Rust fence_open
+  if (c === "`" && t.slice(n).includes("`")) return null;
+  return { ch: c, len: n };
 }
 
 /** 围栏闭合行：同字符、长度 ≥ 开启长度、其后仅空白。 */
@@ -661,17 +794,22 @@ function indentWidth(ws: string): number {
   return col;
 }
 
-/** 剥掉 ≤4 列缩进（Tab 按制表位对齐，CommonMark 缩进代码口径）。 */
-function stripIndentCol4(line: string): string {
+/** 剥掉 ≤cols 列缩进（Tab 按制表位对齐；跨边界的 Tab 展开为剩余空格，CC 2.2/缩进代码口径）。 */
+function stripIndentCols(line: string, cols: number): string {
   let col = 0, p = 0;
-  while (p < line.length && col < 4) {
+  while (p < line.length && col < cols) {
     const c = line[p];
     if (c === " ") { col++; p++; }
-    else if (c === "\t") { col += 4 - (col % 4); p++; }
+    else if (c === "\t") {
+      const w = 4 - (col % 4);
+      if (col + w <= cols) { col += w; p++; }
+      return " ".repeat(Math.max(0, cols - col)) + line.slice(p); // tab 跨界：拆成空格
+    }
     else break;
   }
   return line.slice(p);
 }
+const stripIndentCol4 = (line: string): string => stripIndentCols(line, 4);
 
 /** 列表标记拆分（↔ Rust after_list_marker）：命中返回内容起始列——
  *  缩进 + (-|*|+|n.|n\)) + 空白；"- " 空内容也算命中；不要求标记后有字符。 */
@@ -685,7 +823,8 @@ export function afterListMarkerIdx(line: string): number {
   else {
     let k = i;
     while (k < line.length && line[k] >= "0" && line[k] <= "9") k++;
-    if (k > i && k < line.length && (line[k] === "." || line[k] === ")")) j = k + 1;
+    // CC 5.2（第五批）：有序标记数字至多 9 位，超限不是列表标记（#266）↔ Rust after_list_marker
+    if (k > i && k - i <= 9 && k < line.length && (line[k] === "." || line[k] === ")")) j = k + 1;
   }
   if (j < 0) return -1;
   if (j >= line.length) return j; // 标记即整行（"-"/"1."）= 空列表项（CC 5.2，↔ Rust after_list_marker）
@@ -732,13 +871,19 @@ export function splitSrcLines(src: string): string[] {
   return normalizeInput(src).replace(/\r\n?/g, "\n").split("\n");
 }
 
-/** YAML front matter（GitHub/Jekyll 扩展，2026-11-22）：首行恰为 `---`，收口行 `---`/`...`；
- *  返回收口行下标，无收口 → -1（↔ Rust front_matter_end）。区内行不产标题/任务/Setext。 */
+/** YAML front matter（GitHub/Jekyll 扩展，2026-11-22；第五批收紧）：首行恰为 `---`，收口行 `---`/`...`；
+ *  返回收口行下标，不成立 → -1（↔ Rust front_matter_end 同判据）。
+ *  body 必须整体"像 YAML"：空行外只允许一行有内容（多段落即普通 hr/setext），且该行是
+ *  `key:`、`- 项`、`# 注释`、`key: [流]` 形态——cmark 官方例 #96/#98（hr+Setext 序列）据此不再误判。 */
 export function frontMatterEnd(lines: string[]): number {
   if (lines.length === 0 || lines[0].trimEnd() !== "---") return -1;
+  const looksYaml = (l: string) => /^(?:# |- |["']|[A-Za-z_][\w.-]*:(?:[ \t]|$))/.test(l); // 冒号必选：裸单词不算键值行（#96 教训）
   for (let i = 1; i < lines.length; i++) {
     const t = lines[i].trimEnd();
-    if (t === "---" || t === "...") return i;
+    if (t !== "---" && t !== "...") continue;
+    const body = lines.slice(1, i).map((l) => l.trim()).filter((l) => l !== "");
+    if (body.length > 0 && body.every(looksYaml)) return i;
+    return -1; // 找到收口但 body 不像 YAML（裸文本/空 body）：整段按普通 hr/段落/Setext 走 CommonMark
   }
   return -1;
 }
@@ -1064,7 +1209,10 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
    * 子列表出栈时拼成完整字符串插回**父 <li> 的闭标签之前**（此前顶级 push，子 <ul> 成了
    * 父 <li> 的兄弟节点，HTML 非法：语义/可访问性/CSS 选择器/导出全受影响）。 */
   interface LiRef { arr: string[]; tagIdx: number; closeIdx: number }
-  interface LEntry { type: "ul" | "ol"; indent: number; start: number; startNum: number; segs: string[]; openLi: LiRef | null;
+  interface LEntry { type: "ul" | "ol";
+    /** cmark 列模型（第六批 S3）：容器首标记列 / 最近一项内容列（续行、嵌套、闭合基准） */
+    markerCol: number; contentCol: number;
+    start: number; startNum: number; segs: string[]; openLi: LiRef | null;
     /** loose 判定（CC 5.4，第三档 audit 5.2-d）：列表内部出现过空行 → 出栈时给纯文本项包 <p> */
     loose: boolean; pendingBlank: boolean;
     /** 延续判据（第三档 audit 5.4-c/f）：无序=项目符号字符、有序=分隔符（. 或 )）；变化即开新列表 */
@@ -1074,8 +1222,10 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
   let para: string[] = [];
   let paraStart = 0, paraEnd = 0;   // 显式记账：flushPara 输出时机总在消费之后，届时 i 已越前（二轮评审 2.6.2）
   let paraToLi = false;             // 本段是列表项的后续内容（延续/空行后正文），去向是 <li> 内部还是顶级
+  let paraLazy = false;             // 紧项懒延续：并入首段而非另起 <p>（第六批 S8）
   let blank = false;                // 空行挂起标记：loose list 不在空行处急着关列表，看下一行再定（需求方 2026-11-17 缺陷）
   let lastListLine = -1;            // 列表当前产出的最后真实内容行（收容器时的 data-line-end 与 start 边界都取它）
+  let lastContentEntry: LEntry | null = null; // 最后一块内容落到的容器（loose 归属判定，#319）
 
   /** 块锚属性串：起止绝对行号（闭区间） */
   const LA = (s: number, e: number) =>
@@ -1098,14 +1248,28 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       }
     }
     const e = Math.max(l.start, end);
-    // 容器内各项连续拼接（第三档 audit 5.2-d）：此前 out.join("\n") 会在 <p>a</p> 与 </li>
-    // 之间塞换行，松散列表的 <p> 包裹被字面断言漏判。改为 body 内部无分隔，块间仍由 out 分列。
-    const body = l.segs.join("");
+    // cmark 换行格式（第六批 S1）：行内文本之后紧跟块级子件（嵌套表/项内代码/loose 段）要一个换行——
+    // canonical 语义比对把 "foo\n<ul" 折成文本 "foo "，缺换行的 "foo" 判不等（#294/#296 一族主因）。
+    // segs 布局：["<li…>", inner, …块件…, "</li>"] ×N；纯块结构之间空白可折叠，无需补。
+    const bodyParts: string[] = [];
+    for (let p = 0; p < l.segs.length; p++) {
+      const s = l.segs[p];
+      if (!s.startsWith("<li")) { bodyParts.push(s); continue; }
+      const inner = p + 1 < l.segs.length ? l.segs[p + 1] : "";
+      let q = p + 2; // 块件从 inner 之后开始（此前把 inner 又当块件重复输出了一遍）
+      const blocks: string[] = [];
+      while (q < l.segs.length && l.segs[q] !== "</li>") { blocks.push(l.segs[q]); q++; }
+      let li = s + inner;
+      for (const b of blocks) li += (inner !== "" && !inner.startsWith("<") && b === blocks[0] ? "\n" : "") + b;
+      if (blocks.length > 0) li += "\n";
+      bodyParts.push(li + "</li>");
+      p = q; // 跳过已消费的 "</li>"
+    }
     const container =
       `<${l.type}${l.type === "ol" ? ` start="${l.startNum}"` : ""}${LA(l.start, e)}>` +
-      body + (l.type === "ul" ? "</ul>" : "</ol>");
+      bodyParts.join("") + (l.type === "ul" ? "</ul>" : "</ol>");
     const par = listStack[listStack.length - 1];
-    if (par && par.openLi) par.openLi.arr.splice(par.openLi.closeIdx, 0, container);
+    if (par && par.openLi) { par.openLi.arr.splice(par.openLi.closeIdx, 0, container); par.openLi.closeIdx++; } // 子容器之后的块件排其后
     else if (par) par.segs.push(container);
     else out.push(container);
   };
@@ -1119,17 +1283,26 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
     if (para.length) {
       // join("\n")：段内换行保留给行内公式扫描判「跨行 miss」；HTML 折叠空白，渲染结果与 join(" ") 相同
       // 纯图片段（需求补充：多个连续图片横向排列不换行）：整段只有 ![]() 语法 → imgrow flex 行
-      const imgOnly = para.every((l) => IMG_LINE_RE.test(paraBare(l).trim()));
-      // 段内硬换行（GFM 6.12）：BR_MARK 连接保留；**段末行**的尾标记不产生换行，去掉
+      const imgOnly = para.every((l) => IMG_LINE_RE.test(l.trim()));
+      // cmark 6.8：段落末行行尾空白不进输出（P0-CM #226——影响 <br> 后文对齐）
       const ps = para.slice();
-      if (ps.length) ps[ps.length - 1] = paraBare(ps[ps.length - 1]);
+      if (ps.length) ps[ps.length - 1] = ps[ps.length - 1].replace(/[ \t]+$/, "");
       const joined = ps.join("\n");
       const li = curLi();
       if (paraToLi && li) {
         // CommonMark loose/lazy 语义：列表项的后续正文并进该 <li>（此前作为游离 <p> 混进 <ol> 里）；
         // 行锚尾随正文扩到 paraEnd
-        if (blank && listStack.length) listStack[listStack.length - 1].loose = true; // 空行后的项内段落=loose 信号（audit 5.2-e）
-        li.arr[li.closeIdx] = ((imgOnly ? '<p class="imgrow">' : "<p>") + renderInline(joined, defs) + "</p>") + li.arr[li.closeIdx];
+        const owner = listStack.find((e) => e.segs === li.arr) ?? null;
+        if (paraLazy) {
+          // 紧项懒延续（S8/#291/292）：直接续到首段文本后，同段落、不包 <p>、不转 loose
+          const cur = li.arr[li.tagIdx + 1];
+          li.arr[li.tagIdx + 1] = (cur ? cur + "\n" : "") + renderInline(joined, defs);
+        } else {
+          if (blank && listStack.length) listStack[listStack.length - 1].loose = true; // 空行后的项内段落=loose 信号（audit 5.2-e）
+          li.arr.splice(li.closeIdx, 0, (imgOnly ? '<p class="imgrow">' : "<p>") + renderInline(joined, defs) + "</p>");
+          li.closeIdx++; // 文档顺序（第六批）
+        }
+        lastContentEntry = owner; // 空行归属：cmark 段落也是「最后一块内容」
         li.arr[li.tagIdx] = li.arr[li.tagIdx].replace(/data-line-end="\d+"/, `data-line-end="${baseLine + paraEnd}"`);
         if (paraEnd > lastListLine) lastListLine = paraEnd;
       } else {
@@ -1137,6 +1310,7 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       }
       para = [];
       paraToLi = false;
+      paraLazy = false;
     }
   };
   const inline = (s: string) => renderInline(s, defs);
@@ -1167,30 +1341,31 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
   const accumulate = (line: string) => {
     if (!para.length) {
       paraStart = i;
-      // 空行后的缩进行=列表项的 loose 续行正文（CC 文档速成篇的"编号正文+缩进段"形态）；
-      // 空行后的顶格非列表内容才是列表边界。lazy 续行（无空行）始终并进当前 <li>。
-      if (blank && !/^ {2,}/.test(line)) closeListsHere();
+      // 列模型（第六批 S3）：空行后缩进不足项内容列的行才关闭列表（旧 /^ {2,}/ 近似作废）
+      if (blank && listStack.length && indentCol(line) < listStack[listStack.length - 1].contentCol) closeListsHere();
       paraToLi = listStack.length > 0;
+      // S8 紧项懒延续：无空行紧贴标记行 → 并入该项首段（同段落、不包 <p>，#291/292/312 形态）
+      paraLazy = paraToLi && !blank && curLi() != null && lastListLine === i - 1;
     }
     paraEnd = i;
     if (listStack.length && i > lastListLine) lastListLine = i;
-    // GFM 6.12 硬换行（2026-11-21 P0）：行尾 ≥2 空格/tab，或行尾单个（非 `\\`）反斜杠 → BR_MARK；
-    // 反斜杠形式吃掉那个反斜杠。段末行的尾标记由 flushPara 统一剥除（段尾不产生硬换行）。
-    let pTxt = line.trim();
-    if (/[ \t]{2,}$/.test(line)) pTxt += BR_MARK;
-    else {
-      const noWs = line.replace(/[ \t]+$/, "");
-      if (noWs.length > 1 && noWs.endsWith("\\") && !noWs.endsWith("\\\\")) pTxt = pTxt.slice(0, -1) + BR_MARK;
-    }
-    para.push(pTxt);
+    // CommonMark 6.7 硬换行（2026-11-22 P0-CM）：块层保留行原文（只剥行首缩进、**保留行尾空白/反斜杠**），
+    // ≥2 空格或行尾 `\` 的 <br> 判定挪进内联叶子（emitTextLeaf）——
+    // 代码段/HTML 属性里的行尾空格不再被控制符替换（#640-643），段末反斜杠不再丢字符（#644）。
+    para.push(line.replace(/^[ \t]+/, ""));
     i++;
   };
-  /** loose 项内块级内容（缩进 ≥2 的围栏/$$/引用块）：并进当前 <li>，列表不因此断掉 */
-  const itemBlock = (line: string) => listStack.length > 0 && curLi() != null && /^ {2,}/.test(line);
+  /** loose 项内块级内容（第六批列模型：缩进 ≥ 当前容器内容列的围栏/$$/引用块）：并进当前 <li>，列表不断掉 */
+  const itemBlock = (line: string) =>
+    listStack.length > 0 && curLi() != null && indentCol(line) >= listStack[listStack.length - 1].contentCol;
   const emitBlock = (t: string, sLine: number, eLine: number) => {
     const li = curLi();
     if (listStack.length && li) {
-      li.arr[li.closeIdx] = t + li.arr[li.closeIdx];
+      // 空行后还有内容进这一项 → 该容器转 loose（#263/264：fence/代码/引用等吸收也算项内第二块）
+      if (blank) listStack[listStack.length - 1].loose = true;
+      lastContentEntry = listStack[listStack.length - 1];
+      li.arr.splice(li.closeIdx, 0, t); // 文档顺序插入（第六批：头插会把同项多块的顺序倒置）
+      li.closeIdx++;
       li.arr[li.tagIdx] = li.arr[li.tagIdx].replace(/data-line-end="\d+"/, `data-line-end="${baseLine + eLine}"`);
       if (eLine > lastListLine) lastListLine = eLine;
       void sLine;
@@ -1232,12 +1407,13 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       if (!inItemF) closeListsHere(); else blank = false;
       const f0 = i;
       const lang = fenceInfo(line) || "text";
+      const fInd = indentWidth(line); // CC 4.5（第五批）：内容行按开栏缩进 dedent（#131-133）
       i++;
       const buf: string[] = [];
       while (i < lines.length) {
         const k2 = feed(lines[i], i);
         if (k2 === "fc") break;
-        buf.push(lines[i]);
+        buf.push(fInd > 0 ? stripIndentCols(lines[i], fInd) : lines[i]);
         i++;
       }
       const fEnd = i < lines.length ? i : lines.length - 1; // 闭围栏所在行；未闭合吃到 EOF
@@ -1298,7 +1474,33 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
     if (/^\s*$/.test(line)) {
       flushPara();      // 项内延续正文到此为止（并进 <li>）
       blank = true;     // 不关列表：下一行若仍是列表项 → 同一 <ol> 继续（loose list）；若否 → 各分支经 closeListsHere 以内容行收口
+      // 注意：cmark 不按「连续两个空行」关列表（#262/#306 实证）——空行数只影响 loose，边界由列匹配裁决
       i++;
+      continue;
+    }
+    if (kind === "para" && listStack.length > 0 && curLi() != null && para.length === 0 &&
+        indentCol(line) >= listStack[listStack.length - 1].contentCol + 4) {
+      // S4（第六批）：比项内容列再深 ≥4 列、且非标记/ATX（kind 已排除）、无在积段落 → 项内缩进代码
+      //（#254/264/270/286-290 族）。行仍逐行 feed 状态机——kind 是懒 Para，不占标题/任务序号，坐标不动。
+      const cc = listStack[listStack.length - 1].contentCol;
+      const c0 = i;
+      const buf: string[] = [stripIndentCols(line, cc)];
+      i++;
+      for (;;) {
+        let p = i;
+        while (p < lines.length && /^\s*$/.test(lines[p])) p++;
+        const raw2 = p < lines.length ? lines[p] : undefined;
+        if (raw2 === undefined || indentCol(raw2) < cc + 4 || raw2.trimStart()[0] === "#" ||
+            afterListMarkerIdx(raw2) >= 0 || fenceOpen(raw2) !== null || /^<[!?/A-Za-z]/.test(raw2.trimStart())) break;
+        for (; i < p; i++) buf.push("");
+        buf.push(stripIndentCols(lines[i], cc));
+        feed(lines[i], i);
+        i++;
+      }
+      while (buf.length > 1 && buf[buf.length - 1] === "") buf.pop();
+      const cEnd = c0 + buf.length - 1;
+      emitBlock(codeblockHtml(buf.join("\n"), "text", c0, cEnd, c0, cEnd), c0, cEnd);
+      blank = false;
       continue;
     }
     const dp = para.length ? null : defParse(lines, i);
@@ -1503,14 +1705,20 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
     const li = kind === "list" ? line.match(/^(\s*)([-*+]|\d+[.)])(?:[ \t]+(.*))?$/) : null;
     if (li) {
       flushPara();
-      const indent = Math.floor(indentWidth(li[1]) / 2); // P2：Tab 按 4 列制表位算深度（此前按字符数，tab 嵌套压平）
       const type = /[-*+]/.test(li[2]) ? "ul" : "ol";
       // 延续判据（第三档 audit 5.4-c/f）：无序=项目符号字符，有序=分隔符（. 或 )）；
-      // 同类型但符号/分隔符变化 → 收容器开新表（CC 5.4 例 246/248；此前只比 ul/ol 会误合并）
+      // 同类型但符号/分隔符变化 → 收容器开新表（CC 5.4 例 246/248）
       const markChar = type === "ul" ? li[2] : li[2].slice(-1);
+      const markerCol = indentWidth(li[1]);                       // S3：列模型——标记起始列
+      const mEnd = markerCol + li[2].length;                      // 标记本体右边界（标记全 ASCII，字符数=列宽；indentWidth 只数空白，误用致内容列少算）
+      const afterMarker = line.slice(li[1].length + li[2].length);
+      const spAfter = /^[ \t]*/.exec(afterMarker)![0];
+      const hasContent = afterMarker.length > spAfter.length;
+      // 内容列（cmark）：标记后 1~4 空格→列=边界+空格数；≥5 空格→列=边界+1（多余空格归内容）；空项→边界+1
+      const contentCol = !hasContent || indentCol(spAfter) >= 5 ? mEnd + 1 : mEnd + indentCol(spAfter);
       // 源编号=start 双保险：CommonMark 只有首项编号有意义；即便列表被标题/类型切换真实切断，
       // 新容器也从作者写的编号起算——"4. xxx" 永远不会再显示成 "1."（需求方 2026-11-17 缺陷）
-      const startNum = type === "ol" ? (parseInt(li[2], 10) || 1) : 1;
+      const startNum = type === "ol" ? (Number.isNaN(parseInt(li[2], 10)) ? 1 : parseInt(li[2], 10)) : 1; // 0 是合法起始值（#267，旧 ||1 把它吞成 1）
       let text = li[3] ?? ""; // 空列表项：标记后无内容
       let task: boolean | null = null;
       // \s* 而非 \s+：Rust task_parts 只认 "[x]"/"[ ]" 本身，不强制 ] 后空白（如 "- [ ]x"）。
@@ -1522,18 +1730,18 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       }
       const afterBlank = blank; // 本项前是否隔着空行（loose 判据，audit 5.2-d）
       blank = false;   // 空行后的列表项：同一列表继续（loose list 正是此前编号恒 1 的成因）
-      while (listStack.length && listStack[listStack.length - 1].indent > indent) popList(lastListLine);
-      if (!listStack.length || listStack[listStack.length - 1].indent < indent) {
-        // 更深缩进 → 新的子列表容器（出栈时插回父 <li>）；顶级列表出栈时拼好推入 out
-        listStack.push({ type, indent, start: i, startNum, segs: [], openLi: null, loose: false, pendingBlank: false, marker: markChar });
-      } else if (listStack[listStack.length - 1].type !== type || listStack[listStack.length - 1].marker !== markChar) {
-        popList(lastListLine);
-        listStack.push({ type, indent, start: i, startNum, segs: [], openLi: null, loose: false, pendingBlank: false, marker: markChar });
-      }
-      // 空行分开的兄弟项 → 当前容器整表转 loose（CC 5.4：一项 loose 全表 loose）
-      if (afterBlank) {
-        const cont = listStack[listStack.length - 1];
-        if (cont.segs.length > 0) cont.loose = true;
+      // cmark 列匹配（第六批 S3）：先关「首标记列比本行更靠右」的深层容器；再按列位分派——
+      //  m ≥ 内容列 → 子容器嵌套；m ∈ [容器列, 容器列+4) → 同容器兄弟项；
+      //  m ∈ [容器列+4, 内容列) → 越界低列：CC 判为**当前项懒延续文本**（#312 尾项形态）；
+      //  类型/符号不同 → 收旧开新表（5.4-c/f 口径）。
+      while (listStack.length && markerCol < listStack[listStack.length - 1].markerCol) popList(lastListLine);
+      let cont: LEntry | undefined = listStack[listStack.length - 1];
+      let asLazyText = false;
+      if (cont) {
+        if (markerCol >= cont.contentCol) cont = undefined;                 // 更深 → push 子容器
+        else if (markerCol >= cont.markerCol + 4) asLazyText = true;        // 越界且未及内容列
+        else if (cont.type !== type || cont.marker !== markChar) { popList(lastListLine); cont = undefined; }
+        else cont.contentCol = contentCol;                                  // 兄弟项：内容列随本项刷新
       }
       // <li> 三段式输出（开标签/正文/闭标签）：落在**当前列表自己的 segs**里，
       // loose 延续正文与子容器都插到闭标签前；行锚尾随正文扩到末行
@@ -1545,7 +1753,20 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
         arr.push(inner);
         arr.push("</li>");
         l.openLi = { arr, tagIdx, closeIdx: tagIdx + 2 };
+        lastContentEntry = l;
       };
+      if (asLazyText) {
+        accumulate(line); // 越界标记行按普通文本走段落/懒延续通道
+        continue;
+      }
+      if (!cont) listStack.push({ type, markerCol, contentCol, start: i, startNum, segs: [], openLi: null, loose: false, pendingBlank: false, marker: markChar });
+      // 空行分开的兄弟项 → 当前容器整表转 loose（CC 5.4：一项 loose 全表 loose）。
+      // 归属判定（#319）：空行只染「空行前最后一块内容所在的容器」——空行若发生在嵌套子表
+      // 内部，外层兄弟项不因这个空行转 loose。lastContentEntry 在 pushLi/emitBlock/项内段落
+      // 三处更新；只有目标容器与其同一实例才转 loose。
+      if (afterBlank && listStack[listStack.length - 1] === lastContentEntry) {
+        listStack[listStack.length - 1].loose = true;
+      }
       // CC 4.7（第三档 audit 4.7-f）：链接引用定义可以就是列表项内容——注册进 defs，项体为空
       const idf = defParse([text], 0);
       if (idf) {
@@ -1555,6 +1776,41 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
         lastListLine = i;
         i++;
         continue;
+      }
+      if (task === null && text) {
+        // S5（第六批）：标记后同行块级内容——ATX 标题/hr（#300、#61）。kind 仍是 List
+        //（Rust 不计标题/任务）→ 出块但**不占 data-sec**，两侧序号一致。
+        const hh = headingMatch(text);
+        if (hh && /^#{1,6}(\s|$)/.test(text)) {
+          pushLi(LA(i, i), `<h${hh.level}${LA(i, i)}>${inline(hh.text)}</h${hh.level}>`);
+          lastListLine = i; i++; continue;
+        }
+        if (isHrLine(text.trim())) {
+          pushLi(LA(i, i), `<hr${LA(i, i)}>`);
+          lastListLine = i; i++; continue;
+        }
+        // S6：标记后紧跟另一标记（`- - foo`/`1. - 2. foo`，#298/299）→ 同行嵌套列表逐层剥
+        const nm = /^([-*+]|\d+[.)])(?:[ \t]+([\s\S]*))?$/.exec(text);
+        if (nm) {
+          const chain: Array<{ t: "ul" | "ol"; n: number }> = [];
+          let rem = text;
+          for (;;) {
+            const g = /^([-*+]|\d+[.)])(?:[ \t]+([\s\S]*))?$/.exec(rem);
+            if (!g) break;
+            const t = /[-*+]/.test(g[1]) ? "ul" as const : "ol" as const;
+            chain.push({ t, n: t === "ol" ? (parseInt(g[1], 10) || 1) : 1 });
+            rem = g[2] ?? "";
+          }
+          if (chain.length > 0) {
+            let inner = inline(rem);
+            for (let z = chain.length - 1; z >= 0; z--) {
+              const { t, n } = chain[z];
+              inner = `<${t}${t === "ol" && n !== 1 ? ` start="${n}"` : ""}${LA(i, i)}><li${LA(i, i)}>${inner}</li></${t}>`;
+            }
+            pushLi(LA(i, i), inner);
+            lastListLine = i; i++; continue;
+          }
+        }
       }
       if (task !== null) {
         const cbx = (clickable: boolean, t: boolean) =>
@@ -1599,8 +1855,11 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
 
 export function mdToHtml(src: string): string {
   // 真实 U+0001（异常字节/GBK 解码噪声）会与转义占位符撞车：入口剥除，可见性无损；
-  // NUL→U+FFFD（CommonMark 2.1 输入预处理，P2；仅显示层，内存/磁盘 src 不动）
-  return renderBlocks(normalizeInput(src.split(ESCAPED).join("")), new Map());
+  // NUL→U+FFFD（CommonMark 2.1 输入预处理，P2；仅显示层，内存/磁盘 src 不动）。
+  // 尾随 \n：cmark 每块输出都以换行收尾——HTML 解析器的活跃格式元素重建（<a> 跨 </p>）
+  // 依赖该换行落位，缺它会让 #476 一类官方例结构比对错位。空文档仍返回空串。
+  const body = renderBlocks(normalizeInput(src.split(ESCAPED).join("")), new Map());
+  return body === "" ? "" : body + "\n";
 }
 
 /** 与 Rust toggle_task 同一坐标系：围栏外第 nth 个任务（0 起）。

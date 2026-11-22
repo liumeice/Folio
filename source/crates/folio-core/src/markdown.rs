@@ -98,11 +98,14 @@ pub(crate) fn fence_open(line: &str) -> Option<(char, usize)> {
         return None;
     }
     let n = t.chars().take_while(|&x| x == c).count();
-    if n >= 3 {
-        Some((c, n))
-    } else {
-        None
+    if n < 3 {
+        return None;
     }
+    // CC 4.5（第五批）：反引号围栏 info string 不得再含反引号（``` ``` 不成栏）↔ md.ts fenceOpen
+    if c == '`' && t[n..].contains('`') {
+        return None;
+    }
+    Some((c, n))
 }
 
 /// 围栏闭合行：同字符、长度 ≥ 开启长度、其后仅空白（md.ts::fenceClose 同口径；缩进不设上限同上）。
@@ -239,13 +242,35 @@ pub(crate) fn line_kinds(src: &str) -> Vec<Kind> {
     out
 }
 
-/// YAML front matter：首行恰为 `---` 时向后找 `---`/`...` 收口行，返回其下标；
-/// 无收口（如文档以孤立 hr 开头）→ None。↔ md.ts frontMatterEnd 同判据。
+/// YAML front matter（第五批收紧）：首行恰 `---`，向后找 `---`/`...` 收口；body 去空行后必须
+/// **恰好一行**且形如 `key:` / `- 项` / `# 注释` 才算头部——多段落/裸文本是普通 hr+Setext
+/// （cmark 官方例 #96/#98 回归的判据）。↔ md.ts frontMatterEnd 同逻辑。
 pub(crate) fn front_matter_end(lines: &[&str]) -> Option<usize> {
     if lines.first()?.trim_end() != "---" {
         return None;
     }
-    (1..lines.len()).find(|&i| matches!(lines[i].trim_end(), "---" | "..."))
+    let close = (1..lines.len()).find(|&i| matches!(lines[i].trim_end(), "---" | "..."))?;
+    let body: Vec<&str> = lines[1..close].iter().copied().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let looks_yaml = |t: &str| -> bool {
+        if t.starts_with("# ") || t.starts_with("- ") || t.starts_with('"') || t.starts_with('\'') {
+            return true;
+        }
+        match t.find(':') {
+            Some(p) => {
+                let key = &t[..p];
+                !key.is_empty()
+                    && key.chars().next().is_some_and(|c| c.is_alphanumeric() || c == '_')
+                    && key.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+                    && (t.len() == p + 1 || t.as_bytes()[p + 1] == b' ' || t.as_bytes()[p + 1] == b'\t')
+            }
+            None => false,
+        }
+    };
+    if !body.is_empty() && body.iter().all(|l| looks_yaml(l)) {
+        Some(close)
+    } else {
+        None
+    }
 }
 
 /// 分隔线（GFM 4.1 变体）：≥3 个同一 -/_/*，字符间可夹空白，行尾可空白。
@@ -402,7 +427,8 @@ fn after_list_marker(line: &str) -> Option<&str> {
         while k < chars.len() && chars[k].1.is_ascii_digit() {
             k += 1;
         }
-        if k == i || k >= chars.len() || (chars[k].1 != '.' && chars[k].1 != ')') {
+        // CC 5.2（第五批）：有序标记数字至多 9 位（↔ md.ts afterListMarkerIdx）
+        if k == i || k - i > 9 || k >= chars.len() || (chars[k].1 != '.' && chars[k].1 != ')') {
             return None;
         }
         j = k + 1;
@@ -581,6 +607,17 @@ mod tests {
     }
 
     #[test]
+    fn cm_quick_fences_and_markers() {
+        // CC 4.5（第五批，↔ tests/md.test.ts 同料）：反引号围栏 info 含 ` 不成栏
+        assert_eq!(headings("``` ```\n# 不是标题\n").len(), 1, "info 反引号拒开围栏：# 行照计标题");
+        // CC 5.2：数字标记至多 9 位
+        assert_eq!(headings("1234567890. # 十位\n").len(), 0);
+        assert!(toggle_task("1234567890. [ ] x\n", 0).is_none(), "十位数字行不是 List");
+        // 0. 是合法起始序号（行种类仍是 List）
+        assert!(toggle_task("0. [ ] a\n", 0).unwrap().contains("[x]"));
+    }
+
+    #[test]
     fn front_matter_skipped() {
         // YAML front matter（GitHub/Jekyll 扩展，2026-11-22；↔ tests/md.test.ts 同料）
         let hs = headings("---\ntitle: 示例文档\ntags: [gfm, folio]\n---\n\n# 正文标题\n正文\n");
@@ -595,6 +632,11 @@ mod tests {
         // 头部之后 Setext 不受污染：正文+=== 仍计 h1（=→h1）
         let hs2 = headings("---\nt: x\n---\n\n正文\n===\n");
         assert_eq!((hs2.len(), hs2[0].level, hs2[0].line), (1, 1, 4));
+        // cmark 官方例回归防护（第五批收紧）：裸文本/空 body 不是头部 → 回到 hr+Setext 语义
+        let hs3 = headings("---\nFoo\n---\nBar\n---\nBaz\n");
+        assert_eq!(hs3.len(), 2, "#96：body 非 YAML → 普通 hr/Setext 序列（Foo、Bar 两个 h2）");
+        assert_eq!((hs3[0].text.as_str(), hs3[1].text.as_str()), ("Foo", "Bar"));
+        assert_eq!(headings("---\n---\n").len(), 0, "#98：空 body 不是头部");
     }
 
     #[test]
