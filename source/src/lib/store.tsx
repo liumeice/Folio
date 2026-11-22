@@ -26,7 +26,7 @@ function outlineSig(outline: readonly { sec: number; line: number; text: string 
 }
 import { quitApp } from "./actions";
 import * as ui from "./ui";
-import { dismissSplash } from "./boot";
+import { dismissSplash, bootNavType, shouldRestoreOnBoot } from "./boot";
 
 /* ── 草稿持久化（FR-7.7，异常退出找回）：按文档路径存 localStorage ── */
 const DRAFT_PREFIX = "folio:draft:";
@@ -879,7 +879,9 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     const restore = rc[0]?.meta ?? list[0];
     // 「启动时恢复上次文档」开关（设置 §4.8，需求方 2026-11-18）：关→空态直进、加快冷启动；
     // 深链/拖放 pending 在下方照常处理，不受开关影响（那是用户动作，不是自动恢复）。
-    if (restore && settings().restoreOnLaunch !== false) {
+    // bug 2026-11-22：WebView 刷新（原生右键菜单/快捷键）会整页重载——那不是冷启动，
+    // 开关=关时也不能把用户正读着的文档落回空态；判定口径见 boot.shouldRestoreOnBoot。
+    if (restore && shouldRestoreOnBoot(settings().restoreOnLaunch, bootNavType())) {
       try {
         const doc = await api.openDoc(restore.path);
         setDisk(doc.meta.id, doc.src);

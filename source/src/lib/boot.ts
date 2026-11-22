@@ -8,3 +8,20 @@ export function dismissSplash(): void {
   el.classList.add("gone");
   window.setTimeout(() => el.remove(), 500); // 等淡出过渡走完再摘除节点
 }
+
+/** 本次文档加载的导航类型（Navigation Timing）；拿不到（旧内核/mock）→ undefined，按冷启动处理 */
+export function bootNavType(): string | undefined {
+  try {
+    return (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 本次启动要不要自动恢复文档（bug 2026-11-22：WebView 刷新=整页重载被当冷启动，
+ *  「恢复上次文档=关」的用户直接落空态，当前文档"消失"）。
+ *  口径：冷启动尊重开关（关=空态快启）；会话内重启（navType=reload，含刷新通道与
+ *  WebView 渲染进程崩溃自动重载）无视开关恢复历史首位——那是用户正在读的那篇。 */
+export function shouldRestoreOnBoot(restoreOnLaunch: boolean | undefined, navType: string | undefined): boolean {
+  return restoreOnLaunch !== false || navType === "reload";
+}

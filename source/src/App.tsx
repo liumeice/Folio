@@ -162,6 +162,10 @@ export default function App() {
     const inEditor = typing && !!(t as HTMLElement).closest?.(".cm-host");
     const mod = ev.ctrlKey || ev.metaKey;
     const k = ev.key;
+    // 浏览器重载泄漏闸（bug 2026-11-22）：Ctrl+R / F5 / Ctrl+Shift+R 触发 WebView 整页重载，
+    // 阅读现场被当成冷启动。启动侧已有 reload 识别兜底（boot.shouldRestoreOnBoot），
+    // 但"刷新"从来不是产品动作——任何焦点下都不许漏给浏览器。
+    if (k === "F5" || (mod && (k === "r" || k === "R"))) { ev.preventDefault(); return; }
     if (mod && (k === "q" || k === "Q")) {
       ev.preventDefault();   // 无论焦点在哪都不漏给系统默认（WebView2 里 Ctrl+W 会直接关窗）
       if (!typing || inEditor) void quitApp(s);   // UI-03：非编辑器输入框中不触发退出确认
@@ -215,6 +219,12 @@ export default function App() {
     if (k === "Home") { ev.preventDefault(); ui.navTop(); }
   }
 
+  // WebView2 默认右键菜单出厂即开（wry `default_context_menus: true`），阅读窗区没有任何绑定
+  // 时浏览器内置菜单就会露出——其中的「刷新」=整页重载，「另存为/打印/检查」更是产品面不该
+  // 有的动作（bug 2026-11-22）。侧栏/编辑器自己的菜单在各自节点已 preventDefault，
+  // 这里做全窗口兜底；粘贴等需求走应用内菜单与 Ctrl+V，不依赖浏览器菜单。
+  function onContextMenu(e: MouseEvent) { e.preventDefault(); }
+
   function onDocClick(e: MouseEvent) {
     const t = e.target as HTMLElement;
     if (!t.closest("#menubar")) ui.setMenuOpen(null);
@@ -227,6 +237,7 @@ export default function App() {
   onMount(() => {
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("click", onDocClick);
+    document.addEventListener("contextmenu", onContextMenu);
     // passive:false —— 只有它才能 preventDefault 掉 WebView 的 Ctrl+滚轮整页缩放
     document.addEventListener("wheel", onWheel, { passive: false });
     let disposeDrag: (() => void) | undefined;
