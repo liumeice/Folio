@@ -663,8 +663,12 @@ export default function Reader() {
       e.preventDefault();
       const href = (a.getAttribute("href") ?? "").trim();
       if (href.startsWith("#")) {
-        // UI-05：文档内锚点——按 id 或标题文本定位并滚动（此前只 preventDefault，点了没反应）
+        // UI-05：文档内锚点——按 id 或标题文本定位并滚动（此前只 preventDefault，点了没反应）。
+        // 2026-11-22 起先全库按 id 找（脚注 #fn-N/#fnref-N 等正文自带锚点），再回落 data-sec 标题。
         const want = decodeSafe(href.slice(1));
+        let byId: HTMLElement | null = null;
+        try { byId = article.querySelector<HTMLElement>(`[id="${want.replace(/["\\]/g, "\\$&")}"]`); } catch { /* 非法 id 字符：回落标题路径 */ }
+        if (byId) { byId.scrollIntoView({ behavior: "smooth", block: "start" }); flash(byId); return; }
         const hs = [...article.querySelectorAll<HTMLElement>(HSEC)];
         const h = hs.find((x) => x.id === want) ?? hs.find((x) => (x.textContent ?? "").trim() === want);
         if (h) { h.scrollIntoView({ behavior: "smooth", block: "start" }); flash(h); }

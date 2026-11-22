@@ -12,7 +12,7 @@
  * 内联层支持：嵌套链接包图 [![a](i)](u)、参考式 [x][1] + 定义行、
  *   自动链接 <url>/<mailto>、裸 URL、反引号码段保护、反斜杠转义、强调/删除线、GFM emoji 短代码。 */
 import { applyEmojis } from "./emoji.ts";
-import { sanitizeHtml, sanitizeInlineTag } from "./htmlsan.ts";
+import { sanitizeHtml, sanitizeInlineTag, isAllowedTag } from "./htmlsan.ts";
 
 /** CommonMark 4.6 类型 6 块标签表（规范原单，含已废弃项保持同集合）：这些标签的行可带后续内容直接开块。 */
 const HTML_BLOCK_TAGS = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)$/i;
@@ -402,6 +402,21 @@ export function renderInline(src: string, defs: Defs): string {
       i++;
       continue;
     }
+    if (c === "[" && FN) {
+      // 脚注引用 [^标签]：有定义有编号 → 上标链接；否则按普通中括号文本（GitHub 同款回落）
+      const fr = /^\[\^([^\]\s]{1,64})\]/.exec(src.slice(i));
+      if (fr) {
+        const n = FN.num.get(fr[1]);
+        if (n !== undefined) {
+          flush();
+          const idAttr = FN.seen.has(fr[1]) ? "" : ` id="fnref-${n}"`;
+          FN.seen.add(fr[1]);
+          out += `<sup class="fnref"${idAttr}><a href="#fn-${n}">[${n}]</a></sup>`;
+          i += fr[0].length;
+          continue;
+        }
+      }
+    }
     const isImg = c === "!" && src[i + 1] === "[";
     if (c === "[" || isImg) {
       const open = isImg ? i + 1 : i;
@@ -570,6 +585,7 @@ export function defParse(lines: string[], i: number): { label: string; url: stri
   const m = lines[i]?.match(DEF_HEAD_RE);
   if (!m) return null;
   const label = m[1];
+  if (label.startsWith("^")) return null; // [^x]: 是脚注定义（GitHub 扩展），不再充当链接引用标签
   let rest = m[2];
   let used = 1;
   if (rest === "") {
@@ -716,6 +732,78 @@ export function splitSrcLines(src: string): string[] {
   return normalizeInput(src).replace(/\r\n?/g, "\n").split("\n");
 }
 
+/** YAML front matter（GitHub/Jekyll 扩展，2026-11-22）：首行恰为 `---`，收口行 `---`/`...`；
+ *  返回收口行下标，无收口 → -1（↔ Rust front_matter_end）。区内行不产标题/任务/Setext。 */
+export function frontMatterEnd(lines: string[]): number {
+  if (lines.length === 0 || lines[0].trimEnd() !== "---") return -1;
+  for (let i = 1; i < lines.length; i++) {
+    const t = lines[i].trimEnd();
+    if (t === "---" || t === "...") return i;
+  }
+  return -1;
+}
+
+/* ── 脚注（GitHub 扩展，非 GFM 规范，2026-11-22）──
+ * 定义 = 顶格 `[^标签]: 内容` + 后续 ≥2 列缩进延续行；引用 = 行内 `[^标签]`。
+ * 编号按引用首次出现顺序（GitHub 同规则）；正文中定义块被收集不内联渲染，
+ * 文末汇总为 .footnotes 节。坐标系安全：定义行在块层照常喂行种类状态机（Rust 视角
+ * 它们是 Para/Head/List），栏内真任务的隐藏 data-task 占位打在定义位置——与 $$ 块同方案。 */
+interface FnReg {
+  defs: Map<string, string[]>;                    // 标签 → 去缩进后的内容行
+  num: Map<string, number>;                       // 标签 → 编号（仅被引用的）
+  starts: Map<number, { label: string; end: number }>; // 定义首行（绝对行号）→ 覆盖区间
+  seen: Set<string>;                              // 已出过 id="fnref-N" 的标签（回跳锚只给首个引用）
+}
+let FN: FnReg | null = null;
+const FN_DEF_RE = /^ {0,3}\[\^([^\]\s]{1,64})\]:[ \t]*(.*)$/;
+const FN_REF_RE = /\[\^([^\]\s]{1,64})\]/g;
+const FN_CONT_RE = /^(?: {2,}|\t)\S/;
+
+function fnPrescan(lines: string[], from: number): FnReg {
+  const reg: FnReg = { defs: new Map(), num: new Map(), starts: new Map(), seen: new Set() };
+  const st = newKindState();
+  for (let i = from; i < lines.length; i++) {
+    const k = nextKind(lines[i], st);
+    if (k === "fo" || k === "fc" || k === "fi") continue; // 围栏内不是定义
+    const m = FN_DEF_RE.exec(lines[i]);
+    if (!m || reg.defs.has(m[1])) continue;
+    const body: string[] = [m[2]];
+    let j = i + 1;
+    while (j < lines.length) {
+      const k2 = nextKind(lines[j], st);
+      if (k2 === "fo" || k2 === "fc" || k2 === "fi") break; // 围栏插进来 → 定义终止（围栏归主循环）
+      if (/^\s*$/.test(lines[j])) {
+        let p = j;
+        while (p < lines.length && /^\s*$/.test(lines[p])) p++;
+        const kp = p < lines.length ? nextKind(lines[p], st) : "blank";
+        if (p >= lines.length || kp === "fo" || kp === "fc" || kp === "fi" || !FN_CONT_RE.test(lines[p]) || FN_DEF_RE.test(lines[p])) break;
+        for (; j < p; j++) body.push("");
+        continue;
+      }
+      if (!FN_CONT_RE.test(lines[j]) || FN_DEF_RE.test(lines[j])) break;
+      body.push(lines[j].replace(/^(?: {1,2}|\t)/, ""));
+      j++;
+    }
+    while (body.length > 1 && body[body.length - 1] === "") body.pop();
+    let end = i;
+    for (let q = i + 1; q < j; q++) if (!/^\s*$/.test(lines[q])) end = q;
+    reg.defs.set(m[1], body);
+    reg.starts.set(i, { label: m[1], end });
+    i = j - 1;
+  }
+  const st2 = newKindState();
+  for (const ln of lines) {
+    const k = nextKind(ln, st2);
+    if (k === "fo" || k === "fc" || k === "fi") continue;
+    FN_REF_RE.lastIndex = 0;
+    let r: RegExpExecArray | null;
+    while ((r = FN_REF_RE.exec(ln)) !== null) {
+      if (reg.defs.has(r[1]) && !reg.num.has(r[1])) reg.num.set(r[1], reg.num.size + 1);
+    }
+  }
+  return reg;
+}
+
 export type LineKind =
   | "blank" | "fo" | "fc" | "fi" // 空行 / 开栏 / 闭栏 / 栏内
   | "head" | "setext" | "hr" | "list" | "quote" | "code" | "para" | "other";
@@ -763,7 +851,11 @@ export function nextKind(raw: string, st: KindState): LineKind {
 
 export function lineKinds(src: string): LineKind[] {
   const st = newKindState();
-  return splitSrcLines(src).map((ln) => nextKind(ln, st));
+  const ls = splitSrcLines(src);
+  const fm = frontMatterEnd(ls); // 头部区整体 Blank 且不进状态机（↔ Rust line_kinds 跳头）
+  const out: LineKind[] = new Array<LineKind>(ls.length).fill("blank");
+  for (let i = fm >= 0 ? fm + 1 : 0; i < ls.length; i++) out[i] = nextKind(ls[i], st);
+  return out;
 }
 
 /** Rust headings() 的整体镜像（大纲/锚点权威坐标）：ATX + Setext（line 记段落首行）。 */
@@ -797,8 +889,10 @@ export function headingsOfSrc(src: string): HeadInfo[] {
  *  替换仍原地切片，CRLF/LF 风格与文件末尾换行保留。 */
 export function flipTaskInSrc(src: string, nth: number): string | null {
   const st = newKindState();
+  const fmE = frontMatterEnd(splitSrcLines(src)); // YAML 头内假任务不计（↔ Rust line_kinds 跳头）
   let seen = 0;
   let lineStart = 0;
+  let lineIdx = 0;
   const n = src.length;
   for (;;) {
     let lineEnd = src.indexOf("\n", lineStart);
@@ -806,7 +900,8 @@ export function flipTaskInSrc(src: string, nth: number): string | null {
     if (crAt >= 0 && (lineEnd < 0 || crAt < lineEnd)) lineEnd = crAt; // P2：裸 CR 也是行界（↔ Rust split_lines_cr）
     if (lineEnd < 0) lineEnd = n;
     const line = src.slice(lineStart, lineEnd); // 终止符天然不含在 line 内
-    if (nextKind(line, st) === "list") {
+    const inFm = fmE >= 0 && lineIdx <= fmE;
+    if (!inFm && nextKind(line, st) === "list") {
       const rel = afterListMarkerIdx(line);
       const j = lineStart + rel;
       // 任务框 [ ] / [x] / [X]：']' 必须在行内（Rust task_parts 的 bc.len()≥3）
@@ -822,6 +917,7 @@ export function flipTaskInSrc(src: string, nth: number): string | null {
     }
     if (lineEnd >= n) break;
     lineStart = lineEnd + (src[lineEnd] === "\r" && src[lineEnd + 1] === "\n" ? 2 : 1);
+    lineIdx++;
   }
   return null;
 }
@@ -861,6 +957,29 @@ export function classifyCodeLang(lang: string): "mermaid" | "math" | "code" {
 }
 
 const MATH_FENCE_RE = /^\s*\$\$\s*$/;
+
+/** void 元素（HTML5 列表）：开放-延续判定要排除（`<br>` 永不等待闭标签）。 */
+const VOID_TAGS = /^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i;
+
+/** HTML 块级 token 流净化（第三档 audit 10.2）：标签逐个走行内白名单通道、文本段实体保留转义，
+ *  **不做 DOM 平衡**——DOMParser 会把未闭合的 `<details>` 强行补闭、把孤立的 `</details>` 丢弃，
+ *  跨块开合的容器（opener 一块、closer 一块、中间照常跑 Markdown）只有保持原样拼接才成立，
+ *  这正是 cmark 直出 + GitHub 后置净化的实际形态。危险/未知标签逐个转义可见（tagfilter 向）。
+ *  仅供「开放延续 / 孤立闭标签」两种边界块使用；自平衡块继续走 sanitizeHtml 的子树删除策略。 */
+export function sanitizeBlockTokens(code: string): string {
+  let res = "";
+  let last = 0;
+  const re = /<\/?[A-Za-z][A-Za-z0-9-]*(?:"[^"]*"|'[^']*'|[^<>"'`])*?>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    res += escapeText(code.slice(last, m.index));
+    const tok = sanitizeInlineTag(m[0]);
+    res += tok ?? escapeText(m[0]);
+    last = m.index + m[0].length;
+  }
+  res += escapeText(code.slice(last));
+  return res;
+}
 
 /** 隐藏任务占位数 = 该段原文按 nextKind 状态机（=Rust line_kinds + task_parts）命中的 List 任务行数。
  *  第二档起改用状态机：段内 ``` 围栏开/闭会真实改变行的种类——与 Rust 在全文上跑的结果一致
@@ -904,13 +1023,17 @@ function mermaidBlockHtml(code: string, lineAttrs: string): string {
  *  data-line-start/end（闭区间、0 起）是阅读窗滚动同步的块锚，纯前端记账：不进 Rust、不进导出。 */
 function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): string {
   const lines = splitSrcLines(src); // P2：裸 CR 也是行界（↔ Rust headings 的行号坐标系）
+  // 文档顶层独享：front matter 区间 + 脚注注册表（↔ Rust line_kinds 的 front_matter_end 跳头）
+  const docTop = !nested && baseLine === 0;
+  const fmEnd = docTop ? frontMatterEnd(lines) : -1;
+  if (docTop) FN = fnPrescan(lines, fmEnd >= 0 ? fmEnd + 1 : 0);
   // CommonMark 语义：链接定义全文预扫描（引用可以在定义之前出现）。围栏内的行不算定义
   // （第二档起走 nextKind：配对围栏，~~~ 同样屏蔽）；紧邻段落行之后的是懒延续正文，
   // 不构成定义（CC 4.7「定义不能打断段落」，第三档 audit 4.7-c——注册侧与渲染侧同门）。
   {
     const pre = newKindState();
     let wasPara = false; // 紧邻上一行是「真段落正文」（被段落吞掉的定义行也算段落行）
-    for (let pi = 0; pi < lines.length; pi++) {
+    for (let pi = fmEnd >= 0 ? fmEnd + 1 : 0; pi < lines.length; pi++) {
       const k = nextKind(lines[pi], pre);
       const inFenceK = k === "fo" || k === "fc" || k === "fi";
       const dp = inFenceK ? null : defParse(lines, pi);
@@ -943,7 +1066,9 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
   interface LiRef { arr: string[]; tagIdx: number; closeIdx: number }
   interface LEntry { type: "ul" | "ol"; indent: number; start: number; startNum: number; segs: string[]; openLi: LiRef | null;
     /** loose 判定（CC 5.4，第三档 audit 5.2-d）：列表内部出现过空行 → 出栈时给纯文本项包 <p> */
-    loose: boolean; pendingBlank: boolean }
+    loose: boolean; pendingBlank: boolean;
+    /** 延续判据（第三档 audit 5.4-c/f）：无序=项目符号字符、有序=分隔符（. 或 )）；变化即开新列表 */
+    marker: string }
   const listStack: LEntry[] = [];
   const curLi = (): LiRef | null => (listStack.length ? listStack[listStack.length - 1].openLi : null);
   let para: string[] = [];
@@ -1003,6 +1128,7 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       if (paraToLi && li) {
         // CommonMark loose/lazy 语义：列表项的后续正文并进该 <li>（此前作为游离 <p> 混进 <ol> 里）；
         // 行锚尾随正文扩到 paraEnd
+        if (blank && listStack.length) listStack[listStack.length - 1].loose = true; // 空行后的项内段落=loose 信号（audit 5.2-e）
         li.arr[li.closeIdx] = ((imgOnly ? '<p class="imgrow">' : "<p>") + renderInline(joined, defs) + "</p>") + li.arr[li.closeIdx];
         li.arr[li.tagIdx] = li.arr[li.tagIdx].replace(/data-line-end="\d+"/, `data-line-end="${baseLine + paraEnd}"`);
         if (paraEnd > lastListLine) lastListLine = paraEnd;
@@ -1073,7 +1199,32 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
 
   while (i < lines.length) {
     const line = lines[i];
+    if (fmEnd >= 0 && i === 0) {
+      // YAML front matter：元数据卡片直出（键值行两列排，其余原样），区内行不喂状态机
+      //——与 Rust line_kinds 跳过头部区完全同构
+      const rows = lines.slice(1, fmEnd).map((l) => {
+        const kv = /^([^:#\s][^:]*):(?:[ \t]+(.*?))?[ \t]*$/.exec(l);
+        return kv && !/^[ \t]/.test(l)
+          ? `<div class="fmr"><span class="fmk">${escapeHtml(kv[1].trim())}</span><span class="fmv">${escapeHtml((kv[2] ?? "").trim())}</span></div>`
+          : `<div class="fmp">${escapeHtml(l)}</div>`;
+      });
+      out.push(`<div class="frontmatter"${LA(0, fmEnd)}><div class="fmh">文档头部（YAML）</div>${rows.join("")}</div>`);
+      i = fmEnd + 1;
+      continue;
+    }
     const kind = feed(line, i); // 行种类=路由权威；分支顺序与 Rust line_kinds 一致
+    if (docTop && FN && FN.starts.has(i)) {
+      // 脚注定义块：不内联渲染；行照常喂状态机（Rust 视角它们是段落/项内容行），
+      // 块内真任务的隐藏 data-task 占位打在定义位置（与 $$ 块同方案，勾选坐标系不漂）
+      const info = FN.starts.get(i)!;
+      flushPara();
+      closeListsHere();
+      const raw = lines.slice(i, info.end + 1).join("\n");
+      for (let q = i + 1; q <= info.end; q++) feed(lines[q], q);
+      out.push(taskMarksIn(raw));
+      i = info.end + 1;
+      continue;
+    }
     if (kind === "fo") {
       // 围栏（第二档配对）：``` 与 ~~~ 都认，闭栏=同字符且长度 ≥ 开栏；未闭合吃到 EOF（旧策略保留）
       flushPara();
@@ -1194,6 +1345,21 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
         else if (t1) done = new RegExp("</" + t1[1] + ">", "i").test(ln);
       }
       const code = buf.join("\n");
+      // 跨块容器边界（第三档 audit 10.2）：opener 块内没有同名闭标签 → 裸片段直出（块锚挂首标签），
+      // 后续块/正文按普通 Markdown 解析，最后由孤立闭标签块收口——三段拼接后由浏览器完成嵌套。
+      if (!cmtMode && !declMode && !t1) {
+        const om = /^ {0,3}<([A-Za-z][A-Za-z0-9-]*)([^<>]*)>/.exec(line);
+        if (om && isAllowedTag(om[1]) && !VOID_TAGS.test(om[1]) && !/\/\s*$/.test(om[2])
+          && !new RegExp("</" + om[1] + "[\\s>]", "i").test(code)) {
+          let frag = sanitizeBlockTokens(code);
+          const fm = /<[A-Za-z][A-Za-z0-9-]*(?=[\s>])/.exec(frag);
+          if (fm) frag = frag.slice(0, fm.index + fm[0].length) + LA(hb0, i - 1) + frag.slice(fm.index + fm[0].length);
+          out.push(frag + (nested ? "" : taskMarksIn(code)));
+          continue;
+        }
+        const cm = /^ {0,3}<\/([A-Za-z][A-Za-z0-9-]*)[^<>]*>[ \t]*$/.exec(code);
+        if (cm && isAllowedTag(cm[1])) { out.push(`</${cm[1].toLowerCase()}>`); continue; }
+      }
       let rendered: string;
       if (declMode && /^ {0,3}<[!?][^<>]*>/.test(code)) {
         const gt = code.indexOf(">");
@@ -1262,7 +1428,9 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
         continue;
       }
       flushPara();
-      closeListsHere();
+      // 第三档 audit 5.2-h：缩进到项内容列（≥2）的表格属于当前 <li>，与项内标题同路
+      const inItemTbl = listStack.length > 0 && curLi() != null && indentCol(line) >= 2;
+      if (inItemTbl) blank = false; else closeListsHere();
       const t0 = i;
       const header = tHdr;
       // GFM 对齐（需求方 2026-11-21：|:---:| 居中要生效）：分隔行 `:---`=左、`---:`=右、`:---:`=中。
@@ -1300,7 +1468,8 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
         t += "</tbody>";
       }
       t += "</table></div>";
-      out.push(t);
+      if (inItemTbl) emitBlock(t, t0, Math.max(t0 + 1 + rows.length, t0));
+      else out.push(t);
       continue;
     }
     if (kind === "quote") {
@@ -1336,6 +1505,9 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       flushPara();
       const indent = Math.floor(indentWidth(li[1]) / 2); // P2：Tab 按 4 列制表位算深度（此前按字符数，tab 嵌套压平）
       const type = /[-*+]/.test(li[2]) ? "ul" : "ol";
+      // 延续判据（第三档 audit 5.4-c/f）：无序=项目符号字符，有序=分隔符（. 或 )）；
+      // 同类型但符号/分隔符变化 → 收容器开新表（CC 5.4 例 246/248；此前只比 ul/ol 会误合并）
+      const markChar = type === "ul" ? li[2] : li[2].slice(-1);
       // 源编号=start 双保险：CommonMark 只有首项编号有意义；即便列表被标题/类型切换真实切断，
       // 新容器也从作者写的编号起算——"4. xxx" 永远不会再显示成 "1."（需求方 2026-11-17 缺陷）
       const startNum = type === "ol" ? (parseInt(li[2], 10) || 1) : 1;
@@ -1353,10 +1525,10 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       while (listStack.length && listStack[listStack.length - 1].indent > indent) popList(lastListLine);
       if (!listStack.length || listStack[listStack.length - 1].indent < indent) {
         // 更深缩进 → 新的子列表容器（出栈时插回父 <li>）；顶级列表出栈时拼好推入 out
-        listStack.push({ type, indent, start: i, startNum, segs: [], openLi: null, loose: false, pendingBlank: false });
-      } else if (listStack[listStack.length - 1].type !== type) {
+        listStack.push({ type, indent, start: i, startNum, segs: [], openLi: null, loose: false, pendingBlank: false, marker: markChar });
+      } else if (listStack[listStack.length - 1].type !== type || listStack[listStack.length - 1].marker !== markChar) {
         popList(lastListLine);
-        listStack.push({ type, indent, start: i, startNum, segs: [], openLi: null, loose: false, pendingBlank: false });
+        listStack.push({ type, indent, start: i, startNum, segs: [], openLi: null, loose: false, pendingBlank: false, marker: markChar });
       }
       // 空行分开的兄弟项 → 当前容器整表转 loose（CC 5.4：一项 loose 全表 loose）
       if (afterBlank) {
@@ -1374,6 +1546,16 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
         arr.push("</li>");
         l.openLi = { arr, tagIdx, closeIdx: tagIdx + 2 };
       };
+      // CC 4.7（第三档 audit 4.7-f）：链接引用定义可以就是列表项内容——注册进 defs，项体为空
+      const idf = defParse([text], 0);
+      if (idf) {
+        const key = normLabel(idf.label);
+        if (!defs.has(key)) defs.set(key, { url: idf.url, title: idf.title });
+        pushLi(LA(i, i), "");
+        lastListLine = i;
+        i++;
+        continue;
+      }
       if (task !== null) {
         const cbx = (clickable: boolean, t: boolean) =>
           `<span class="cbx${t ? " done" : ""}"` +
@@ -1399,6 +1581,19 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
   }
   flushPara();
   if (listStack.length) closeLists(blank ? lastListLine : Math.max(lastListLine, lines.length - 1));
+  if (docTop && FN && FN.num.size) {
+    // 脚注汇总节（GitHub 样式）：只列被引用的定义、按首次引用编号；体内嵌渲染不占 data-sec，
+    // 任务不可勾选——可勾选序号的坐标系占位已打在正文里定义块的位置（与 $$ 隐藏占位同方案）。
+    const f = FN;
+    const labels = [...f.defs.keys()].filter((l) => f.num.has(l)).sort((a, b) => f.num.get(a)! - f.num.get(b)!);
+    let s = '<div class="footnotes" role="doc-endnotes"><hr><div class="fn-title">脚注</div><ol>';
+    for (const l of labels) {
+      const n = f.num.get(l)!;
+      s += `<li id="fn-${n}">${renderBlocks(f.defs.get(l)!.join("\n"), defs, true, 0)}<a class="fnback" href="#fnref-${n}" title="跳回正文">↩</a></li>`;
+    }
+    out.push(s + "</ol></div>");
+  }
+  if (docTop) FN = null; // 文档级状态释放（同步渲染，不交叠）
   return out.join("\n");
 }
 

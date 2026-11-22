@@ -260,6 +260,25 @@ svg{display:block}
 .cbx.done{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .cbx svg{width:12px;height:12px;stroke-width:2.6}
 .prose blockquote{margin:0 0 16px;padding:2px 0 2px 18px;border-left:3px solid var(--accent);color:var(--text-2)}
+/* YAML front matter 元数据卡（GitHub/Jekyll 扩展，2026-11-22）：文档头部键值区，弱化为边栏质感 */
+.prose .frontmatter{margin:0 0 20px;padding:9px 13px;border:1px solid var(--line);border-radius:10px;background:var(--bg-side);font-size:.86em;line-height:1.7}
+.prose .frontmatter .fmh{font-weight:600;color:var(--text-3);letter-spacing:.4px;margin-bottom:4px}
+.prose .frontmatter .fmr{display:flex;gap:12px;align-items:baseline}
+.prose .frontmatter .fmk{flex:none;max-width:38%;color:var(--text-3);font-weight:600;font-family:var(--font-mono);font-size:.95em;overflow-wrap:anywhere}
+.prose .frontmatter .fmv{color:var(--text-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.prose .frontmatter .fmp{color:var(--text-3);white-space:pre-wrap;font-family:var(--font-mono);font-size:.95em;overflow-wrap:anywhere}
+/* 脚注（GitHub 扩展）：正文上标引用 + 文末汇总节 */
+.prose sup.fnref{font-size:.72em;line-height:0}
+.prose sup.fnref a{color:var(--accent);text-decoration:none;padding:0 1px}
+.prose sup.fnref a:hover{text-decoration:underline}
+.prose .footnotes{margin-top:34px;font-size:.92em;color:var(--text-2)}
+.prose .footnotes hr{border:none;border-top:1px solid var(--line-hi,var(--line));margin:0 0 12px}
+.prose .footnotes .fn-title{font-weight:700;color:var(--text);margin:0 0 6px}
+.prose .footnotes ol{margin:0;padding-left:24px}
+.prose .footnotes li{margin:5px 0}
+.prose .footnotes li p{margin:2px 0}
+.prose .footnotes .fnback{margin-left:8px;color:var(--accent);text-decoration:none}
+.prose .footnotes .fnback:hover{text-decoration:underline}
 .prose code{font-family:var(--font-mono);font-size:.83em;padding:2px 6px;border-radius:5px;background:color-mix(in srgb,var(--accent) 10%,var(--bg-raise));color:var(--accent-dim);border:1px solid var(--line)}
 [data-theme="light"] .prose code{color:var(--accent-dim)}
 /* 代码块内的 code 不套用行内芯片样式（去背景框/边框，字号跟随 pre） */

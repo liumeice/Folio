@@ -2,7 +2,7 @@
  * 链接包图 / 参考式 / 自动链接 / 转义 / title 语法 / 代码段保护 / 强调 */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mdToHtml, renderSnippet, headingMatch, flipTaskInSrc } from "../src/lib/md.ts";
+import { mdToHtml, renderSnippet, headingMatch, flipTaskInSrc, headingsOfSrc } from "../src/lib/md.ts";
 
 const imgAttrs = (html: string) => /<img([^>]*)>/.exec(html)?.[1] ?? "";
 
@@ -163,6 +163,49 @@ test("P2·邮箱自动链接收紧（cmark-gfm localpart）与标签名 999 上�
   assert.ok(!mdToHtml("| a | b |\n|---|---|\n").includes("<tbody"), "只有表头的表格不输出空 tbody");
   const t = mdToHtml("- a\n\t- b\n");
   assert.equal((t.match(/<ul/g) ?? []).length, 2, "Tab 缩进按 4 列制表位算嵌套深度：" + t);
+});
+
+test("GitHub 扩展·YAML front matter：元数据卡直出，区内不产标题/任务（↔ Rust front_matter_skipped）", () => {
+  const src = "---\ntitle: 示例文档\ntags: [gfm, folio]\n---\n\n# 正文标题\n正文";
+  const h = mdToHtml(src);
+  assert.ok(h.includes('class="frontmatter"') && h.includes('<span class="fmk">title</span>'), h.slice(0, 140));
+  assert.equal((h.match(/data-sec=/g) ?? []).length, 1, "收口 --- 不再变 Setext h2");
+  assert.deepEqual(headingsOfSrc(src).map((x) => [x.sec, x.level, x.line]), [[1, 1, 5]], "行号按绝对行计（0 起，含头部区与空行）");
+  assert.equal((mdToHtml("---\nt: x\n...\n\n# A\n").match(/data-sec=/g) ?? []).length, 1, "... 收口同样认");
+  assert.equal((mdToHtml("---\n# 不是头部\n").match(/data-sec=/g) ?? []).length, 1, "无收口→普通 hr+ATX");
+  assert.ok(flipTaskInSrc("---\n- [ ] yaml假任务\n---\n\n- [ ] 真\n", 0)!.includes("[x] 真"), "头部假任务出局");
+  assert.ok(flipTaskInSrc("---\n- [ ] yaml\n---\n\n- [ ] a\n\n- [ ] b\n", 1)!.includes("[x] b"), "序号对齐");
+});
+
+test("GitHub 扩展·脚注：首引编号/定义内嵌 Markdown/未定义回落/任务坐标占位（↔ 样例 8.5）", () => {
+  const src = "A[^b] 与 B[^a]，C[^b] 再来，X[^没] 未定义。\n\n- [ ] 真任务\n\n[^a]: 先定义\n  但**不先**被引用。\n[^b]: 后定义\n";
+  const h = mdToHtml(src);
+  assert.deepEqual([...h.matchAll(/href="#fn-(\d)"/g)].map((m) => m[1]), ["1", "2", "1"], "编号按引用首次出现（b=1 a=2）：" + h.slice(0, 150));
+  assert.equal((h.match(/id="fnref-1"/g) ?? []).length, 1, "回跳锚只给首个引用");
+  assert.ok(h.includes("<strong>不先</strong>"), "定义内 Markdown 生效");
+  assert.ok(h.includes("[^没]"), "无定义标签回落字面文本");
+  const sec = h.slice(h.indexOf('class="footnotes"'));
+  assert.ok(sec.includes('<li id="fn-1">') && sec.indexOf("后定义") < sec.indexOf("先定义"), "汇总节按编号排序");
+  assert.ok(sec.includes('href="#fnref-2"'), "回跳链接");
+  assert.equal((h.match(/data-task/g) ?? []).length, 1, "真任务 data-task 单枚");
+  // 定义块含真任务：占位打在定义位置，DOM 文档序 ↔ Rust 计数一致
+  const src2 = "任务[^f]引用。\n\n- [ ] 真一\n\n[^f]: 注意\n  - [ ] 注内任务\n";
+  const h2 = mdToHtml(src2);
+  assert.equal((h2.match(/data-task/g) ?? []).length, 2, "定义内任务 → 隐藏占位保持序号");
+  assert.ok(flipTaskInSrc(src2, 1)!.includes("[x] 注内任务"), "Rust 同坐标：注内任务计 1");
+});
+
+test("第四批·标记切换开新表 / 表格入项 / 项内定义 / 多段项 loose", () => {
+  const mk = mdToHtml("- a\n* b\n+ c\n");
+  assert.equal((mk.match(/<ul/g) ?? []).length, 3, "三种项目符号=三个列表：" + mk);
+  assert.equal((mdToHtml("- a\n- b\n").match(/<ul/g) ?? []).length, 1, "同符号仍同一列表");
+  assert.equal((mdToHtml("1. a\n2) b\n").match(/<ol/g) ?? []).length, 2, ". 与 ) 分隔符不同=新列表");
+  const tb = mdToHtml("- item\n\n  | a | b |\n  | - | - |\n  | 1 | 2 |\n");
+  assert.ok(tb.slice(tb.indexOf("<ul"), tb.indexOf("</ul>")).includes("<table>"), "表格并入 <li>：" + tb.slice(0, 100));
+  const df = mdToHtml("- [ref-f]: /url\n\n见 [ref-f]\n");
+  assert.ok(df.includes('href="/url"') && df.includes("<li"), "项内定义注册且项体空：" + df);
+  const mp = mdToHtml("- 第一段\n\n  第二段。\n");
+  assert.ok(mp.includes("<p>第一段</p>") && mp.includes("<p>第二段。</p>"), "loose 项两段各包 <p>：" + mp);
 });
 
 test("第三档·audit 4.6-c/4.7-c/6.7-a：HTML 块起始白名单、定义不打断段落、alt 实体透传", () => {

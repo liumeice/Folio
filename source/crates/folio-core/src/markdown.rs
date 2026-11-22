@@ -158,11 +158,17 @@ pub(crate) enum Kind {
 /// 与 md.ts 块层的分支顺序互为镜像，改一侧必须双跑（tests/md.test.ts ↔ 本模块 tests）。
 pub(crate) fn line_kinds(src: &str) -> Vec<Kind> {
     let norm = normalize(src); // P2：裸 CR 分行 + NUL 替换（↔ md.ts lineKinds 的 splitSrcLines）
-    let mut out = Vec::new();
+    let lines: Vec<&str> = norm.lines().collect();
+    // YAML front matter（GitHub/Jekyll 非 GFM 扩展，2026-11-22）：首行恰为 `---` 且后随
+    // `---`/`...` 收口 → 该区整体按 Blank 处理（不产标题/任务/Setext，也不把状态带进正文）。
+    let fm_end = front_matter_end(&lines);
+    let mut out: Vec<Kind> = vec![Kind::Blank; lines.len()];
     let mut fence: Option<(char, usize)> = None;
     let mut prev: Kind = Kind::Blank; // 上一非空行的种类
     let mut adj_par = false;          // 紧邻上一行是段落正文（空行即复位——Setext 必须贴着段落）
-    for raw in norm.lines() {
+    let start_idx = fm_end.map_or(0, |e| e + 1);
+    for idx in start_idx..lines.len() {
+        let raw = lines[idx];
         let k = match fence {
             Some(open) => {
                 if fence_close(raw, open) {
@@ -228,9 +234,18 @@ pub(crate) fn line_kinds(src: &str) -> Vec<Kind> {
             prev = k;
         }
         adj_par = k == Kind::Para;
-        out.push(k);
+        out[idx] = k;
     }
     out
+}
+
+/// YAML front matter：首行恰为 `---` 时向后找 `---`/`...` 收口行，返回其下标；
+/// 无收口（如文档以孤立 hr 开头）→ None。↔ md.ts frontMatterEnd 同判据。
+pub(crate) fn front_matter_end(lines: &[&str]) -> Option<usize> {
+    if lines.first()?.trim_end() != "---" {
+        return None;
+    }
+    (1..lines.len()).find(|&i| matches!(lines[i].trim_end(), "---" | "..."))
 }
 
 /// 分隔线（GFM 4.1 变体）：≥3 个同一 -/_/*，字符间可夹空白，行尾可空白。
@@ -563,6 +578,23 @@ mod tests {
         let htab = headings("\t```\n# 栏内\n\t```\n# 出栏\n");
         assert_eq!(htab.len(), 1, "tab 缩进围栏配对：# 出栏 sec=1");
         assert_eq!(htab[0].sec, 1);
+    }
+
+    #[test]
+    fn front_matter_skipped() {
+        // YAML front matter（GitHub/Jekyll 扩展，2026-11-22；↔ tests/md.test.ts 同料）
+        let hs = headings("---\ntitle: 示例文档\ntags: [gfm, folio]\n---\n\n# 正文标题\n正文\n");
+        assert_eq!(hs.len(), 1, "头部区不产标题；收口 --- 不得变 Setext");
+        assert_eq!((hs[0].sec, hs[0].line, hs[0].text.as_str()), (1, 5, "正文标题"));
+        // 区内假任务不计
+        assert!(toggle_task("---\n- [ ] yaml\n---\n\n- [ ] 真\n", 0).unwrap().contains("[x] 真"));
+        // 未收口 → 不是头部（首行仍 hr，正文照常计标题）
+        assert_eq!(headings("---\n# 真标题\n").len(), 1);
+        // "..." 收口同样有效
+        assert_eq!(headings("---\nt: x\n...\n\n# A\n").len(), 1);
+        // 头部之后 Setext 不受污染：正文+=== 仍计 h1（=→h1）
+        let hs2 = headings("---\nt: x\n---\n\n正文\n===\n");
+        assert_eq!((hs2.len(), hs2[0].level, hs2[0].line), (1, 1, 4));
     }
 
     #[test]

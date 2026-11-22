@@ -3,6 +3,9 @@
  * 标签/属性/URL 三重白名单走树清洗，未知标签拆壳保内容，危险标签整枝删除。
  * 不引入第三方 sanitizer——规则集就是可读的产品契约，逐条有回归测试（tests/html.test.ts）。 */
 
+/** md.ts 透传判定用（10.2）：块边界标签是否为白名单成员 */
+export const isAllowedTag = (name: string): boolean => ALLOW.has(name.toLowerCase());
+
 /** 渲染器自有 HTML 之外，允许 README 作者直接书写的标签（GitHub CommonMark 允许集的子集） */
 const ALLOW = new Set([
   "a", "abbr", "b", "blockquote", "br", "caption", "center", "code", "col", "colgroup",

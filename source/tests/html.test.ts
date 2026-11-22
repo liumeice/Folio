@@ -48,10 +48,20 @@ test("第三档·HTML 块终止模式（CC 类型 1/2/3/5）：DOCTYPE 直出、
   assert.ok(!cmt.includes("<p") && /<!--[\s\S]*comment[\s\S]*-->/.test(cmt), "注释块跨空行不断：" + cmt.slice(0, 80));
   const pre = mdToHtml("<pre>\nline1\n\nline2\n</pre>\n\n正文");
   assert.ok(pre.includes("<pre>") && pre.includes("line2") && pre.includes("正文"), "pre 类型1吃到 </pre>：");
-  // 类型 6 仍以空行收块（README 徽章块不回归）：空行后的内容跳出块
+  // 类型 6 未闭合 opener（第三档补强）：块仍止于空行，但裸片段直出保持开放——
+  // 空行后的 Markdown 段与 closer 块拼进同一容器（GitHub 同款嵌套），不再被 rawblk 强制闭合
   const div = mdToHtml("<div>\na\n\nb\n</div>");
-  assert.ok(div.includes("<div>") && div.includes("a"), "div 开块");
-  assert.ok(/<p[^>]*>b<\/p>/.test(div), "空行后 b 成为独立段落（类型 6 空行收块）：" + div);
+  assert.ok(div.includes('<div data-line-start="0"'), "div 裸出+行锚挂首标签：" + div);
+  assert.ok(/<p[^>]*>b<\/p>/.test(div) && div.trimEnd().endsWith("</div>"), "b 成为 div 内的 Markdown 段：" + div);
+});
+
+test("第三档·details/summary 跨空行嵌套（audit 10.2）：opener/closer 裸片段跨块拼接，中间走 Markdown", () => {
+  const h = mdToHtml("<details>\n<summary>点击展开</summary>\n\n**粗。**\n\n</details>\n\n尾");
+  assert.ok(h.includes("<details") && h.includes("<summary>点击展开</summary>"), h.slice(0, 100));
+  assert.ok(h.includes("<strong>粗。</strong>"), "中间内容按 Markdown 解析（粗体生效）");
+  const di = h.indexOf("<details"), dk = h.indexOf("<strong>"), dj = h.indexOf("</details>");
+  assert.ok(di >= 0 && di < dk && dk < dj, "粗体段位于 details 嵌套之内");
+  assert.ok(h.includes("<p") && h.trimEnd().endsWith("尾</p>"), "尾段在容器外");
 });
 
 test("第三档·HTML 块起始白名单（真 DOM 侧结构断言）：类型 6/7 才开块，行首行内标签归段落", () => {
