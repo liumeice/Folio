@@ -126,9 +126,29 @@ export default function SettingsPanel() {
   // 任何一次改设置都会重跑本 effect 并把基线刷成"刚改完的值"——撤销成了空操作。
   // on() 限定追踪源 + untrack() 取值：只有面板从关到开才抓一次真快照。
   createEffect(on(ui.settingsOpen, (open) => {
-    if (open) baseline = untrack(() => ({ ...s.settings() }));
-    else s.flushSettings();   // 任何关闭路径（确定/取消/Esc/遮罩）都把待写设置落库
+    if (open) {
+      baseline = untrack(() => ({ ...s.settings() }));
+      queueMicrotask(onBodyScroll);   // 打开时先按当前滚动位置校准一次高亮
+    } else s.flushSettings();   // 任何关闭路径（确定/取消/Esc/遮罩）都把待写设置落库
   }));
+
+  /* 滚动定位（bug 2026-11-23：滚动详情页时导航高亮不跟随）。
+   * 判定线=详情区视口顶 + 12px：最后一个「标题已越过判定线」的分组为当前组；
+   * 滚到底时强制最后一组（末组内容短、标题永远到不了判定线的场景）。 */
+  let bodyEl: HTMLDivElement | undefined;
+  function onBodyScroll() {
+    if (!bodyEl) return;
+    const line = bodyEl.getBoundingClientRect().top + 12;
+    const secs = [...bodyEl.querySelectorAll<HTMLElement>(".st-group")];
+    if (!secs.length) return;
+    let cur = secs[0].id;
+    for (const sec of secs) {
+      if (sec.getBoundingClientRect().top <= line) cur = sec.id;
+    }
+    if (bodyEl.scrollTop + bodyEl.clientHeight >= bodyEl.scrollHeight - 2) cur = secs[secs.length - 1].id;
+    const gid = cur.replace(/^cfg-/, "");
+    if (gid && gid !== active()) setActive(gid);
+  }
 
   function goGroup(gid: string) {
     setActive(gid);
@@ -193,7 +213,7 @@ export default function SettingsPanel() {
           </span>
         </header>
 
-        <div class="st-body">
+        <div class="st-body" ref={bodyEl} onScroll={onBodyScroll}>
           <For each={GROUPS}>{(g) => (
             <Show when={items(g.id).length > 0}>
               <section class="st-group" id={`cfg-${g.id}`}>
