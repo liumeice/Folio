@@ -88,6 +88,8 @@ export interface Settings {
   tableDensity: "compact" | "standard" | "loose";
   /** 启动时自动打开并恢复上次关闭时的文档（false = 空态启动，加快冷启动；需求方 2026-11-18） */
   restoreOnLaunch: boolean;
+  /** 段落内单个换行按换行显示（false = 按 GFM 折叠为空格；true = 逐行显示，需求 2026-11-23） */
+  softBreakBr: boolean;
 }
 
 export type SearchScope = "current" | "library";

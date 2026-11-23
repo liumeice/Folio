@@ -15,6 +15,7 @@ import { AboutModal, ContextMenu, CopyPop, DropVeil, ExportBusy, HitNav, ImgBox,
 import SettingsPanel from "./components/SettingsPanel";
 import AskDialog from "./components/AskDialog";
 import { clampNum, STEP, typeVars } from "./lib/typography";
+import { setSoftBreakBr } from "./lib/md";
 import { applyAccent } from "./lib/accent";
 import ToastZone from "./components/Toast";
 
@@ -32,6 +33,9 @@ export default function App() {
   // 强调色覆盖写进 body 内联（压在 [data-theme] 令牌块之上）；空值则清掉内联交回主题内置色。
   // theme 一并追踪：日夜双档色（朱砂等六枚）随主题切档,单档旧色解析结果恒等不受影响。
   createEffect(() => applyAccent(s.settings().accent, s.settings().theme));
+  // 段落内换行显示策略（设置项 softBreakBr，需求 2026-11-23）：渲染器读模块级开关；
+  // 阅读区的重渲染由 Reader 依赖同一设置触发，导出/预览路径读到的也是本开关。
+  createEffect(() => setSoftBreakBr(s.settings().softBreakBr === true));
 
   // 菜单关闭（任何途径）时子菜单一并收起——状态放 ui，复位收敛在这一处
   createEffect(() => { if (!ui.menuOpen()) ui.setThemeSubOpen(false); });

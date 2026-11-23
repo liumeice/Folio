@@ -4,7 +4,7 @@ import { createEffect, on, onCleanup, onMount } from "solid-js";
 import { useStore } from "../lib/store";
 import { api } from "../lib/api";
 import * as ui from "../lib/ui";
-import { mdToHtml, taskOrdinalOf, flipTaskInSrc } from "../lib/md";
+import { mdToHtml, taskOrdinalOf, flipTaskInSrc, setSoftBreakBr } from "../lib/md";
 import { applyColorChips } from "../lib/colorchip";
 import { countWords } from "../lib/wordcount";
 import { typesetMathIn } from "../lib/mathjax";
@@ -147,10 +147,13 @@ export default function Reader() {
 
   /* ── 渲染（同文档对象不重刷：编辑⇄阅读互切只需要 nav，不需要重渲染） ── */
   let lastRendered: DocFull | null | undefined;
+  let lastSoftBr = false; // 软换行显示策略（设置项）：变化要整篇重渲染
   let renderSeq = 0; // 防异步图片/高亮落到更新的渲染结果上
   createEffect(() => {
     const doc = s.current();
     const nav = s.navRequest();
+    // 设置项依赖（需求 2026-11-23）：读取即注册依赖，开关切换时本 effect 重跑并重渲染
+    const softBr = s.settings().softBreakBr === true;
     // 编辑态不渲染隐藏的阅读视图（评审 P2-2）：格式化大文档时省掉一次整篇 mdToHtml；
     // mode 是本 effect 的依赖，endEdit 设回 read 时会重跑并按新正文补渲染。
     if (s.mode() === "edit") return;
@@ -163,9 +166,11 @@ export default function Reader() {
       }
       return;
     }
-    if (doc !== lastRendered) {
-      render(doc);
+    if (doc !== lastRendered || softBr !== lastSoftBr) {
       lastRendered = doc;
+      lastSoftBr = softBr;
+      setSoftBreakBr(softBr);   // 渲染前落开关（App 级 effect 已设一次，这里兜顺序）
+      render(doc);
     }
     requestAnimationFrame(() => {
       applyNav(nav, doc);

@@ -181,6 +181,9 @@ pub struct Settings {
     /// 启动时自动恢复上次文档；false = 空态启动（需求方 2026-11-18）。
     /// 旧库 JSON 缺此字段时经 struct 级 serde(default) 取 Default=true，行为不回退。
     pub restore_on_launch: bool,
+    /// 段落内单个换行按换行显示（需求 2026-11-23）；false = 按 GFM/CommonMark 折叠为一个空格（默认）。
+    /// 旧库 JSON 缺此字段 → false（规范口径），无需数据库迁移。
+    pub soft_break_br: bool,
 }
 
 impl Default for Settings {
@@ -203,6 +206,7 @@ impl Default for Settings {
             code_fs: 12.5,
             table_density: "standard".into(),
             restore_on_launch: true,
+            soft_break_br: false,
         }
     }
 }

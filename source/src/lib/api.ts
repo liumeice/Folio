@@ -269,6 +269,7 @@ function sanitizeSettings(raw: unknown): Settings | null {
     codeFs: num(o.codeFs, "codeFs", D.codeFs),
     tableDensity: en(o.tableDensity, ["compact", "standard", "loose"] as const, D.tableDensity),
     restoreOnLaunch: typeof o.restoreOnLaunch === "boolean" ? o.restoreOnLaunch : D.restoreOnLaunch,
+    softBreakBr: typeof o.softBreakBr === "boolean" ? o.softBreakBr : D.softBreakBr,
   };
 }
 

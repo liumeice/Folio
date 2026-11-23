@@ -353,6 +353,11 @@ function applyEmphasis(toks: Tok[]): Tok[] {
  * 硬换行判定挪到这里（CC 6.7）：\n 前 ≥2 空格/tab → <br>；\n 前行尾单个反斜杠（非 ESCAPED 对）
  * → 吃掉反斜杠出 <br>；其余 \n 原样输出为软换行。块层不再预注入控制符——代码段/HTML 属性
  * 里的行尾空格保持原字符（audit #640-643），段末反斜杠不再丢字符（#644）。 */
+/** 段落内软换行显示策略（设置项 softBreakBr，需求 2026-11-23）：false=按 GFM/CommonMark
+ *  折叠为一个空格（默认）；true=软换行输出 <br>，逐行显示（Typora 习惯）。只影响显示，不改源文本。 */
+let softBreakBr = false;
+export function setSoftBreakBr(on: boolean): void { softBreakBr = on; }
+
 function emitTextLeaf(t: string): string {
   let out = "";
   let last = 0;
@@ -366,7 +371,7 @@ function emitTextLeaf(t: string): string {
       const pre = t.slice(last, i);
       if (/[ \t]{2,}$/.test(pre)) out += escapeText(pre.replace(/[ \t]+$/, "")) + "<br>";
       else if (pre.endsWith("\\") && !(pre.length >= 2 && pre[pre.length - 2] === ESCAPED)) out += escapeText(pre.slice(0, -1)) + "<br>";
-      else out += escapeText(pre) + "\n";
+      else out += escapeText(pre) + (softBreakBr ? "<br>" : "\n");   // 软换行：默认折叠（规范口径），开关开启逐行
       last = i + 1;
     }
   }
@@ -975,9 +980,11 @@ export function nextKind(raw: string, st: KindState): LineKind {
       const fo = fenceOpen(raw);
       if (fo) { st.fence = fo; k = "fo"; }
       else if (indentCol(raw) >= 4) {
-        // ≥4 列三分流（↔ Rust）：上承段落→懒延续；上承列表→项内容（4 列 ATX/深缩进
-        // 一律宽松口径——为存量嵌套列表让路，已批准偏差）；其余→顶层缩进代码。
-        if (st.prev === "para") k = "para";
+        // ≥4 列三分流（↔ Rust）：紧邻段落→懒延续（规范：缩进代码不能打断段落）；
+        // 上承列表→项内容（4 列 ATX/深缩进宽松口径，已批准偏差）；其余→缩进代码。
+        // 2026-11-23 规范修正：判据由 prev=="para" 改为 adjPar——空行结束段落，
+        // "段落 + 空行 + 4 列缩进"回归缩进代码块（原偏差作用面过大，见 CLAUDE.md）。
+        if (st.adjPar) k = "para";
         else if (st.prev === "list") k = t[0] === "#" ? "head" : afterListMarkerIdx(raw) >= 0 ? "list" : "para";
         else k = "code";
       } else if (t[0] === "#") k = "head";

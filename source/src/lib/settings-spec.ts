@@ -4,7 +4,7 @@
  * 为什么把数据抽出来：① 能单测（每行 get/set 往返、值域与 typography.RANGE 不打架、fmt 单位、
  * 分组齐全）；② 加一栏设置只改这里一行，视图不动；③ 界面不许说谎——没在后端落地的项就不列。
  * Folio 真实可持久化的设置：theme（含护眼米色 sepia）/ accent（强调色，后端已落地，故可摆真实色板）/
- * restoreOnLaunch（启动恢复开关）/ serif / fs* / lh / letterSpacing / paraSpacing / align / width / codeFs / tableDensity / sideWidth。
+ * restoreOnLaunch（启动恢复开关）/ softBreakBr（段落内换行显示开关）/ serif / fs* / lh / letterSpacing / paraSpacing / align / width / codeFs / tableDensity / sideWidth。
  * 仍未做的（文档字体名、内容缩放、自动进入阅读、快捷键编辑、等宽连字 / 行号缩略图 / 保存时自动格式化等
  * MoPage 装饰开关）这里依旧不摆空控件——界面不许说谎。 */
 import type { Settings } from "./types";
@@ -132,6 +132,13 @@ export const ITEMS: readonly SettingItem[] = [
     control: { kind: "segment", options: [["left", "左对齐"], ["justify", "两端对齐"]] },
     get: (s) => s.align,
     set: (_s, v) => ({ align: v as Settings["align"] }),
+  },
+  {
+    key: "softBreakBr", group: "paragraph", label: "段落内换行显示为换行",
+    hint: "默认按标准 Markdown 把段落里的回车折叠成一个空格；打开后逐行显示（Typora 习惯），导出同步生效。只改显示，不改源文件。",
+    control: { kind: "switch" },
+    get: (s) => s.softBreakBr,
+    set: (_s, v) => ({ softBreakBr: v === true }),
   },
 
   {

@@ -2,7 +2,7 @@
  * 链接包图 / 参考式 / 自动链接 / 转义 / title 语法 / 代码段保护 / 强调 */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mdToHtml, renderSnippet, headingMatch, flipTaskInSrc, headingsOfSrc } from "../src/lib/md.ts";
+import { mdToHtml, renderSnippet, headingMatch, flipTaskInSrc, headingsOfSrc, lineKinds, setSoftBreakBr } from "../src/lib/md.ts";
 
 const imgAttrs = (html: string) => /<img([^>]*)>/.exec(html)?.[1] ?? "";
 
@@ -572,4 +572,32 @@ test("层级编号（需求 2026-11-22）：嵌套有序列表子级继承父级
   // 脚注汇总 ol 不受波及（无 --mnr 属性）
   const f = mdToHtml("引用[^1]\n\n[^1]: 注内容\n");
   assert.ok(f.includes("<ol") && !f.includes("--mnr"), "脚注编号保持原生：" + f.slice(f.indexOf("<ol"), f.indexOf("<ol") + 120));
+});
+
+test("段落后缩进代码块（2026-11-23 规范修正）：空行结束段落，4 列缩进回归代码块", () => {
+  // 规范（CommonMark 4.4）：段落被空行关闭后，4 列缩进行构成缩进代码块；
+  // 旧偏差（prev==para 跨空行不重置）曾把它按段落渲染（对比报告 P0）。
+  const src = "题注\n\n    # 不是标题\n    - [ ] 不是任务\n    const x = 1;\n";
+  assert.deepEqual(lineKinds(src).slice(2, 5), ["code", "code", "code"], "空行后缩进行全是代码");
+  assert.equal(headingsOfSrc(src).length, 0, "块内 # 不计标题");
+  assert.equal(flipTaskInSrc(src, 0), null, "块内任务不计");
+  const html = mdToHtml(src);
+  assert.ok(html.includes('<div class="codeblock"'), "渲染为代码块");
+  // 紧邻段落（无空行）仍是懒延续：缩进代码不能打断段落（规范同口径，行为不变）
+  assert.deepEqual(lineKinds("正文\n    续行\n").slice(0, 2), ["para", "para"]);
+  // 列表 + 空行 + 缩进：项内容宽松口径保留（已批准偏差不扩大）
+  assert.equal(lineKinds("- 项\n\n    续段\n")[2], "para");
+});
+
+test("软换行设置（2026-11-23）：默认按 GFM 折叠、开启后逐行 <br>", () => {
+  const src = "第一行\n第二行\n";
+  const def = mdToHtml(src);
+  assert.ok(def.includes("第一行\n第二行") && !def.includes("<br>"), "默认无 <br>（折叠为空格）");
+  setSoftBreakBr(true);
+  try {
+    assert.ok(mdToHtml(src).includes("第一行<br>第二行"), "开关开启逐行显示");
+  } finally {
+    setSoftBreakBr(false);
+  }
+  assert.ok(!mdToHtml(src).includes("<br>"), "复位后回到折叠");
 });

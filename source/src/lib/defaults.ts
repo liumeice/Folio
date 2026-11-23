@@ -20,4 +20,5 @@ export const DEFAULT_SETTINGS: Settings = {
   codeFs: 12.5,
   tableDensity: "standard",
   restoreOnLaunch: true,
+  softBreakBr: false,
 };

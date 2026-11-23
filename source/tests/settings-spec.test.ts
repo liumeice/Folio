@@ -119,6 +119,13 @@ test("开关行与首启默认（需求方 2026-11-18：浅色主题 + 石青强
   assert.equal(sw.key, "restoreOnLaunch");
   assert.equal(sw.group, "appearance");
   assert.equal(sw.get(S()), true, "开关默认=开（恢复上次文档）");
+  // 软换行开关（需求 2026-11-23）：默认关=按 GFM 折叠为空格
+  const sw2 = ITEMS.find((i) => i.key === "softBreakBr")!;
+  assert.equal(sw2.control.kind, "switch");
+  assert.equal(sw2.group, "paragraph");
+  assert.equal(sw2.get(S()), false, "默认=折叠（规范口径）");
+  assert.equal(sw2.get(S(sw2.set(S(), true))), true);
+  assert.equal(sw2.get(S(sw2.set(S(), "x" as unknown as boolean))), false, "只认布尔真");
   assert.equal(sw.get(S(sw.set(S(), false))), false);
   assert.equal(sw.get(S(sw.set(S(), "true" as unknown as boolean))), false, "非 true 一律按关——只认布尔真");
   assert.equal(DEFAULT_SETTINGS.theme, "light", "首启默认主题=浅色");

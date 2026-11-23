@@ -192,11 +192,13 @@ pub(crate) fn line_kinds(src: &str) -> Vec<Kind> {
                     Kind::FenceOpen
                 } else if indent_col(raw) >= 4 {
                     // ≥4 列三分流（与 md.ts 块层顺序互为镜像）：
-                    //  上承段落 → 懒延续正文；上承列表项 → 项内容（≥6 列按 CommonMark 内容列+4 才算
-                    //  缩进代码；4-5 列是嵌套列表项/项内 ATX——沿用两侧既有的"宽松 ATX"共同口径）；
-                    //  其余 → 顶层缩进代码。
+                    //  紧邻段落 → 懒延续正文（规范：缩进代码不能打断段落）；上承列表项 → 项内容
+                    //  （≥6 列按 CommonMark 内容列+4 才算缩进代码；4-5 列是嵌套列表项/项内 ATX——
+                    //  沿用两侧既有的"宽松 ATX"共同口径）；其余 → 缩进代码。
+                    //  2026-11-23 规范修正：判据由 prev==Para 改为 adj_par——空行结束段落，
+                    //  "段落 + 空行 + 4 列缩进"回归缩进代码块（原偏差作用面过大，见 CLAUDE.md）。
                     let t = raw.trim();
-                    if prev == Kind::Para {
+                    if adj_par {
                         Kind::Para
                     } else if prev == Kind::List {
                         // 列表内容：深缩进(≥6)按 CommonMark 该算代码，但 4-8 空格嵌套列表是存量
@@ -615,6 +617,22 @@ mod tests {
         assert!(toggle_task("1234567890. [ ] x\n", 0).is_none(), "十位数字行不是 List");
         // 0. 是合法起始序号（行种类仍是 List）
         assert!(toggle_task("0. [ ] a\n", 0).unwrap().contains("[x]"));
+    }
+
+    #[test]
+    fn indented_code_after_paragraph_blank() {
+        // 2026-11-23 规范修正（↔ tests/md.test.ts 同料）：空行结束段落，
+        // "段落 + 空行 + 4 列缩进"回归缩进代码块；块内 # 不计标题、任务不计
+        let src = "题注\n\n    # 不是标题\n    - [ ] 不是任务\n";
+        let ks = line_kinds(src);
+        assert_eq!(&ks[2..], &[Kind::Code, Kind::Code]);
+        assert_eq!(headings(src).len(), 0);
+        // 紧邻段落（无空行）：仍是懒延续（规范：缩进代码不能打断段落）
+        let lazy = line_kinds("正文\n    续行\n");
+        assert_eq!(lazy[1], Kind::Para);
+        // 列表 + 空行 + 缩进：项内容宽松口径保留（已批准偏差不扩大）
+        let l = line_kinds("- 项\n\n    续段\n");
+        assert_eq!(l[2], Kind::Para);
     }
 
     #[test]
