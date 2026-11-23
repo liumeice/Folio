@@ -616,3 +616,9 @@ test("徽章行不受软换行开关影响（需求 2026-11-23 定夺：无论�
     setSoftBreakBr(false);
   }
 });
+
+test("脚注回跳 ↩ 与正文同行（需求 2026-11-23）", () => {
+  const h = mdToHtml("正文引用[^1]。\n\n[^1]: 这是脚注的内容。\n");
+  assert.ok(h.includes('这是脚注的内容。<a class="fnback"') && h.includes("↩</a></p>"), "回跳在段内、末段 </p> 之前：" + h.slice(h.indexOf("<li id=\"fn-1\""), h.indexOf("<li id=\"fn-1\"") + 160));
+  assert.ok(!/<\/p>\s*<a class="fnback"/.test(h), "不得排在段落之后（会换行）");
+});

@@ -45,7 +45,8 @@ test("第三档·HTML 块终止模式（CC 类型 1/2/3/5）：DOCTYPE 直出、
   const dt = mdToHtml("<!DOCTYPE html>");
   assert.ok(dt.includes("<!DOCTYPE html>"), "DOCTYPE 声明原文保留：" + dt.slice(0, 80));
   const cmt = mdToHtml("<!--\n\ncomment\n-->");
-  assert.ok(!cmt.includes("<p") && /<!--[\s\S]*comment[\s\S]*-->/.test(cmt), "注释块跨空行不断：" + cmt.slice(0, 80));
+  // 2026-11-23 口径：注释不产生可见输出（GFM 同口径；此前整块转义成可见文本属缺陷）
+  assert.ok(!cmt.includes("comment") && !cmt.includes("<!--") && !cmt.includes("<p"), "注释块不可见（含跨空行）：" + cmt.slice(0, 80));
   const pre = mdToHtml("<pre>\nline1\n\nline2\n</pre>\n\n正文");
   assert.ok(pre.includes("<pre>") && pre.includes("line2") && pre.includes("正文"), "pre 类型1吃到 </pre>：");
   // 类型 6 未闭合 opener（第三档补强）：块仍止于空行，但裸片段直出保持开放——

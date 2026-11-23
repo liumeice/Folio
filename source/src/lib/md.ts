@@ -1560,6 +1560,13 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
         else if (t1) done = new RegExp("</" + t1[1] + ">", "i").test(ln);
       }
       const code = buf.join("\n");
+      // HTML 注释块（CC 4.6 类型 2）：注释不产生可见输出（GFM 同口径；此前整块转义成可见文本属缺陷，
+      // 且与行内注释的"吞掉"行为不一致）。块内真任务仍要占位——Rust 行种类对块内行照常计数，
+      // 隐藏 data-task 占位保 taskOrdinalOf 对位（与 $$ 块同方案）；块内行照常 feed（坐标记账）。
+      if (cmtMode) {
+        out.push(nested ? "" : taskMarksIn(code));
+        continue;
+      }
       // 跨块容器边界（第三档 audit 10.2）：opener 块内没有同名闭标签 → 裸片段直出（块锚挂首标签），
       // 后续块/正文按普通 Markdown 解析，最后由孤立闭标签块收口——三段拼接后由浏览器完成嵌套。
       if (!cmtMode && !declMode && !t1) {
@@ -1875,7 +1882,12 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
     let s = '<div class="footnotes" role="doc-endnotes"><hr><div class="fn-title">脚注</div><ol>';
     for (const l of labels) {
       const n = f.num.get(l)!;
-      s += `<li id="fn-${n}">${renderBlocks(f.defs.get(l)!.join("\n"), defs, true, 0)}<a class="fnback" href="#fnref-${n}" title="跳回正文">↩</a></li>`;
+      // 回跳 ↩ 与正文同行（需求 2026-11-23）：插进最后一段的 </p> 之前（追加在 <p> 之后会被块级换行）；
+      // 末块非段落（列表/代码等）时退回末尾追加。
+      const fnInner = renderBlocks(f.defs.get(l)!.join("\n"), defs, true, 0);
+      const fnBack = `<a class="fnback" href="#fnref-${n}" title="跳回正文">↩</a>`;
+      const fnWithBack = /<\/p>\s*$/.test(fnInner) ? fnInner.replace(/<\/p>\s*$/, `${fnBack}</p>`) : fnInner + fnBack;
+      s += `<li id="fn-${n}">${fnWithBack}</li>`;
     }
     out.push(s + "</ol></div>");
   }
