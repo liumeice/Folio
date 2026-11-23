@@ -1292,12 +1292,15 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
   const flushPara = () => {
     if (para.length) {
       // join("\n")：段内换行保留给行内公式扫描判「跨行 miss」；HTML 折叠空白，渲染结果与 join(" ") 相同
-      // 纯图片段（需求补充：多个连续图片横向排列不换行）：整段只有 ![]() 语法 → imgrow flex 行
+      // 纯图片段（需求补充：多个连续图片横向排列不换行）：整段只有 ![]() 语法 → imgrow 行。
+      // 该特例与「段落内换行显示为换行」开关**完全无关**（需求 2026-11-23 定夺）：
+      // 图片行恒横排、未超宽即连续显示，超宽由 inline-block 自然折行；下方拼接也避开 \n。
       const imgOnly = para.every((l) => IMG_LINE_RE.test(l.trim()));
       // cmark 6.8：段落末行行尾空白不进输出（P0-CM #226——影响 <br> 后文对齐）
       const ps = para.slice();
       if (ps.length) ps[ps.length - 1] = ps[ps.length - 1].replace(/[ \t]+$/, "");
-      const joined = ps.join("\n");
+      // 图片行用空格拼接：软换行开关打开时也不产生 <br>（imgrow 恒横排）
+      const joined = imgOnly ? ps.join(" ") : ps.join("\n");
       const li = curLi();
       if (paraToLi && li) {
         // CommonMark loose/lazy 语义：列表项的后续正文并进该 <li>（此前作为游离 <p> 混进 <ol> 里）；

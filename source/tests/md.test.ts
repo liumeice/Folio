@@ -601,3 +601,18 @@ test("软换行设置（2026-11-23）：默认按 GFM 折叠、开启后逐行 <
   }
   assert.ok(!mdToHtml(src).includes("<br>"), "复位后回到折叠");
 });
+
+test("徽章行不受软换行开关影响（需求 2026-11-23 定夺：无论开关都横排）", () => {
+  const src = "[![A](https://a.example/a.svg)](https://a.example)\n[![B](https://b.example/b.svg)](https://b.example)\n";
+  const def = mdToHtml(src);
+  assert.ok(def.includes('class="imgrow"'), "默认走徽章横排行（README 惯用）");
+  assert.ok(!def.includes("<br>"), "默认无 <br>");
+  setSoftBreakBr(true);
+  try {
+    const on = mdToHtml(src);
+    assert.ok(on.includes('class="imgrow"'), "开关开启仍横排（忽略开关）");
+    assert.ok(!on.includes("<br>"), "图片行内不得混入 <br>");
+  } finally {
+    setSoftBreakBr(false);
+  }
+});
