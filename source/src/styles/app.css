@@ -268,6 +268,9 @@ svg{display:block}
 .cbx.done{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .cbx svg{width:12px;height:12px;stroke-width:2.6}
 .prose blockquote{margin:0 0 16px;padding:2px 0 2px 18px;border-left:3px solid var(--accent);color:var(--text-2)}
+/* 竖条止于末行文字略下方（需求 2026-11-23）：末段落的块距会撑进引用容器，把条拖长一行。
+   去掉最后一个子元素的下外边距（p / 列表 / 代码块等通用），条高 = 文字高 + 2px 内边距。 */
+.prose blockquote>:last-child{margin-bottom:0}
 /* YAML front matter 元数据卡（GitHub/Jekyll 扩展，2026-11-22）：文档头部键值区，弱化为边栏质感 */
 .prose .frontmatter{margin:0 0 20px;padding:9px 13px;border:1px solid var(--line);border-radius:10px;background:var(--bg-side);font-size:.86em;line-height:1.7}
 .prose .frontmatter .fmh{font-weight:600;color:var(--text-3);letter-spacing:.4px;margin-bottom:4px}
