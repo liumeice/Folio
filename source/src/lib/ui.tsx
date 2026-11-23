@@ -344,13 +344,35 @@ export interface EditorBridge {
   runEditorCommand(cmd: EditorCmd): Promise<boolean>;
   /** 把键盘焦点还给编辑器（菜单动作 / 关闭后） */
   focusEditor(): void;
+  /** 执行一次撤销；返回是否真的有历史可撤销（方案 v1.0，2026-11-23） */
+  runUndo(): boolean;
+  /** 执行一次重做；返回是否真的有历史可重做 */
+  runRedo(): boolean;
 }
 let viewBridge: ViewBridge | null = null;
 let editorBridge: EditorBridge | null = null;
 export function registerViewBridge(b: ViewBridge | null) { viewBridge = b; }
 export function getViewBridge() { return viewBridge; }
-export function registerEditorBridge(b: EditorBridge | null) { editorBridge = b; }
+export function registerEditorBridge(b: EditorBridge | null) {
+  editorBridge = b;
+  // 撤销/重做可用性（方案 v1.0）：桥卸载（保存/放弃/切页签）即复位就绪与深度
+  setEditorHistoryReady(!!b);
+  if (!b) setEditorHistoryDepth(0, 0);
+}
 export function getEditorBridge() { return editorBridge; }
+
+/** 编辑器历史深度（瞬时视图状态，不进 store）：菜单「撤销/重做」的可用性来源 */
+export const [editorUndoDepth, setEditorUndoDepth] = createSignal(0);
+export const [editorRedoDepth, setEditorRedoDepth] = createSignal(0);
+export const [editorHistoryReady, setEditorHistoryReady] = createSignal(false);
+/** 当前是否处于可操作编辑器的模式（编辑态=true；预览/阅读=false——历史保留但菜单置灰） */
+export const [editorHistoryEditable, setEditorHistoryEditable] = createSignal(false);
+export function setEditorHistoryDepth(undo: number, redo: number) {
+  setEditorUndoDepth(undo);
+  setEditorRedoDepth(redo);
+}
+export function editorCanUndo() { return editorHistoryEditable() && editorHistoryReady() && editorUndoDepth() > 0; }
+export function editorCanRedo() { return editorHistoryEditable() && editorHistoryReady() && editorRedoDepth() > 0; }
 /** 进入编辑时暂存的"从阅读侧带来的行号"，EditorPane 挂载后消费 */
 let pendingEditorJump: number | null = null;
 export function setPendingEditorJump(line: number | null) { pendingEditorJump = line; }

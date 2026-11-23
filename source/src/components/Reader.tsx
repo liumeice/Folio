@@ -150,7 +150,8 @@ export default function Reader() {
   let lastSoftBr = false; // 软换行显示策略（设置项）：变化要整篇重渲染
   let renderSeq = 0; // 防异步图片/高亮落到更新的渲染结果上
   createEffect(() => {
-    const doc = s.current();
+    // v1.1：预览态渲染预览草稿（displayDoc 预览优先），返回编辑后回到磁盘文档
+    const doc = s.displayDoc();
     const nav = s.navRequest();
     // 设置项依赖（需求 2026-11-23）：读取即注册依赖，开关切换时本 effect 重跑并重渲染
     const softBr = s.settings().softBreakBr === true;
@@ -626,6 +627,9 @@ export default function Reader() {
 
     const cbx = t.closest(".cbx");
     if (cbx) {
+      // v1.1：预览阅读中阅读窗显示的是编辑器草稿，勾选会与隐藏编辑器分叉——
+      // 请用户回到编辑再改（直接改磁盘基线会造成预览/编辑器/磁盘三方不一致）
+      if (s.editorSessionAlive()) { s.toast("预览中：请点「编辑」返回后勾选，或先按 Ctrl+S 保存"); return; }
       const doc = s.current();
       if (!doc) return;
       const li = cbx.closest("li[data-task]");

@@ -30,7 +30,7 @@ export default function SearchPalette() {
     // 当前文档：只有「眼前正文 ≠ 磁盘」时才随请求传 src（编辑缓冲 / 未保存打勾）。
     // 干净阅读态不传——Rust 读盘走 OS 缓存，省下一次整篇 IPC 序列化（大文档收益明显）。
     const src = scope === "current" && (s.mode() === "edit" || s.dirty())
-      ? (s.mode() === "edit" ? (ui.getEditorBridge()?.docText() ?? s.draftSrc()) : (s.current()?.src ?? null))
+      ? (s.mode() === "edit" ? (ui.getEditorBridge()?.docText() ?? s.draftSrc()) : (s.displayDoc()?.src ?? null))
       : null;
     void (async () => {
       try {

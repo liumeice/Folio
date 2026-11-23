@@ -17,6 +17,8 @@ const KEYMAP: [string, string][] = [
   ["Ctrl F / Ctrl K", "全文搜索"],
   ["F3 / Shift+F3", "搜索命中下一处 / 上一处"],
   ["Ctrl E", "阅读 ⇄ 编辑（有改动时保存并提示）"],
+  ["Ctrl Z", "撤销编辑（仅编辑窗口）"],
+  ["Ctrl Y / Ctrl Shift Z", "重做（仅编辑窗口）"],
   ["Ctrl S", "保存（编辑时保存并回到阅读；阅读时保存刚勾选的改动）"],
   ["Ctrl Shift S", "另存为…（当前内容写到新路径，页签切到新文件，原文件不动）"],
   ["Ctrl 滚轮 ↑ / ↓", "阅读区正文字号放大 / 缩小（仅正文排版，不缩放应用界面）"],
@@ -169,7 +171,8 @@ function leafOf(p: string): string {
 
 export function PropsModal() {
   const s = useStore();
-  const cur = () => s.current();
+  // v1.1：预览态属性卡跟随草稿（字数/小节按预览文本）
+  const cur = () => s.displayDoc();
   function link(): string {
     const c = cur();
     if (!c) return "—";

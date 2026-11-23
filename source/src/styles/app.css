@@ -117,6 +117,8 @@ svg{display:block}
 .mi{display:flex;align-items:center;gap:10px;height:30px;padding:0 10px;border-radius:6px;font-size:12.5px;color:var(--text-2);cursor:pointer;white-space:nowrap}
 .mi .ico{color:var(--text-3)}
 .mi:hover,.mi.kb{background:var(--bg-hover);color:var(--text)}
+/* 菜单禁用态（撤销/重做方案 v1.0）：置灰、不响应鼠标；键盘导航用 :not(.dis) 跳过 */
+.mi.dis{opacity:.38;pointer-events:none;cursor:default}
 .mi:hover .ico,.mi.kb .ico{color:var(--text)}
 /* 单选点（主题子菜单 / 文件类型下拉共用）：非空 .ck 出 accent 圆点，JS 用 visibility 拨当前项 */
 .mi .ck{width:14px;display:grid;place-items:center;color:var(--accent);flex:none}
@@ -342,6 +344,8 @@ svg{display:block}
 /* ---- editor (CodeMirror 6) ----
  * 锚定在 .center 内、只覆盖正文视口：上让出 pane-bar(36)+crumb-bar(26)，下让出状态栏(30)。
  * （曾因 .center 无定位上下文而 inset:0 锚到 .win，编辑器盖成"全屏"——修复记录） */
+/* 预览阅读（撤销/重做方案 v1.1）：编辑器保持挂载但隐藏，历史/选区/滚动保留 */
+.editor-wrap.is-hidden{display:none}
 .editor-wrap{position:absolute;top:62px;left:0;right:0;bottom:var(--h-status);
   display:flex;flex-direction:column;background:var(--bg-edit)}
 .win.focus .editor-wrap{top:0;bottom:0}

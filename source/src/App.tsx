@@ -2,7 +2,7 @@ import { createEffect, createSignal, lazy, onCleanup, onMount, Show, Suspense } 
 import { useStore } from "./lib/store";
 import { api } from "./lib/api";
 import * as ui from "./lib/ui";
-import { newDoc, pickAndOpen, quitApp, formatDocument } from "./lib/actions";
+import { newDoc, pickAndOpen, quitApp, formatDocument, undoDocument, redoDocument } from "./lib/actions";
 import Icons from "./components/Icons";
 import TitleBar from "./components/TitleBar";
 import { Rail, LibraryPanel, RecentsPanel, OutlinePanel, PaneBar, CrumbBar, StatusBar } from "./components/SidePanels";
@@ -192,7 +192,8 @@ export default function App() {
     if (typing) {
       if (mod && (k === "s" || k === "S")) {
         ev.preventDefault();   // 任何焦点下都不漏给浏览器「保存网页」（v2 N7）
-        if (s.mode() === "edit") void s.save();
+        // v1.1：编辑态与预览态都提交落盘；纯阅读态如实提示
+        if (s.mode() === "edit" || s.editorSessionAlive()) void s.save();
         else s.toast("当前处于阅读模式 · Ctrl+E 进入编辑后可保存");
         return;
       }
@@ -201,6 +202,21 @@ export default function App() {
       if (k !== "Escape") return;
       if (s.mode() === "edit" && inEditor && !ui.anyOverlayOpen()) { ev.preventDefault(); s.discard(); return; }
       // 其余输入框里的 Esc：落到下面的通用弹层关闭链（关弹层/关设置，不再丢弃编辑内容）
+    }
+    // 撤销/重做兜底（《Folio-编辑窗撤销/重做功能方案》v1.0）：仅在「非输入焦点」走到这里——
+    // 编辑器聚焦时上面的 typing 分支已早退交给 CodeMirror，避免双重撤销；
+    // 普通输入框保留系统文本撤销；浮层打开不误改被遮挡的正文。
+    if (mod && !ev.altKey && s.mode() === "edit" && !ui.anyOverlayOpen()) {
+      if ((k === "y" || k === "Y") || (ev.shiftKey && (k === "z" || k === "Z"))) {
+        ev.preventDefault();
+        redoDocument(s);
+        return;
+      }
+      if (!ev.shiftKey && (k === "z" || k === "Z")) {
+        ev.preventDefault();
+        undoDocument(s);
+        return;
+      }
     }
     if (k === "Escape") {
       if (ui.closeTopOverlay()) return;
@@ -315,7 +331,7 @@ export default function App() {
             <PaneBar />
             <CrumbBar />
             <Reader />
-            <Show when={s.mode() === "edit"}>
+            <Show when={s.editorSessionAlive()}>
               <Suspense fallback={<div style="display:grid;place-items:center;height:100%;opacity:.6;font-size:12px">编辑器加载中…</div>}>
                 <EditorPane />
               </Suspense>

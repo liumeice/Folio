@@ -57,6 +57,9 @@ export default function Icons() {
       <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15.5V4.5M8 9l4-4 4 4"/><path d="M4.5 19.5h15"/></symbol>
       <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.8 12S6.4 6.2 12 6.2 21.2 12 21.2 12 17.6 17.8 12 17.8 2.8 12 2.8 12z"/><circle cx="12" cy="12" r="2.9"/></symbol>
       <symbol id="i-type" viewBox="0 0 24 24"><path d="M5 6.5h14M12 6.5V19M9 19h6"/></symbol>
+      {/* 撤销 / 重做（方案 v1.0，2026-11-23）：24 视窗线性描边，与现有图标同族 */}
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14.5 4.5 10 9 5.5"/><path d="M4.8 10h9.7a5 5 0 0 1 0 10h-3.6"/></symbol>
+      <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14.5 19.5 10 15 5.5"/><path d="M19.2 10H9.5a5 5 0 0 0 0 10h3.6"/></symbol>
       <symbol id="i-panel-l" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M9 5v14"/></symbol>
       {/* 自原型移植：设置左导航（外观/代码与表格） */}
       <symbol id="i-code" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></g></symbol>

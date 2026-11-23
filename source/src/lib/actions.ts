@@ -96,9 +96,10 @@ async function runFormat(s: Store) {
   if (!cur) { s.toast("未打开文档，无可格式化内容"); return; }
   const docId = cur.meta.id;
   const inEdit = s.mode() === "edit";
-  const bridge = inEdit ? ui.getEditorBridge() : null;
+  // v1.1：会话期（编辑或预览）都从编辑器读草稿，格式化不吃磁盘旧文
+  const bridge = (inEdit || s.editorSessionAlive()) ? ui.getEditorBridge() : null;
   if (inEdit && !bridge) { s.toast("格式化失败：编辑器还没准备好，请稍后再试"); return; }
-  const src = inEdit ? bridge!.docText() : cur.src;
+  const src = bridge ? bridge.docText() : cur.src;
 
   let r: FormatResult;
   try {
@@ -249,6 +250,18 @@ export function copyDeepLink(s: Store) {
   navigator.clipboard?.writeText(full)
     .then(() => ui.showCopied("已复制文档链接", full))   // 中央浮层 2s 自隐（不再贴状态栏弹 toast）
     .catch(() => s.toast("剪贴板不可用：" + full));
+}
+
+/** 撤销 / 重做（《Folio-编辑窗撤销/重做功能方案》v1.0，2026-11-23）：
+ *  仅编辑态；无历史或编辑器未挂载时静默返回。是否可用由菜单禁用态与快捷键守卫负责，
+ *  这里不弹 toast（避免重复提示）。 */
+export function undoDocument(s: Store): boolean {
+  if (s.mode() !== "edit") return false;
+  return ui.getEditorBridge()?.runUndo() ?? false;
+}
+export function redoDocument(s: Store): boolean {
+  if (s.mode() !== "edit") return false;
+  return ui.getEditorBridge()?.runRedo() ?? false;
 }
 
 export function openSearchFromAnywhere() {

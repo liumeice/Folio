@@ -4,7 +4,7 @@
  *  - N4 位置防抖只是省写入，任何导航/关闭前必须 flush；
  *  - 编辑/阅读共享同一份草稿（draftSrc），复选框与编辑器不竞写。 */
 import {
-  createContext, useContext, createSignal, onMount, type JSX, type ParentProps,
+  createContext, useContext, createSignal, createEffect, onMount, type JSX, type ParentProps,
 } from "solid-js";
 import { api } from "./api";
 import { swapPathPrefix } from "./filename";
@@ -13,6 +13,7 @@ import type { DocFull, DocMeta, FormatResult, HistEntry, Position, RecentDoc, Se
 
 import { isTypesetSettled, lineForSec, navForHistEntrySameDoc, navForRestorePos, type NavRequest } from "./nav";
 import { ancestorChain, buildOutlineTree } from "./oltree";
+import { headingsOfSrc } from "./md";
 
 /** 行锚主链所需：文档行数（\r\n 归一后按 \n 计，与 md.ts / folio-core 同口径） */
 function srcLines(src: string): number {
@@ -51,6 +52,10 @@ export interface Store {
   /** 已登记的库根目录（文档库树的树根） */
   roots: () => string[];
   current: () => DocFull | null;
+  /** 阅读窗/大纲/状态栏的显示文档（《撤销/重做方案》v1.1：预览态优先取 previewDoc，否则 current） */
+  displayDoc: () => DocFull | null;
+  /** 编辑器会话是否存活（进编辑 → 保存/放弃/切页签/切文档 期间为真；预览态仍为真） */
+  editorSessionAlive: () => boolean;
   settings: () => Settings;
   positionsMap: () => Record<number, Position>;
   // ui
@@ -141,6 +146,19 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   const [positionsMap, setPositionsMap] = createSignal<Record<number, Position>>({});
   const [mode, setMode] = createSignal<"read" | "edit">("read");
   const [dirty, setDirty] = createSignal(false);
+  /* 预览阅读（《撤销/重做方案》v1.1，2026-11-23）：编辑返回阅读默认走「预览」——
+   * 不写盘、editorSession 保留（编辑器隐藏不卸载，历史/选区/滚动保留），
+   * 阅读窗显示 previewDoc（由草稿派生）而非磁盘旧文；仅「保存并返回阅读」才落盘并结束会话。 */
+  const [editorSessionAlive, setEditorSessionAlive] = createSignal(false);
+  const [previewDoc, setPreviewDoc] = createSignal<DocFull | null>(null);
+  function displayDoc(): DocFull | null { return previewDoc() ?? current(); }
+  /** 由草稿文本派生预览文档：重算 outline 与小节数，meta 其余字段沿用磁盘版本 */
+  function buildPreviewDoc(base: DocFull, text: string): DocFull {
+    const outline = headingsOfSrc(text);
+    return { ...base, src: text, outline, meta: { ...base.meta, secCount: outline.length } };
+  }
+  // 撤销/重做的菜单可用性还要叠加「当前处于编辑态」（预览态历史保留但菜单置灰）
+  createEffect(() => ui.setEditorHistoryEditable(mode() === "edit"));
   const [side, setSide] = createSignal<SideView>("outline");
   const [focusMode, setFocusMode] = createSignal(false);
   const [activeSec, setActiveSec] = createSignal<number | null>(null);
@@ -163,7 +181,9 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     if (!c) { setDirty(false); return; }
     const disk = diskMap()[c.meta.id];
     if (disk === undefined) { setDirty(false); return; } // 未经读盘链路的文档（如空草稿）按干净处理
-    setDirty((mode() === "edit" ? draftSrc() : c.src) !== disk);
+    // v1.1：预览态按「预览文本」与磁盘比较，保证页签脏点不丢；否则按编辑缓冲/阅读正文
+    const working = previewDoc()?.src ?? (mode() === "edit" ? draftSrc() : c.src);
+    setDirty(working !== disk);
   }
 
   /* ── toast 队列（N1）：同屏最多 2 条，其余排队；默认停留 2600ms，可按条指定
@@ -292,7 +312,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
           recomputeDirty();
         }
       }
-      if (mode() === "edit") endEdit();
+      if (mode() === "edit" || editorSessionAlive()) endEdit();
       const all = tabs();
       const idx = all.findIndex((t) => t.docId === docId);
       const list = all.filter((t) => t.docId !== docId);
@@ -336,9 +356,12 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     // 一次 savePosition IPC；写锁忙时（扫描/optimize/VACUUM）它会把切页签整个卡住。
     // 退出链仍强制 await（quitApp/beforeunload/closeTab），最坏情况硬杀丢一次防抖窗口内的位置。
     void flushPosition();
-    // 手动保存模式下阅读态也可能挂脏（打勾）：不保存就切走 = 丢改动，故脏必存，模式无关（§6.4）
+    // v1.1：切文档必然结束编辑会话（预览文档/会话信号清空）——脏则按既有策略自动保存
     if (dirty()) await save(`切换文档：已自动保存「${current()?.meta.fileName ?? ""}」的修改`);
     else if (mode() === "edit") endEdit();
+    // 双保险：即使上面走了 applySaved/无脏分支，会话与预览也不得跨文档残留
+    setPreviewDoc(null);
+    setEditorSessionAlive(false);
     const first = !current();
     setDisk(doc.meta.id, doc.src); // switchTo 收到的 doc 一律来自读盘（或刚落盘）链路
     setDoc(doc);
@@ -494,6 +517,9 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     // 退出编辑：把编辑器当前小数行号交接给阅读视图（v1.2 一把尺；无标题文档同样可交接——R4 闭环）
     const l = ui.getEditorBridge()?.topLine() ?? null;
     cancelDraftTimers();
+    // 结束编辑会话（v1.1）：编辑器卸载，历史随之清空；预览文档一并作废
+    setPreviewDoc(null);
+    setEditorSessionAlive(false);
     setMode("read");
     setDirty(false);
     if (l != null) setNavRequest({ kind: "line", line: l });
@@ -502,25 +528,49 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     if (!current()) return;
     // 进入编辑：阅读视口的顶行号暂存（EditorPane 挂载消费）
     ui.setPendingEditorJump(ui.getViewBridge()?.topLine() ?? null);
-    setDraftSrc(current()!.src);
+    setDraftSrc(displayDoc()?.src ?? current()!.src);   // 预览态进编辑：以草稿为准
+    setPreviewDoc(null);                                // 编辑器成为唯一事实来源
+    setEditorSessionAlive(true);
     setMode("edit");
     // 不能清脏：进编辑前可能已有打勾待存（缓冲此刻即 cur.src，recompute 结果不变）
     recomputeDirty();
+  }
+  /** 预览阅读（v1.1）：不写盘、不结束会话；编辑器和历史隐藏保留，阅读窗展示草稿渲染 */
+  function previewEdit() {
+    const b = ui.getEditorBridge();
+    const cur = current();
+    if (!b || !cur) { endEdit(); return; }   // 兜底：无桥按原链路退出
+    const text = b.docText();
+    const line = b.topLine();
+    cancelDraftTimers();
+    setDraftSrc(text);                        // 防抖快照以最新编辑器文本为准
+    setPreviewDoc(buildPreviewDoc(cur, text));
+    setMode("read");
+    if (line != null) setNavRequest({ kind: "line", line });
+    recomputeDirty();                         // 脏标记 = 预览文本 vs 磁盘
+  }
+  /** 从预览返回编辑：恢复同一编辑器（历史/选区/滚动由 CodeMirror 保留），清掉预览文档 */
+  function resumeEdit() {
+    if (!editorSessionAlive()) { enterEdit(); return; }
+    setPreviewDoc(null);
+    setMode("edit");
+    recomputeDirty();
+    ui.getEditorBridge()?.focusEditor();
   }
   /** 仅退回阅读态：不保存、不丢弃、不动脏标记。
    *  与 endEdit 的区别是后者会清 dirty（那是保存/放弃链路的语义），
    *  这里用于「编辑器没挂载成功」的退路——阅读态待存的打勾不能被顺手抹掉。 */
   function cancelEdit() {
+    // 编辑器没挂载成功的退路：会话与预览一并作废（否则预览文档会挂在没有编辑器的状态）
+    setPreviewDoc(null);
+    setEditorSessionAlive(false);
     setMode("read");
     recomputeDirty();
   }
   function toggleEdit() {
-    if (mode() === "edit") {
-      if (dirty()) void save();
-      else endEdit();
-    } else {
-      enterEdit();
-    }
+    // v1.1：编辑 → 阅读 = 预览（不写盘、保留历史）；阅读 → 编辑 = 恢复同一会话（无会话才新建）
+    if (mode() === "edit") previewEdit();
+    else resumeEdit();
   }
   let draftTimer: number | undefined;
   let draftSyncTimer: number | undefined;
@@ -530,7 +580,8 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   }
   /** 当前编辑正文：保存/另存为必须取编辑器实时文本，不能等防抖快照（否则 Ctrl+S 会写旧文） */
   function editText(): string {
-    if (mode() === "edit") {
+    // v1.1：会话期内（编辑或预览）一律取编辑器实时文本，保存/另存为/格式化不读旧文
+    if (mode() === "edit" || editorSessionAlive()) {
       const t = ui.getEditorBridge()?.docText();
       if (t != null) return t;
     }
@@ -593,9 +644,10 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       const next = await api.saveDoc(cur.meta.path, editText(), force, cur.encoding);
       cancelDraftTimers();               // 防抖快照/草稿写入不得在保存后再把旧文本写回 localStorage
       setDisk(next.meta.id, next.src);   // 写盘成功 ⇒ 磁盘现状前移，脏自然归零
-      if (mode() === "edit") {
+      if (mode() === "edit" || editorSessionAlive()) {
+        // 编辑态或预览态（v1.1）：显式保存 = 提交并结束编辑会话（endEdit 同时清预览文档）
         setDoc(next);
-        endEdit();                       // 编辑态：返回阅读并按交接行落位（既有 §6.4 行为）
+        endEdit();
       } else {
         applySaved(next);                // 阅读态（打勾待存被「保存」）：原位重渲染不跳顶
       }
@@ -626,7 +678,8 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     const cur = current();
     if (!cur) return;
     cancelDraftTimers();   // 丢弃后待触发的快照/草稿写入必须一起作废
-    setDraftSrc(cur.src);
+    // v1.1：从磁盘基线恢复（预览期间 cur 仍是磁盘版本；diskMap 为权威兜底）
+    setDraftSrc(diskMap()[cur.meta.id] ?? cur.src);
     endEdit();
     clearDraft(cur.meta.path);
     recomputeDirty();  // Esc 只弃编辑缓冲；阅读态挂账的打勾不属于"编辑修改"，保留待存
@@ -662,7 +715,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     const cur = current();
     if (!cur) return false;
     if (ui.isDraftPath(cur.meta.path)) return await save(); // 草稿的另存为=首次保存（既有链路）
-    const content = mode() === "edit" ? editText() : cur.src;
+    const content = (mode() === "edit" || editorSessionAlive()) ? editText() : cur.src;
     const dir = cur.meta.path.replace(/[\\/][^\\/]*$/, "");
     const path = await api.pickSaveDoc(cur.meta.fileName, dir || (roots()[0] ?? null));
     if (!path) return false;
@@ -944,7 +997,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   }
 
   const store: Store = {
-    docs, recents, roots, current, settings, positionsMap,
+    docs, recents, roots, current, displayDoc, editorSessionAlive, settings, positionsMap,
     mode, dirty, side, focusMode, activeSec, toasts, navRequest, histIdx, histLen: () => history.length, draftSrc,
     tabs, activeTabId, closeTab,
     refreshDocs, openMeta, openPath, openSlug, requestAnchor, revealOutline,

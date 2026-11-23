@@ -451,7 +451,7 @@ function RecentItem(props: { r: RecentDoc }) {
 export function OutlinePanel() {
   const s = useStore();
   let body!: HTMLDivElement;
-  const tree = createMemo(() => buildOutlineTree(s.current()?.outline ?? []));
+  const tree = createMemo(() => buildOutlineTree(s.displayDoc()?.outline ?? []));
   const rows = createMemo(() => flattenOutline(tree(), ui.olExpand(), ui.olSoftOpen()));
   const foldKeys = createMemo(() => allOutlineFoldKeys(tree()));
 
@@ -562,7 +562,7 @@ export function OutlinePanel() {
     <>
       <div class="out-head">大纲<span class="sp" />
         <span style={{ "font-family": "var(--font-mono)", "font-size": "10.5px" }}>
-          {s.current()?.outline.length ?? 0} 条
+          {s.displayDoc()?.outline.length ?? 0} 条
         </span>
         <button class="head-btn" title="全部展开" aria-label="全部展开"
           onClick={() => ui.setAllOutlineOpen(foldKeys(), true)}>
@@ -574,7 +574,7 @@ export function OutlinePanel() {
         </button>
       </div>
       <div class="out-body" ref={body} role="tree" aria-label="文档大纲" onKeyDown={onKey}>
-        <Show when={s.current()?.outline.length} fallback={
+        <Show when={s.displayDoc()?.outline.length} fallback={
           <div class="ol-empty">打开文档后<br />自动生成大纲</div>
         }>
           <For each={rows()}>{(r) => {
@@ -653,7 +653,7 @@ export function StatusBar() {
   const s = useStore();
   const secText = createMemo(() => {
     const sec = s.activeSec();
-    const o = sec != null ? s.current()?.outline[sec - 1] : undefined;
+    const o = sec != null ? s.displayDoc()?.outline[sec - 1] : undefined;
     return o ? "§ " + o.text : "§ —";
   });
   function link() {

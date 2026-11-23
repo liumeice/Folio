@@ -1,11 +1,12 @@
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
-import { newDoc, pickAndOpen, pickFolderAndScan, quitApp, copyDeepLink, exportHtml, exportPdf, openGuide, formatDocument } from "../lib/actions";
+import { newDoc, pickAndOpen, pickFolderAndScan, quitApp, copyDeepLink, exportHtml, exportPdf, openGuide, formatDocument, undoDocument, redoDocument } from "../lib/actions";
 import { APP_VERSION, IS_DEV } from "../lib/version";
 
 /** theme 字段只给「主题▸」子项：与 settings().theme 相等时打 accent 点（单选可视化） */
-interface MItem { act: string; label: string; kbd?: string; icon?: string; theme?: "dark" | "light" | "sepia"; sub?: MItem[] }
+interface MItem { act: string; label: string; kbd?: string; icon?: string; theme?: "dark" | "light" | "sepia"; sub?: MItem[];
+  /** 返回 false 时菜单项置灰且不可执行（撤销/重做方案 v1.0）；省略表示始终可用 */ enabled?: () => boolean }
 interface Menu { name: string; items: (MItem | { sep: true })[] }
 
 const MENUS: Menu[] = [
@@ -39,6 +40,10 @@ const MENUS: Menu[] = [
     { act: "top", label: "回到顶部", kbd: "Home", icon: "i-arrow-up" },
   ] },
   { name: "文档", items: [
+    // 撤销/重做（方案 v1.0，2026-11-23）：编辑动作放最上方一组；阅读态/空历史/编辑器未挂载置灰
+    { act: "undo", label: "撤销", kbd: "Ctrl Z", icon: "i-undo", enabled: () => ui.editorCanUndo() },
+    { act: "redo", label: "重做", kbd: "Ctrl Y", icon: "i-redo", enabled: () => ui.editorCanRedo() },
+    { sep: true },
     { act: "prev-sec", label: "上一章", kbd: "Alt ↑", icon: "i-arrow-up" },
     { act: "next-sec", label: "下一章", kbd: "Alt ↓", icon: "i-arrow-down" },
     { sep: true },
@@ -89,6 +94,8 @@ export default function TitleBar() {
       case "next-sec": ui.navSection(1); break;
       case "search": ui.setSearchOpen(true); break;
       case "edit": s.toggleEdit(); break;
+      case "undo": undoDocument(s); break;
+      case "redo": redoDocument(s); break;
       case "format": void formatDocument(s); break;
       case "save": void s.saveSmart(); break;
       case "save-as": void s.saveAs(); break;
@@ -105,7 +112,7 @@ export default function TitleBar() {
     if (!open) return;
     if (ev.ctrlKey || ev.altKey || ev.metaKey) return;   // v2 N12：修饰键组合归全局导航
     const host = open === "ovf" ? document.getElementById("ovf-drop") : bs.find((b) => b.classList.contains("open"))?.querySelector(".mdrop");
-    const items = host ? [...host.querySelectorAll<HTMLElement>(".mi[data-act]")] : [];
+    const items = host ? [...host.querySelectorAll<HTMLElement>(".mi[data-act]:not(.dis)")] : [];
     if (!items.length) return;
     if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
       ev.preventDefault();
@@ -127,7 +134,7 @@ export default function TitleBar() {
       const next = bs[(idx + (ev.key === "ArrowRight" ? 1 : -1) + MENUS.length) % MENUS.length];
       kb = -1;
       ui.setMenuOpen(next.dataset.menu!);
-      (next.querySelector(".mi[data-act]") as HTMLElement | null)?.focus();
+      (next.querySelector(".mi[data-act]:not(.dis)") as HTMLElement | null)?.focus();
     }
   }
   onMount(() => {
@@ -171,14 +178,20 @@ export default function TitleBar() {
                 </div>
               </div>
             </>
-          : <div class="mi" data-act={it.act} role="menuitem" tabindex={-1}
-              onClick={(e) => { e.stopImmediatePropagation(); ui.setMenuOpen(null); act(it.act); }}>
-              <Show when={!props.group}>
-                <svg class="ico ico-14"><use href={"#" + (it.icon ?? "i-md")} /></svg>
-              </Show>
-              <span class="t">{it.label}</span>
-              <Show when={it.kbd}><kbd>{it.kbd}</kbd></Show>
-            </div>}
+          : (() => {
+              // 禁用态（撤销/重做方案 v1.0）：置灰、不响应点击、键盘导航跳过（:not(.dis)）
+              const dis = () => !!it.enabled && !it.enabled();
+              return <div class="mi" data-act={it.act} role="menuitem" tabindex={-1}
+                classList={{ dis: dis() }}
+                aria-disabled={dis() ? "true" : undefined}
+                onClick={(e) => { e.stopImmediatePropagation(); if (dis()) return; ui.setMenuOpen(null); act(it.act); }}>
+                <Show when={!props.group}>
+                  <svg class="ico ico-14"><use href={"#" + (it.icon ?? "i-md")} /></svg>
+                </Show>
+                <span class="t">{it.label}</span>
+                <Show when={it.kbd}><kbd>{it.kbd}</kbd></Show>
+              </div>;
+            })()}
       </For>
     </>
   );
@@ -205,7 +218,7 @@ export default function TitleBar() {
               const cur = ui.menuOpen();
               ui.setMenuOpen(cur === String(i()) ? null : String(i()));
               if (ui.menuOpen() !== null) {
-                (e.currentTarget.querySelector(".mi[data-act]") as HTMLElement | null)?.focus();
+                (e.currentTarget.querySelector(".mi[data-act]:not(.dis)") as HTMLElement | null)?.focus();
               }
             }}
           >{m.name}

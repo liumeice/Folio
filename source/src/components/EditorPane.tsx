@@ -3,10 +3,11 @@
  * （v1.2 一把尺：小数源码行号 lineFloat，方案 §4.1(c)(d)）：
  *  topLine() —— 视口顶 → 小数行号（软换行按可视块折算，非整行吸附）；
  *  jumpToLine(lineFloat) —— scrollIntoView 贴整行 + 下一帧 coordsAtPos 精确对齐视口顶。 */
-import { Show, onCleanup, onMount } from "solid-js";
+import { Show, createEffect, onCleanup, onMount } from "solid-js";
 import { basicSetup } from "codemirror";
 import { EditorView, keymap } from "@codemirror/view";
 import { indentLess, insertTab } from "@codemirror/commands";
+import { historyDepths, undoOnce, redoOnce } from "../lib/editorHistory";
 import { md } from "../lib/mdEditor";
 import { indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { mdHighlight } from "../lib/mdstyle";
@@ -310,18 +311,43 @@ export default function EditorPane() {
         // indentUnit 设为 "\t" 让缩进落的是制表符而不是空格；需要焦点导航时 Ctrl+M 切换
         // （basicSetup 自带 toggleTabFocusMode）。
         indentUnit.of("\t"),
-        keymap.of([{ key: "Tab", run: insertTab, shift: indentLess }]),
+        keymap.of([
+          { key: "Tab", run: insertTab, shift: indentLess },
+          // 撤销/重做方案 v1.0：补 Windows 默认未绑定的 Ctrl+Shift+Z 重做别名
+          //（basicSetup 已含 Mod-z / Mod-y，不重复绑定）
+          { key: "Mod-Shift-z", run: () => runRedo(), preventDefault: true },
+        ]),
         // 中英混排文档里浏览器拼写检查满屏红波浪线（把 focus.css、拼音词全判"错拼"）——
         // contenteditable 默认 spellcheck=true，显式关闭
         EditorView.contentAttributes.of({ spellcheck: "false" }),
         EditorView.contentAttributes.of({ autocorrect: "off", autocapitalize: "off" }),
         EditorView.updateListener.of((u) => {
           // P1-3：按键热路径不再 toString + 全文比较；只挂脏，正文快照由 store 防抖取一次
-          if (u.docChanged) s.markDraftChanged();
+          if (u.docChanged) {
+            s.markDraftChanged();
+            // 撤销/重做方案 v1.0：历史深度回写 ui 信号，驱动「文档」菜单可用性
+            const h = historyDepths(u.state);
+            ui.setEditorHistoryDepth(h.undo, h.redo);
+          }
           if (u.viewportChanged || u.selectionSet) syncOutline();
         }),
       ],
     });
+    // 撤销/重做（方案 v1.0）：经桥暴露，历史深度由 updateListener 同步；成功后把焦点还给编辑器
+    function runUndo() {
+      const v = view;
+      if (!v) return false;
+      const ok = undoOnce(v);
+      if (ok) v.focus();
+      return ok;
+    }
+    function runRedo() {
+      const v = view;
+      if (!v) return false;
+      const ok = redoOnce(v);
+      if (ok) v.focus();
+      return ok;
+    }
     ui.registerEditorBridge({
       jumpToLine,
       topLine,
@@ -330,13 +356,24 @@ export default function EditorPane() {
       hasSelection,
       runEditorCommand,
       focusEditor,
+      runUndo,
+      runRedo,
     });
+    // 挂桥时写入初始深度（正常为 0/0——新编辑器历史为空）
+    {
+      const h0 = historyDepths(view.state);
+      ui.setEditorHistoryDepth(h0.undo, h0.redo);
+    }
     view.contentDOM.addEventListener("mousedown", onMouseDown, true);
     view.contentDOM.addEventListener("contextmenu", onContextMenu);
     const pj = ui.takePendingEditorJump();
     if (pj != null && pj > 0) jumpToLine(pj);
     view.focus();
     syncOutline();
+    // 预览阅读（v1.1）：display:none 期间 CodeMirror 量不到尺寸，重新显示时强制重测
+    createEffect(() => {
+      if (s.mode() === "edit" && view) view.requestMeasure();
+    });
     onCleanup(() => {
       ui.registerEditorBridge(null);
       view?.contentDOM.removeEventListener("mousedown", onMouseDown, true);
@@ -347,7 +384,7 @@ export default function EditorPane() {
   });
 
   return (
-    <div class="editor-wrap">
+    <div class="editor-wrap" classList={{ "is-hidden": s.mode() !== "edit" }}>
       <div class="editor-bar">
         <span class="hint" title="编辑模式已开启行号和高亮；滚动、大纲与阅读视图保持同步">
           编辑模式 — <b>行号 / 高亮</b>已开启
