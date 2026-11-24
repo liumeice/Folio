@@ -296,6 +296,7 @@ export default function EditorPane() {
   }
 
   onMount(() => {
+    ui.setEditorTouched(false);   // 用户真的滚动过才算（滚轮/指针按下/翻页键）
     view = new EditorView({
       doc: s.draftSrc(),
       parent: host,
@@ -369,6 +370,20 @@ export default function EditorPane() {
     view.contentDOM.addEventListener("contextmenu", onContextMenu);
     const pj = ui.takePendingEditorJump();
     if (pj != null && pj > 0) jumpToLine(pj);
+    // 基线：跳转落定后的顶行（用户没滚动前一直有效）
+    requestAnimationFrame(() => requestAnimationFrame(() => ui.setEditorBaseline(topLine())));
+    // 用户真实滚动输入（滚轮/滚动条拖动/翻页键）才标记 touched；程序跳转与显隐测量不算
+    const markTouched = () => ui.setEditorTouched(true);
+    view.scrollDOM.addEventListener("wheel", markTouched, { passive: true });
+    view.scrollDOM.addEventListener("pointerdown", markTouched);
+    view.contentDOM.addEventListener("keydown", (e) => {
+      if (!e.ctrlKey && !e.metaKey && ["PageDown", "PageUp", "Home", "End", "ArrowDown", "ArrowUp"].includes(e.key)) markTouched();
+    }, true);
+    const cleanupTouched = () => {
+      view?.scrollDOM.removeEventListener("wheel", markTouched);
+      view?.scrollDOM.removeEventListener("pointerdown", markTouched);
+    };
+    onCleanup(cleanupTouched);
     view.focus();
     syncOutline();
     // 预览阅读（v1.1）：display:none 期间 CodeMirror 量不到尺寸，重新显示时强制重测

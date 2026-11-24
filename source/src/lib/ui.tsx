@@ -376,6 +376,8 @@ export function navTop() { sectionNav?.toTop(); }
 export interface ViewBridge {
   /** 视口顶边（SYNC_TOP+epsilon）对应的小数源码行号；锚点表不可用时 null */
   topLine(): number | null;
+  /** 阅读窗精确 scrollTop（内容与布局未变时用于无换算的原地还原） */
+  scrollTop(): number | null;
 }
 export interface EditorBridge {
   /** 精确跳到小数行号：floor 行 scrollIntoView + 下一帧 coordsAtPos 贴顶校正 */
@@ -423,6 +425,15 @@ export function editorCanRedo() { return editorHistoryEditable() && editorHistor
 /** 进入编辑时暂存的"从阅读侧带来的行号"，EditorPane 挂载后消费 */
 let pendingEditorJump: number | null = null;
 export function setPendingEditorJump(line: number | null) { pendingEditorJump = line; }
+/** 编辑器挂载/跳转完成后的基线行（2026-11-24）：用来判断「用户是否在编辑里滚动过」。
+ *  阅读⇄编辑未动时按像素还原阅读位置，避免 line↔px 往返的累计漂移。 */
+let editorBaselineLine: number | null = null;
+export function setEditorBaseline(line: number | null) { editorBaselineLine = line; }
+export function getEditorBaseline(): number | null { return editorBaselineLine; }
+/** 编辑器是否被用户滚动过（程序跳转/挂载不算）：false 时切回阅读按像素原地还原 */
+let editorTouched = false;
+export function setEditorTouched(v: boolean) { editorTouched = v; }
+export function getEditorTouched(): boolean { return editorTouched; }
 export function takePendingEditorJump(): number | null {
   const v = pendingEditorJump; pendingEditorJump = null; return v;
 }

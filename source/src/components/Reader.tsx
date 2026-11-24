@@ -302,6 +302,8 @@ export default function Reader() {
     try {
       await whenVisible();
       if (seq !== renderSeq) return;
+      // 排版阶段的连续布局补偿由下方 ResizeObserver 承担（尺寸一变就在绘制前平移滚动），
+      // 这里保持普通 await，不再做阶段级补偿（2026-11-24）。
       await typesetMathIn(article, undefined, undefined, renderOptions());
       if (seq !== renderSeq || !sameDoc(doc)) return; // 或 article.contains(el)：容器已换即停
       await renderMermaid(article, undefined, s.settings().theme, renderOptions());
@@ -324,15 +326,17 @@ export default function Reader() {
     if (seq !== renderSeq || !sameDoc(doc)) return;
     layoutEpoch++;
     markTypesetSettled(doc.meta.id);
-    replayNav(doc);
+    /* 不在这里立即重放（2026-11-24 修"切回阅读要跳一下"）：排版刚结束时字体/图片尺寸可能还在变，
+     * 此时按锚点校正会先偏一段，等稳定采样再校正回来——两次可见位移。改为只由下方
+     * waitArticleStable 的单次重放收口：布局本来就稳时位置不动，真有位移也只跳一次。 */
   }
 
-  /** 终局重放：把最近一次定位请求在"已稳定布局"上再施加一次；最多 2 轮、8s 截止、用户滚过即让路 */
+  /** 终局重放：把最近一次定位请求在"已稳定布局"上再施加一次。
+   *  2026-11-24：连续布局补偿（ResizeObserver）接管后，这一步会把已稳定的位置再"纠"一次
+   *  （表现为切回阅读跳一下）——暂停调用，保留入口以便回滚。 */
   function replayNav(doc: DocFull) {
-    if (!lastNav || Date.now() > settleDeadline || replayRounds >= 2) return;
-    if (!sameDoc(doc) || s.mode() !== "read") return;
-    replayRounds++;
-    navApply(lastNav, doc);
+    void doc;
+    void 0;
   }
 
   function whenVisible(): Promise<void> {
@@ -403,20 +407,12 @@ export default function Reader() {
     window.setTimeout(() => el.classList.remove("flash"), 1600);
   }
 
-  /** 迟到解码防推挤（方案 §4.2 图片路）：attach 时尺寸未定的图（无宽高远程图等），load 后
-   *  若整体已在视口上方，scrollTop 补位移——不补就把用户正在读的内容顶下去。 */
+  /** 迟到解码防推挤（方案 §4.2 图片路）。
+   *  2026-11-24：停用——每次重渲染图片元素都会重建，load 补偿逐轮累计，表现为反复切换
+   *  阅读位置持续下移。尺寸已由 imgIntrinsic / imgCache 预占位；未知尺寸首轮到达可能有一次
+   *  轻微位移，但不再累计。 */
   function watchLateShift(img: HTMLImageElement) {
-    if (img.complete) return;
-    const pre = img.offsetHeight;
-    const onDone = () => {
-      img.removeEventListener("load", onDone); img.removeEventListener("error", onDone);
-      const dy = img.offsetHeight - pre;
-      if (dy > 0 && view && img.getBoundingClientRect().bottom <= view.getBoundingClientRect().top) {
-        layoutEpoch++;
-        programScroll(() => { view.scrollTop = Math.max(0, view.scrollTop + dy); });
-      }
-    };
-    img.addEventListener("load", onDone); img.addEventListener("error", onDone);
+    void img;
   }
 
   /* ── 本地图片资源水合（FR-2.1）：相对/根绝对路径按文档位置解析 → asset: 协议 ── */
@@ -442,10 +438,19 @@ export default function Reader() {
     img.title = t("reader.localAssetMissing", { path: src });
   }
   /** 远程/asset 图加载失败 → 可见占位态（不再空白）；缓存失败竞态用 complete 判定兜底 */
+  /** 图片固有尺寸内存表（2026-11-24，本地/远程/data 通用，键=源码原始 src）：
+   *  重渲染时先写回宽高再加载，避免每轮"塌缩→加载撑开"被 watchLateShift 累计补偿，
+   *  导致反复切换阅读位置逐次下移。 */
+  const imgIntrinsic = new Map<string, { w: number; h: number }>();
+
   function watchImg(img: HTMLImageElement, src: string) {
-    if (src.startsWith("data:")) return;
-    if (img.complete && img.naturalWidth === 0) { markMissing(img, src); return; }
+    if (img.complete && img.naturalWidth === 0 && !src.startsWith("data:")) { markMissing(img, src); return; }
     img.addEventListener("error", () => markMissing(img, src), { once: true });
+    const record = () => {
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) imgIntrinsic.set(src, { w: img.naturalWidth, h: img.naturalHeight });
+    };
+    if (img.complete) record();
+    else img.addEventListener("load", record, { once: true });
   }
 
   /* 远程图片=自动加载（需求方 2026-11-16 定夺，占位点击方案废弃）：渲染层直接产出
@@ -471,8 +476,10 @@ export default function Reader() {
     article.querySelectorAll<HTMLImageElement>("img").forEach((img) => {
       const src = img.getAttribute("src") || "";
       if (/^(https?:|data:|blob:|asset:)/i.test(src) || /^https?:\/\/asset\.localhost/i.test(src)) {
+        const known = imgIntrinsic.get(src);
+        if (known && !img.getAttribute("width")) { img.width = known.w; img.height = known.h; }
         watchImg(img, src);
-        watchLateShift(img);
+        if (!known) watchLateShift(img);   // 已知尺寸的图不再迟到，无需二次补偿
         return;
       }
       if (!s.isTauri) return; // 浏览器 mock 无本地文件系统，保留原样
@@ -480,10 +487,14 @@ export default function Reader() {
       const c = imgCacheGet(key);
       if (c !== undefined) {
         if (c) {
-          if (c.w > 0 && c.h > 0) { img.width = c.w; img.height = c.h; }
+          const know = imgIntrinsic.get(src);
+          const sized = (c.w > 0 && c.h > 0) || !!know;
+          const w = c.w > 0 ? c.w : know?.w, h = c.h > 0 ? c.h : know?.h;
+          if (sized && w && h) { img.width = w; img.height = h; }
           img.src = c.url;
           img.dataset.folioLocal = c.path; // FR-13.1 导出随行：src 已被 asset URL 顶掉，磁盘路径留痕于此
-          watchLateShift(img);
+          watchImg(img, src);                // 记录固有尺寸供下次渲染
+          if (!sized) watchLateShift(img);   // 已占位定高的图不再迟到补偿（防切换累计漂移）
         } else markMissing(img, src);
         return;
       }
@@ -507,14 +518,17 @@ export default function Reader() {
         const r = bySrc.get(l.src) ?? null;
         imgCacheSet(l.key, r ? { url: r.url, path: r.path, w: r.w, h: r.h } : null);
         if (r) {
-          if (r.w > 0 && r.h > 0 && !l.img.getAttribute("width")) {
-            l.img.width = r.w; l.img.height = r.h; // P2-3：先占位后加载，消除到达回流
+          const know = imgIntrinsic.get(l.src);
+          const sized = (r.w > 0 && r.h > 0) || !!know;
+          const w = r.w > 0 ? r.w : know?.w, h = r.h > 0 ? r.h : know?.h;
+          if (sized && w && h && !l.img.getAttribute("width")) {
+            l.img.width = w; l.img.height = h; // P2-3：先占位后加载，消除到达回流
           }
           l.img.src = r.url;
           l.img.title = r.path;
           l.img.dataset.folioLocal = r.path; // FR-13.1 导出随行：src 已被 asset URL 顶掉，磁盘路径留痕于此
           watchImg(l.img, l.src);
-          watchLateShift(l.img);
+          if (!sized) watchLateShift(l.img);   // 同缓存分支：已定高不补偿
         } else {
           markMissing(l.img, l.src);
         }
@@ -768,6 +782,9 @@ export default function Reader() {
         const doc = s.current();
         if (!doc || s.mode() === "edit") return null;
         return topLineOf(doc);
+      },
+      scrollTop(): number | null {
+        return view ? view.scrollTop : null;
       },
     });
     registerAnchorCompensate(compensateDom);

@@ -527,10 +527,19 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     setDirty(false);
     if (l != null) setNavRequest({ kind: "line", line: l });
   }
+  /** 进入编辑前的阅读现场：内容未变且位置未动时，回阅读直接还原精确 scrollTop，
+   *  跳过 line↔px 换算（换算在块边界有细微不对称，反复切换会累计漂移，2026-11-24）。 */
+  let lastReadLine: number | null = null;
+  let lastReadY: number | null = null;
+  let lastReadText: string | null = null;
+
   function enterEdit() {
     if (!current()) return;
-    // 进入编辑：阅读视口的顶行号暂存（EditorPane 挂载消费）
-    ui.setPendingEditorJump(ui.getViewBridge()?.topLine() ?? null);
+    // 进入编辑：阅读视口的顶行号暂存（EditorPane 挂载消费）；同时记录像素现场
+    lastReadLine = ui.getViewBridge()?.topLine() ?? null;
+    lastReadY = ui.getViewBridge()?.scrollTop() ?? null;
+    lastReadText = displayDoc()?.src ?? current()!.src;
+    ui.setPendingEditorJump(lastReadLine);
     setDraftSrc(displayDoc()?.src ?? current()!.src);   // 预览态进编辑：以草稿为准
     setPreviewDoc(null);                                // 编辑器成为唯一事实来源
     setEditorSessionAlive(true);
@@ -545,28 +554,52 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     if (!b || !cur) { endEdit(); return; }   // 兜底：无桥按原链路退出
     const text = b.docText();
     const line = b.topLine();
+    previewLine = line;   // resume 时用来判断阅读位置是否被用户移动过
     cancelDraftTimers();
     setDraftSrc(text);                        // 防抖快照以最新编辑器文本为准
-    setPreviewDoc(buildPreviewDoc(cur, text));
+    /* 内容没变就复用当前显示的文档对象（2026-11-24）：此前每次都 buildPreviewDoc 生成新对象，
+     * Reader 见对象变化整篇重渲染，图片元素被重建、重新加载，切回阅读因此闪跳。 */
+    const shown = displayDoc();
+    if (!shown || shown.src !== text) setPreviewDoc(buildPreviewDoc(cur, text));
     setMode("read");
-    if (line != null) setNavRequest({ kind: "line", line });
+    /* 内容未改、编辑器顶行与进编辑前一致 → 阅读位置没动过：直接还原精确 scrollTop，
+     * 不做行号换算（反复切换不漂移）；否则按小数行号定位。 */
+    const untouched = lastReadText != null && text === lastReadText && lastReadY != null
+      && !ui.getEditorTouched();
+    if (untouched) setNavRequest({ kind: "pixel", y: lastReadY! });
+    else if (line != null) setNavRequest({ kind: "line", line });
     recomputeDirty();                         // 脏标记 = 预览文本 vs 磁盘
   }
-  /** 从预览返回编辑：恢复同一编辑器（历史/选区保留），滚动跟随阅读位置。
-   *  修复（2026-11-24）：此前沿用编辑器旧滚动——预览里滚到别处再切回编辑还停在旧位置
-   *  （复现：滚到文末→编辑→回阅读→滚到第 9 节→编辑，仍在文末）。 */
+  /** 进入预览时记录编辑器顶行——resume 时只有阅读位置相对它移动过才同步，
+   *  避免每次切换都做一次 line↔px 往返导致累计漂移（2026-11-24）。 */
+  let previewLine: number | null = null;
+
+  /** 从预览返回编辑：恢复同一编辑器（历史/选区保留）；阅读位置移动过才跟随。
+   *  修复：此前沿用编辑器旧滚动——预览里滚到别处再切回编辑还停在旧位置。 */
   function resumeEdit() {
     if (!editorSessionAlive()) { enterEdit(); return; }
     // 先取阅读态顶行（bridge 在 mode==="edit" 时会返回 null，必须在 setMode 之前读）
     const line = ui.getViewBridge()?.topLine() ?? null;
+    const y = ui.getViewBridge()?.scrollTop() ?? null;
+    const moved = line != null && (previewLine == null || Math.abs(line - previewLine) > 0.75);
+    // 记录最新阅读现场（无论是否移动）：随后切回阅读按该像素原位还原
+    if (y != null) { lastReadY = y; lastReadLine = line; }
+    previewLine = null;
     setPreviewDoc(null);
     setMode("edit");
     recomputeDirty();
     const b = ui.getEditorBridge();
     b?.focusEditor();
-    if (line != null) {
+    ui.setEditorTouched(false);
+    if (moved && line != null) {
       // 编辑器从隐藏转可见要等一次布局/measure；双 rAF 后再跳，避免量到 0 高度导致落到顶/底
-      requestAnimationFrame(() => requestAnimationFrame(() => b?.jumpToLine(line)));
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        b?.jumpToLine(line);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          ui.setEditorBaseline(b?.topLine() ?? null);
+          ui.setEditorTouched(false);   // 程序跳转不算用户滚动
+        }));
+      }));
     }
   }
   /** 仅退回阅读态：不保存、不丢弃、不动脏标记。
