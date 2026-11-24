@@ -145,6 +145,25 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   const [roots, setRoots] = createSignal<string[]>([]);
   const [current, setCurrent] = createSignal<DocFull | null>(null);
   const [settings, setSettings] = createSignal<Settings>(DEFAULT_SETTINGS);
+
+  /* 「退出前关掉了所有页签」标记（2026-11-24 需求方）：启动恢复读的是打开历史，
+   * 关闭页签并不清历史，所以此前会照样恢复。现在 tabs 清零时落标记，下次启动空态；
+   * 再打开任意文档即清除。 */
+  const LS_TABS_EMPTY = "folio:tabsEmpty";
+  const LS_SESSION = "folio:sessionTabs";
+  function markTabsState(count: number) {
+    try { if (count === 0) localStorage.setItem(LS_TABS_EMPTY, "1"); else localStorage.removeItem(LS_TABS_EMPTY); } catch { /* 隐私模式 */ }
+  }
+  function tabsEmptyAtQuit(): boolean {
+    try { return localStorage.getItem(LS_TABS_EMPTY) === "1"; } catch { return false; }
+  }
+  function readSession(): { paths: string[]; active: string | null } | null {
+    try {
+      const s = JSON.parse(localStorage.getItem(LS_SESSION) || "null");
+      if (s && Array.isArray(s.paths)) return { paths: s.paths.filter((p: unknown) => typeof p === "string"), active: typeof s.active === "string" ? s.active : null };
+    } catch { /* ignore */ }
+    return null;
+  }
   const [positionsMap, setPositionsMap] = createSignal<Record<number, Position>>({});
   const [mode, setMode] = createSignal<"read" | "edit">("read");
   const [dirty, setDirty] = createSignal(false);
@@ -169,6 +188,18 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   const [draftSrc, setDraftSrc] = createSignal("");
   const [tabs, setTabs] = createSignal<Tab[]>([]);
   const [activeTabId, setActiveTabId] = createSignal<number | null>(null);
+  /* 会话页签持久化（2026-11-24）：启动按上次开着的整组页签恢复；booted 之前不写，
+     避免启动恢复过程中把已存会话覆盖成空。 */
+  const [booted, setBooted] = createSignal(false);
+  createEffect(() => {
+    const list = tabs();
+    const aid = activeTabId();
+    if (!booted()) return;
+    try {
+      const active = list.find((x) => x.docId === aid)?.path ?? list[list.length - 1]?.path ?? null;
+      localStorage.setItem(LS_SESSION, JSON.stringify({ paths: list.map((x) => x.path), active }));
+    } catch { /* 隐私模式 */ }
+  });
   const [histIdx, setHistIdx] = createSignal(-1);
   let history: HistEntry[] = [];
 
@@ -320,6 +351,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       const list = all.filter((t) => t.docId !== docId);
       setTabs(list);
       setActiveTabId(null);
+      markTabsState(list.length);
       if (list.length === 0) {
         setCurrent(null); setDraftSrc(""); setActiveSec(null); setNavRequest(null);
         return;   // 空态：历史栈保留，后退自然重新开签
@@ -327,7 +359,9 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       const neighbor = list[Math.max(0, Math.min(idx - 1, list.length - 1))] ?? list[0];
       await switchTo(await api.openDoc(neighbor.path), { record: true });
     } else {
-      setTabs(tabs().filter((t) => t.docId !== docId));
+      const list = tabs().filter((t) => t.docId !== docId);
+      setTabs(list);
+      markTabsState(list.length);
     }
   }
 
@@ -352,7 +386,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     ]);
   }
 
-  async function switchTo(doc: DocFull, opts?: { secText?: string | null; record?: boolean }) {
+  async function switchTo(doc: DocFull, opts?: { secText?: string | null; record?: boolean; quiet?: boolean }) {
     // 落盘「离开处」的位置（N4）。审查 v3.0 P0-3：不 await——flushPosition 的同步前缀
     // （读 current()/posSource、更新 positionsMap/history）在 await 之前就已完成，后面只剩
     // 一次 savePosition IPC；写锁忙时（扫描/optimize/VACUUM）它会把切页签整个卡住。
@@ -367,6 +401,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     const first = !current();
     setDisk(doc.meta.id, doc.src); // switchTo 收到的 doc 一律来自读盘（或刚落盘）链路
     setDoc(doc);
+    markTabsState(1);  // 有文档打开：清除"空页签不得恢复"标记
     const secText = opts?.secText ?? null;
     if (secText) {
       setNavRequest({ kind: "restore", sec: null, secText, ratio: 0 });
@@ -380,7 +415,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
           ?? { kind: "restore", sec: pos.sec, secText: pos.secText, ratio: pos.ratio, secOff: pos.secOff });
         // 位置恢复同属「主动跳转」：旧库可能只有 secText，按文本兜一层
         revealOutline(pos.sec ?? doc.outline.find((o) => o.text === pos.secText)?.sec);
-        toast(t("store.restored", { name: doc.meta.fileName, pct: formatPercent(pos.ratio) }));
+        if (!opts?.quiet) toast(t("store.restored", { name: doc.meta.fileName, pct: formatPercent(pos.ratio) }));
       } else if (!first) {
         setNavRequest({ kind: "top" });
       }
@@ -1001,7 +1036,20 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     // 深链/拖放 pending 在下方照常处理，不受开关影响（那是用户动作，不是自动恢复）。
     // bug 2026-11-22：WebView 刷新（原生右键菜单/快捷键）会整页重载——那不是冷启动，
     // 开关=关时也不能把用户正读着的文档落回空态；判定口径见 boot.shouldRestoreOnBoot。
-    if (restore && shouldRestoreOnBoot(settings().restoreOnLaunch, bootNavType())) {
+    /* 2026-11-24 需求方：启动应恢复**上次开着的整组页签**（含活动页签），而不是随机一篇。
+     * 会话存在且非空 → 逐个打开（缺失的跳过），最后切回上次活动页签；
+     * 无会话（旧版本升级）才回落到"最近打开一篇"的旧链路。 */
+    const sess = readSession();
+    const allowRestore = !tabsEmptyAtQuit() && shouldRestoreOnBoot(settings().restoreOnLaunch, bootNavType());
+    if (allowRestore && sess && sess.paths.length) {
+      for (const p of sess.paths) {
+        try { await switchTo(await api.openDoc(p), { quiet: true }); } catch { /* 缺失/不可读：跳过 */ }
+      }
+      if (sess.active && tabs().some((tab) => tab.path === sess.active)) {
+        try { await switchTo(await api.openDoc(sess.active)); } catch { /* ignore */ }
+      }
+      setBooted(true);
+    } else if (allowRestore && restore) {
       try {
         const doc = await api.openDoc(restore.path);
         setDisk(doc.meta.id, doc.src);
@@ -1018,6 +1066,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
         await dropMissingFromRecents(restore.id);
       }
     }
+    setBooted(true);
     // 审查 v3.0 P2-2：骨架揭幕推迟到「首帧绘制之后」。setDoc 只更新信号，Reader 的
     // mdToHtml/innerHTML/布局/绘制还在后面的 effect + 双 rAF 里；立即揭幕会先露约 0.5 s 空阅读区。
     // 双 rAF 等一次真实绘制完成（与 Reader 计时口径一致），main.tsx 另有 5 s 兜底不受影响。
