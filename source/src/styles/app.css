@@ -15,7 +15,7 @@
   --bg-hover:#18243D; --bg-active:#1E2E4C;
   --line:#1C2941; --line-hi:#2A3B58;
   --text:#E7EEF9; --text-2:#A3B2CB; --text-3:#7A8AA8;
-  --accent:#2DD4BF; --accent-dim:#14B8A6; --accent-ink:#052B26; --accent-bg:rgba(45,212,191,.12);
+  --accent:#2DD4BF; --accent-dim:#14B8A6; --accent-ink:#052B26; --accent-bg:rgba(45,212,191,.12); --mark-bg:rgba(250,204,21,.30);
   --warn:#FB923C; --ok:#34D399; --s-bullet:#FB923C;
   --shadow-pop:0 18px 50px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.03);
   --shadow-win:0 30px 90px rgba(0,0,0,.62),0 2px 8px rgba(0,0,0,.5);
@@ -28,7 +28,7 @@
   --bg-hover:#DFE5F0; --bg-active:#D3DCEB;
   --line:#C2CBDA; --line-hi:#ACB9CC;
   --text:#18212F; --text-2:#46536A; --text-3:#5B6881;
-  --accent:#0D9488; --accent-dim:#0B6156; --accent-ink:#FFFFFF; --accent-bg:rgba(13,148,136,.10);
+  --accent:#0D9488; --accent-dim:#0B6156; --accent-ink:#FFFFFF; --accent-bg:rgba(13,148,136,.10); --mark-bg:#FEF08A;
   --warn:#EA580C; --ok:#16A34A; --s-bullet:#EA580C;
   --shadow-pop:0 16px 40px rgba(19,29,45,.16),0 0 0 1px rgba(19,29,45,.06);
   --shadow-win:0 24px 60px rgba(19,29,45,.22),0 2px 6px rgba(19,29,45,.10);
@@ -42,7 +42,7 @@
   --bg-hover:#EADFC2; --bg-active:#E1D4B2;
   --line:#D6C6A0; --line-hi:#C3B186;
   --text:#3A3220; --text-2:#5A4E33; --text-3:#6E6042;
-  --accent:#A0562A; --accent-dim:#7C3F1E; --accent-ink:#FFF7EA; --accent-bg:rgba(160,86,42,.13);
+  --accent:#A0562A; --accent-dim:#7C3F1E; --accent-ink:#FFF7EA; --accent-bg:rgba(160,86,42,.13); --mark-bg:#F1E3A8;
   --warn:#B45309; --ok:#3F7D5A; --s-bullet:#B45309;
   --shadow-pop:0 16px 40px rgba(80,60,30,.18),0 0 0 1px rgba(80,60,30,.06);
   --shadow-win:0 24px 60px rgba(80,60,30,.24),0 2px 6px rgba(80,60,30,.12);
@@ -238,6 +238,8 @@ svg{display:block}
 .view{flex:1;min-width:0;overflow-y:auto;position:relative;background:var(--bg-view)}
 .pgbar{position:sticky;top:0;height:2px;z-index:4;margin-bottom:-2px;background:transparent;pointer-events:none}
 .pgbar i{display:block;height:100%;width:0;background:var(--accent);opacity:.8}
+/* 高亮 ==文字==：随主题的浅色底，正文颜色不变（暗色下不刺眼） */
+.prose mark{background:var(--mark-bg);color:inherit;padding:0 2px;border-radius:2px}
 .prose{max-width:var(--prose-w,900px);margin:0 auto;padding:34px 44px 100px;font-family:var(--font-prose);
   font-size:var(--prose-fs,15.5px);line-height:var(--prose-lh,1.85);color:var(--text);
   /* 排版抽屉的两个新旋钮：字距与对齐（变量出口在 lib/typography.ts） */
@@ -397,6 +399,10 @@ svg{display:block}
 /* 围栏行内的 monospace 要退成 hl-fence 观感（与行内代码同 tag，靠行类名覆写）；
    写在引用之后：引用里嵌围栏时 fence 样式胜出 */
 .cm-editor .cm-line.cm-fence-line .cmx-code{color:var(--text-2);background:transparent}
+/* 数学块（$…$）：整行统一颜色，覆盖 LaTeX 被误判成 Markdown 转义后的逐字符着色 */
+.cm-editor .cm-line.cm-math-line{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.cm-editor .cm-line.cm-math-line,.cm-editor .cm-line.cm-math-line span{color:var(--text-2)!important;background:transparent!important;text-decoration:none!important}
+.cm-editor .cm-line.cm-math-fence,.cm-editor .cm-line.cm-math-fence span{color:var(--accent)!important;background:transparent!important;font-weight:600}
 
 /* ---- status bar ---- */
 .status{flex:none;height:var(--h-status);display:flex;align-items:center;gap:2px;padding:0 8px;background:var(--bg-chrome);border-top:1px solid var(--line);font-size:11.5px;color:var(--text-3)}

@@ -689,10 +689,21 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       const next = await api.saveDoc(cur.meta.path, editText(), force, cur.encoding);
       cancelDraftTimers();               // 防抖快照/草稿写入不得在保存后再把旧文本写回 localStorage
       setDisk(next.meta.id, next.src);   // 写盘成功 ⇒ 磁盘现状前移，脏自然归零
-      if (mode() === "edit" || editorSessionAlive()) {
-        // 编辑态或预览态（v1.1）：显式保存 = 提交并结束编辑会话（endEdit 同时清预览文档）
+      if (mode() === "edit") {
+        // 编辑态保存（2026-11-24 需求方定夺）：只写盘、清脏，**留在编辑**继续写；
+        // 回阅读请用「保存并返回阅读」按钮或退出编辑。
         setDoc(next);
-        endEdit();
+        setDraftSrc(next.src);
+        recomputeDirty();
+      } else if (editorSessionAlive()) {
+        // 预览态（阅读窗里 Ctrl+S）：保持当前阅读像素，绕过行号换算（否则保存瞬间跳）。
+        const prevY = ui.getViewBridge()?.scrollTop() ?? null;
+        setDoc(next);
+        setPreviewDoc(null);
+        setEditorSessionAlive(false);
+        setMode("read");
+        setDirty(false);
+        if (prevY != null) setNavRequest({ kind: "pixel", y: prevY });
       } else {
         applySaved(next);                // 阅读态（打勾待存被「保存」）：原位重渲染不跳顶
       }

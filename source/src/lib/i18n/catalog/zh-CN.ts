@@ -315,7 +315,7 @@ export const zhCN = {
   "help.keymap.redo.keys": "Ctrl Y / Ctrl Shift Z",
   "help.keymap.redo.desc": "重做（仅编辑窗口）",
   "help.keymap.save.keys": "Ctrl S",
-  "help.keymap.save.desc": "保存（编辑时保存并回到阅读；阅读时保存刚勾选的改动）",
+  "help.keymap.save.desc": "保存（编辑时保存到文件并留在编辑；阅读时保存刚勾选的改动）",
   "help.keymap.saveAs.keys": "Ctrl Shift S",
   "help.keymap.saveAs.desc": "另存为…（当前内容写到新路径，页签切到新文件，原文件不动）",
   "help.keymap.wheelZoom.keys": "Ctrl 滚轮 ↑ / ↓",

@@ -55,6 +55,23 @@ function build(view: EditorView): DecorationSet {
       },
     });
   }
+
+  /* 数学块（2026-11-24）：lezer-markdown 不认 $$ 块，LaTeX 的 \\ \, \{ 会被当成 Markdown
+   * 转义，整段染成转义色。这里按行扫描 $$ 围栏：围栏行 cm-math-fence、块内行 cm-math-line，
+   * CSS 统一接管颜色，不再逐字符上色。仅在文档含 "$$" 时扫描。 */
+  if (doc.toString().includes("$$")) {
+    let inMath = false;
+    for (let ln = 1; ln <= doc.lines; ln++) {
+      const line = doc.line(ln);
+      const delim = /^\s*\$\$\s*$/.test(line.text);
+      if (delim) {
+        addLines(line.from, line.to, "cm-math-fence");
+        inMath = !inMath;
+        continue;
+      }
+      if (inMath) addLines(line.from, line.to, "cm-math-line");
+    }
+  }
   for (const [pos, set] of lineCls) {
     items.push({ from: pos, to: pos, deco: Decoration.line({ class: [...set].join(" ") }).range(pos) });
   }

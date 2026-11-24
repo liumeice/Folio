@@ -581,6 +581,63 @@ function tokenize(src: string, defs: Defs): Tok[] {
       i++;
       continue;
     }
+    /* Pandoc 上下标（2026-11-24 需求）：^内容^ → <sup>、~内容~ → <sub>；
+     * 内容不含空白（与 Pandoc 口径一致），双标记 ~~ 仍归删除线，单 ~ 才可能成下标。 */
+    if (c === "^" || c === "~") {
+      const mark = c;
+      const nx = src[i + 1];
+      if (nx && nx !== mark && !/\s/.test(nx)) {
+        let j = i + 1;
+        let close = -1;
+        while (j < n) {
+          const ch = src[j];
+          if (ch === "\\") { j += 2; continue; }
+          if (ch === mark) {
+            if (src[j + 1] === mark) { j += 2; continue; }   // 双标记属于删除线，不是上下标
+            if (j > i + 1 && !/\s/.test(src[j - 1])) close = j;
+            break;
+          }
+          if (/\s/.test(ch)) break;
+          j++;
+        }
+        if (close !== -1) {
+          const body = src.slice(i + 1, close);
+          atom(mark === "^" ? `<sup>${renderInline(body, defs)}</sup>` : `<sub>${renderInline(body, defs)}</sub>`);
+          i = close + 1;
+          continue;
+        }
+      }
+      buf += c;
+      i++;
+      continue;
+    }
+    /* 高亮（Obsidian/Typora 扩展，2026-11-24）：==内容== → <mark>；开合标记均须贴非空白，
+     * 以避开 `a == b` 这类比较写法；行内代码内不生效。 */
+    if (c === "=" && src[i + 1] === "=" && src[i + 2] !== "=") {
+      const nx = src[i + 2];
+      if (nx && !/\s/.test(nx)) {
+        let j = i + 2;
+        let close = -1;
+        while (j < n) {
+          if (src[j] === "\\") { j += 2; continue; }
+          if (src[j] === "\n") break;
+          if (src[j] === "=" && src[j + 1] === "=" && src[j + 2] !== "=") {
+            if (j > i + 2 && !/\s/.test(src[j - 1])) { close = j; break; }
+            j += 2;
+            continue;
+          }
+          j++;
+        }
+        if (close !== -1) {
+          atom(`<mark>${renderInline(src.slice(i + 2, close), defs)}</mark>`);
+          i = close + 2;
+          continue;
+        }
+      }
+      buf += c;
+      i++;
+      continue;
+    }
     if (c === "[" && FN) {
       // 脚注引用 [^标签]：有定义有编号 → 上标链接；否则按普通中括号文本（GitHub 同款回落）
       const fr = /^\[\^([^\]\s]{1,64})\]/.exec(src.slice(i));

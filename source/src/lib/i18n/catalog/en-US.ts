@@ -307,7 +307,7 @@ export const enUS: Record<MessageKey, string> = {
   "help.keymap.redo.keys": "Ctrl Y / Ctrl Shift Z",
   "help.keymap.redo.desc": "Redo (editor only)",
   "help.keymap.save.keys": "Ctrl S",
-  "help.keymap.save.desc": "Save (in Edit, save and return to Reading; in Reading, save checked tasks)",
+  "help.keymap.save.desc": "Save (in Edit, save to the file and stay in Edit; in Reading, save checked tasks)",
   "help.keymap.saveAs.keys": "Ctrl Shift S",
   "help.keymap.saveAs.desc": "Save As… (write the current content to a new path; the tab switches to the new file; the original stays unchanged)",
   "help.keymap.wheelZoom.keys": "Ctrl + mouse wheel ↑ / ↓",

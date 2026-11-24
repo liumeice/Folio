@@ -150,6 +150,12 @@ export default function Reader() {
     const y = pxFromLine(A.blks, line, A.docLines);
     if (y != null) programScroll(() => { view.scrollTop = y; });
   }
+  /** 勾选保存的"同文"判定：归一化行尾 + 抹平勾选状态（[ ] / [x]），其余字节必须一致。
+   *  保存链路可能因编码/写盘把 CRLF 归一成 LF；不归一化会被误判成整篇变化而重渲染（跳因）。 */
+  function stripTaskMarks(src: string): string {
+    return src.replace(/\r\n?/g, "\n").replace(/^(\s*(?:[-*+]|\d+[.)])\s+)\[(?: |x|X)\]/gm, "$1[ ]");
+  }
+
   /** 视口顶（SYNC_TOP + 1px 亚像素 epsilon，与编辑侧对称）→ 小数行号 */
   function topLineOf(doc: DocFull): number | null {
     const A = anchors(doc);
@@ -200,10 +206,16 @@ export default function Reader() {
       return;
     }
     if (doc !== lastRendered || softBr !== lastSoftBr) {
+      /* 阅读态 Ctrl+S / 勾选保存：新 doc 只在任务标记上有差异（[ ] ↔ [x]），DOM 已由点击
+       * 处理器就地更新——整篇重渲染会重建图片元素导致位置跳动（2026-11-24）。跳过渲染。 */
+      const taskOnly = lastRendered != null && softBr === lastSoftBr
+        && doc.meta.id === lastRendered.meta.id
+        && stripTaskMarks(doc.src) === stripTaskMarks(lastRendered.src);
       lastRendered = doc;
       lastSoftBr = softBr;
       setSoftBreakBr(softBr);   // 渲染前落开关（App 级 effect 已设一次，这里兜顺序）
-      render(doc);
+      // 只跳过 DOM 重建；下方 rAF 里的 applyNav（像素原位还原）仍要执行
+      if (!taskOnly) render(doc);
     }
     requestAnimationFrame(() => {
       applyNav(nav, doc);
