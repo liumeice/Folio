@@ -114,3 +114,6 @@ desktop.ini
 # 注③：旧注释「prototype/_smoke 冒烟脚本、prototype/_gen*.py 刻意入库」亦废止
 #      （2026-11-18 需求方决定：prototype/ 内容一律不上传 GitHub，见上方整体忽略区）。
 # 安装包（target/release/bundle/{nsis,msi}）随 target/ 一起不入库——发布走 GitHub Release 附件。
+
+# Windows 保留名残留（重定向输出误生成），不入库
+source/nul

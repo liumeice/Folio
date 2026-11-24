@@ -1,17 +1,17 @@
 /* 强调色派生纯逻辑单测（2026-11-17 配色提案 02）：日夜双档解析、墨色分规则、旧色旧口径承诺不破。 */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ACCENTS, accentVars, applyAccent, bestInk, findAccent, relLum, resolveAccentHex, themeMode } from "../src/lib/accent.ts";
+import { ACCENTS, accentVars, applyAccent, bestInk, findAccent, hexRgb, relLum, resolveAccentHex, themeMode } from "../../src/lib/accent.ts";
 
 test("色板构成：12 枚、id 唯一、默认青绿在板且为单档", () => {
   assert.equal(ACCENTS.length, 12);
   const ids = ACCENTS.map((a) => a.id.toLowerCase());
   assert.equal(new Set(ids).size, 12, "id 不得重复");
-  assert.equal(findAccent("#2DD4BF")?.name, "青绿");
+  assert.equal(findAccent("#2DD4BF")?.nameKey, "accent.teal");
   assert.equal(findAccent("#2DD4BF")?.tiered, false);
   for (const a of ACCENTS) {
-    if (a.tiered) assert.notEqual(a.light.toLowerCase(), a.dark.toLowerCase(), `${a.name} 双档必须两值`);
-    else assert.equal(a.id.toLowerCase(), a.light.toLowerCase(), `${a.name} 单档 id=light`);
+    if (a.tiered) assert.notEqual(a.light.toLowerCase(), a.dark.toLowerCase(), `${a.nameKey} 双档必须两值`);
+    else assert.equal(a.id.toLowerCase(), a.light.toLowerCase(), `${a.nameKey} 单档 id=light`);
   }
 });
 
@@ -71,4 +71,49 @@ test("applyAccent 只触碰四个强调变量（DOM 契约）", () => {
   assert.equal(b.style.getPropertyValue("--accent"), "#FF826D");
   applyAccent("", "dark");
   assert.equal(b.style.getPropertyValue("--accent"), "");
+});
+
+test("hexRgb：3/6 位写法与无 # 输入", () => {
+  assert.deepEqual(hexRgb("#fff"), [255, 255, 255]);
+  assert.deepEqual(hexRgb("#2DD4BF"), [45, 212, 191]);
+  assert.deepEqual(hexRgb("2DD4BF"), [45, 212, 191]);
+});
+
+test("themeMode：只有 dark 走暗档，sepia/light/未知都走浅档", () => {
+  assert.equal(themeMode("dark"), "dark");
+  assert.equal(themeMode("light"), "light");
+  assert.equal(themeMode("sepia"), "light");
+  assert.equal(themeMode("bogus"), "light");
+});
+
+test("resolveAccentHex：双档按主题取档；单档恒等；空串/自由 hex 直通", () => {
+  assert.equal(resolveAccentHex("#1B6372", "light"), "#1B6372");
+  assert.equal(resolveAccentHex("#1B6372", "dark"), "#6CC8D6");
+  assert.equal(resolveAccentHex("#2DD4BF", "dark"), "#2DD4BF", "单档两主题同值");
+  assert.equal(resolveAccentHex("#123456", "dark"), "#123456", "历史自由 hex 原样");
+  assert.equal(resolveAccentHex("", "dark"), "", "空串交回主题内置色");
+});
+
+test("findAccent：大小写不敏感；未知 id 返回 undefined", () => {
+  assert.equal(findAccent("#b53825")?.nameKey, "accent.vermilion");
+  assert.equal(findAccent("#B53825")?.tiered, true);
+  assert.equal(findAccent("#000000"), undefined);
+});
+
+test("applyAccent：空 id 只移除四个覆盖变量，不写新值", () => {
+  const removed: string[] = [];
+  const written: string[] = [];
+  const g = globalThis as unknown as Record<string, unknown>;
+  const saved = g.document;
+  g.document = { body: { style: {
+    removeProperty: (k: string) => { removed.push(k); },
+    setProperty: (k: string) => { written.push(k); },
+  } } };
+  try {
+    applyAccent("", "light");
+    assert.deepEqual(removed, ["--accent", "--accent-bg", "--accent-dim", "--accent-ink"]);
+    assert.deepEqual(written, []);
+  } finally {
+    g.document = saved;
+  }
 });

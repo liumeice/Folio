@@ -184,6 +184,9 @@ pub struct Settings {
     /// 段落内单个换行按换行显示（需求 2026-11-23）；false = 按 GFM/CommonMark 折叠为一个空格（默认）。
     /// 旧库 JSON 缺此字段 → false（规范口径），无需数据库迁移。
     pub soft_break_br: bool,
+    /// 界面语言偏好："auto"（跟随系统）| "zh-CN" | "en-US"。
+    /// 设计：docs/设计方案/设计文档-多语言支持-20261124.md §2.3。旧库 JSON 缺字段 → auto。
+    pub language: String,
 }
 
 impl Default for Settings {
@@ -207,6 +210,7 @@ impl Default for Settings {
             table_density: "standard".into(),
             restore_on_launch: true,
             soft_break_br: false,
+            language: "auto".into(),
         }
     }
 }

@@ -21,4 +21,5 @@ export const DEFAULT_SETTINGS: Settings = {
   tableDensity: "standard",
   restoreOnLaunch: true,
   softBreakBr: false,
+  language: "auto",
 };

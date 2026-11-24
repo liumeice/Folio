@@ -9,3 +9,6 @@ description = "Folio 领域模型、错误类型与公共工具（无 IO 依赖�
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

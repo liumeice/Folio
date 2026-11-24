@@ -1,10 +1,10 @@
 /* 左右栏宽度约束的纯函数断言（分隔条的行为核心都在这里）。
- * 运行：node --experimental-strip-types --test tests/layout.test.ts */
+ * 运行：node --experimental-strip-types --test tests/unit/layout.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   clampSide, sideMax, SIDE_DEFAULT, SIDE_MAX_STATIC, SIDE_MIN, CENTER_MIN,
-} from "../src/lib/layout.ts";
+} from "../../src/lib/layout.ts";
 
 test("缺省与非法值都落到合法区间", () => {
   assert.equal(clampSide(null, 1280), SIDE_DEFAULT);
@@ -33,5 +33,19 @@ test("拖动区间始终单调：下限 ≤ 任意夹紧值 ≤ 上限", () => {
       const px = clampSide(v, w);
       assert.ok(px >= SIDE_MIN && px <= sideMax(w), `${w}/${v} → ${px} 越界`);
     }
+  }
+});
+
+test("applySide：唯一生效路径写 --w-side 像素值", async () => {
+  const { applySide } = await import("../../src/lib/layout.ts");
+  const writes: Array<[string, string]> = [];
+  const g = globalThis as unknown as Record<string, unknown>;
+  const saved = g.document;
+  g.document = { documentElement: { style: { setProperty: (k: string, v: string) => writes.push([k, v]) } } };
+  try {
+    applySide(320);
+    assert.deepEqual(writes, [["--w-side", "320px"]]);
+  } finally {
+    g.document = saved;
   }
 });

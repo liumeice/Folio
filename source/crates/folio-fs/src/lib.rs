@@ -280,21 +280,34 @@ fn drives() -> Vec<FsEntry> {
     vec![FsEntry("/".into(), "/".into())]
 }
 
-/// 新建文档：在 dir 下生成不重名的「未命名文档[ N].md」+ 起始模板，返回绝对路径。
-/// 已存在同名绝不覆盖（逐个加编号让路）。
-pub fn new_doc(dir: &str) -> Result<String> {
+/// 新建文档：在 dir 下生成不重名的「{untitled}[ N].md」+ 起始模板，返回绝对路径。
+/// `untitled` 由前端按当前 UI 语言传入（多语言设计 §4.6.7 / 对照表 Rust #17–19），
+/// Rust 不再产出面向用户的固定中文；已存在同名绝不覆盖（逐个加编号让路）。
+pub fn new_doc(dir: &str, untitled: &str) -> Result<String> {
     let d = Path::new(dir);
     if !d.is_dir() {
         return Err(CoreError::NotFound(dir.to_string()));
     }
-    let mut name = "未命名文档.md".to_string();
+    // 文案来自本地目录，仍按 Windows 文件名规则收敛：剔除路径分隔等非法字符、去尾点/空格、限长
+    let mut base: String = untitled
+        .chars()
+        .filter(|c| !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .collect();
+    base = base.trim().trim_end_matches('.').trim().to_string();
+    if base.is_empty() {
+        base = "Untitled".into();
+    }
+    if base.chars().count() > 80 {
+        base = base.chars().take(80).collect();
+    }
+    let mut name = format!("{base}.md");
     let mut i = 1usize;
     while d.join(&name).exists() {
-        name = format!("未命名文档 {i}.md");
+        name = format!("{base} {i}.md");
         i += 1;
     }
     let p = d.join(&name);
-    write_text(&p, "# 未命名文档\n\n")?;
+    write_text(&p, &format!("# {base}\n\n"))?;
     Ok(p.to_string_lossy().into_owned())
 }
 
@@ -477,11 +490,15 @@ mod tests {
         let dir = std::env::temp_dir().join("folio-newdoc-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let p1 = new_doc(dir.to_str().unwrap()).unwrap();
-        let p2 = new_doc(dir.to_str().unwrap()).unwrap();
+        let p1 = new_doc(dir.to_str().unwrap(), "未命名文档").unwrap();
+        let p2 = new_doc(dir.to_str().unwrap(), "未命名文档").unwrap();
         assert!(p1.ends_with("未命名文档.md") && p2.ends_with("未命名文档 1.md"));
         assert_ne!(p1, p2);
         assert!(read_md(Path::new(&p2)).unwrap().starts_with("# 未命名文档"));
+        // 英文界面：前端传 "Untitled"，文件名与正文跟随
+        let p3 = new_doc(dir.to_str().unwrap(), "Untitled").unwrap();
+        assert!(p3.ends_with("Untitled.md"));
+        assert!(read_md(Path::new(&p3)).unwrap().starts_with("# Untitled"));
         let _ = fs::remove_dir_all(&dir);
     }
 

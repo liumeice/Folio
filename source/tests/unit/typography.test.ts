@@ -1,14 +1,14 @@
 /* 排版设置的机械核对：范围、换算、CSS 变量出口、跨语言默认值一致性。
- * 运行：node --experimental-strip-types --test tests/typography.test.ts */
+ * 运行：node --experimental-strip-types --test tests/unit/typography.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULTS, RANGE, STEP, clampNum, densityClass, paraPx, typeVars,
-} from "../src/lib/typography.ts";
-import { DEFAULT_SETTINGS } from "../src/lib/defaults.ts";
-import type { Settings } from "../src/lib/types.ts";
+} from "../../src/lib/typography.ts";
+import { DEFAULT_SETTINGS } from "../../src/lib/defaults.ts";
+import type { Settings } from "../../src/lib/types.ts";
 
 const read = (rel: string) =>
   readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -58,7 +58,7 @@ test("typeVars：键齐全、值带单位、并跟随衬线切换", () => {
 });
 
 test("CSS 侧必须真的用这些变量与密度类名，否则设置写了也没人看", () => {
-  const css = read("../src/styles/app.css");
+  const css = read("../../src/styles/app.css");
   for (const key of Object.keys(typeVars(full()))) {
     assert.ok(css.includes(`var(${key}`), `app.css 里没有引用 ${key}`);
   }
@@ -73,31 +73,10 @@ test("密度类名映射", () => {
   assert.equal(densityClass("standard"), "", "标准态不加类，走 CSS 默认");
 });
 
-test("默认值三处一致：typography.DEFAULTS / defaults.DEFAULT_SETTINGS / Rust Settings::default", () => {
+test("默认值两份 TS 来源一致（Rust 由 tests/fixtures/settings-default.json 契约覆盖）", () => {
   for (const [k, v] of Object.entries(DEFAULTS)) {
     assert.equal((DEFAULT_SETTINGS as Record<string, unknown>)[k], v, `TS 两份默认值打架：${k}`);
   }
-  // Rust 侧的字面量默认值（models.rs 的 impl Default）
-  const rs = read("../crates/folio-core/src/models.rs");
-  const num = (field: string): number | null => {
-    const m = new RegExp(`${field}:\\s*(-?[\\d.]+)`).exec(rs);
-    return m ? parseFloat(m[1]) : null;
-  };
-  const str = (field: string): string | null => {
-    const m = new RegExp(`${field}:\\s*"([^"]*)"`).exec(rs);
-    return m ? m[1] : null;
-  };
-  assert.equal(num("fs_serif"), DEFAULTS.fsSerif);
-  assert.equal(num("fs_sans"), DEFAULTS.fsSans);
-  assert.equal(num("width"), DEFAULTS.width);
-  assert.equal(num("lh"), DEFAULTS.lh);
-  assert.equal(num("letter_spacing"), DEFAULTS.letterSpacing);
-  assert.equal(num("para_spacing"), DEFAULTS.paraSpacing);
-  assert.equal(num("code_fs"), DEFAULTS.codeFs);
-  assert.equal(str("align"), DEFAULTS.align);
-  assert.equal(str("table_density"), DEFAULTS.tableDensity);
-  assert.equal(str("serif_x"), null);   // serif 是布尔，用下面的方式查
-  assert.match(rs, /pub serif: bool,[\s\S]*serif: true,/, "Rust 侧 serif 默认应为 true");
 });
 
 test("每个数值控件都有区间与步长（抽屉里的滑块不至于漏配）", () => {

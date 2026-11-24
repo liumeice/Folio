@@ -81,6 +81,8 @@ export default function Icons() {
       <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.4V12l3.2 2"/></symbol>
       <symbol id="i-history" viewBox="0 0 24 24"><path d="M3.7 12a8.4 8.4 0 1 0 2.7-6.2L3.5 8.3"/><path d="M3.3 4.4v4h4"/><path d="M12 7.7V12l3.1 1.9"/></symbol>
       <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20.2 12a8.2 8.2 0 1 1-2.4-5.8"/><path d="M20.6 4.2v4.4h-4.4"/></symbol>
+      {/* 界面语言「跟随系统」项（多语言设计 §2.1）：地球仪，与 ui-iconset-18 同族 */}
+      <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><ellipse cx="12" cy="12" rx="3.9" ry="8.6"/><path d="M3.6 12h16.8M4.9 7.7h14.2M4.9 16.3h14.2"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
       <symbol id="i-trash" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></g></symbol>
       <symbol id="i-co-note" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2M12 7.8h.01"/></symbol>

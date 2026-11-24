@@ -31,7 +31,7 @@
   <div class="bs">
     <div class="bs-logo">F</div>
     <div class="bs-name">Folio</div>
-    <div class="bs-hint">正在打开文档…</div>
+    <div class="bs-hint" id="bs-hint">正在打开文档…</div>
     <div class="bs-bar"><i></i></div>
   </div>
 </div>
@@ -40,6 +40,8 @@
      改由 src/lib/mathjax.ts 在首次遇到 [data-math] 时按需注入 config.js → tex-svg-full.js；
      无公式文档的启动不再付这笔成本。CSP script-src 'self' 允许同源动态脚本。
      库缺失时公式块退化为 <pre> 源码（不白屏）。 -->
+<!-- 首帧语言（多语言设计 §3.6）：CSP script-src 'self' 允许同源脚本；失败不影响启动 -->
+<script src="/boot-locale.js"></script>
 <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

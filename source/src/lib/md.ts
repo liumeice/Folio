@@ -13,9 +13,80 @@
  *   自动链接 <url>/<mailto>、裸 URL、反引号码段保护、反斜杠转义、强调/删除线、GFM emoji 短代码。 */
 import { applyEmojis } from "./emoji.ts";
 import { sanitizeHtml, sanitizeInlineTag, isAllowedTag } from "./htmlsan.ts";
+import { zhCN } from "./i18n/catalog/zh-CN.ts";
+
+/* ── 渲染 chrome 文案（多语言设计 §4.6.1，P4b）───────────────────────────────
+ * md.ts 保持纯函数契约：不读 locale()、不调 t()——运行时由调用方（Reader）传入 RenderOptions。
+ * 缺省值取源语言目录 zh-CN 的中文串（zh-CN 目录是界面文案唯一中文来源，本文件不内联中文）。
+ * 所有注入 innerHTML 的翻译值都过 escapeHtml；callout/任务控件的 lang 用 uiLang，
+ * 避免被文档自身语言带偏（设计 §4.6.1 第 4 条）。tests/unit/md.test.ts 等不传 opts 即中文原样。 */
+const zhMsg = (k: string): string => (zhCN as unknown as Record<string, string>)[k];
+
+export interface RenderOptions {
+  /** callout 五类默认标题（复用 editor.callout.*，与编辑菜单同术语） */
+  callout: { note: string; tip: string; important: string; warning: string; caution: string };
+  copyCode: string;              // 代码块复制按钮文字
+  copyCodeTitle: string;         // 按钮 title
+  taskToggle: string;            // 可勾选任务 title
+  taskNestedDisabled: string;    // 引用块内任务 title
+  frontmatter: string;           // front matter 卡标题
+  footnotes: string;             // 脚注区标题
+  footnoteBack: string;          // 脚注回跳 title
+  mermaidError: string;          // ⚠ 图表语法错误标注
+  mermaidAlt: string;            // mermaid 错误回显标记（内部 Error 文本，不上屏）
+  mathError: string;             // ⚠ 公式语法错误标注
+  zenumlError: string;           // ⚠ zenuml 语法错误标注前缀（后接 " · " + 转义 reason）
+  zenumlLoadError: string;       // 引擎缺失 reason
+  zenumlParseError: string;      // 无定位信息时的 parse 失败 reason
+  zenumlLineColumn: (d: { line: number; column: number; msg: string }) => string; // 定位 reason
+  zenumlRenderError: string;     // 绘制异常 reason
+  zenumlAlt: string;             // <img alt>（可访问性文案，必须翻译）
+  uiLang: string;                // 注入 chrome 元素的 lang 属性值（BCP 47）
+}
+
+const interp = (tpl: string, p: Record<string, string | number>): string =>
+  tpl.replace(/\{(\w+)\}/g, (m0, key: string) => (key in p ? String(p[key]) : m0));
+
+export const DEFAULT_RENDER_OPTIONS: RenderOptions = {
+  callout: {
+    note: zhMsg("editor.callout.note"), tip: zhMsg("editor.callout.tip"),
+    important: zhMsg("editor.callout.important"), warning: zhMsg("editor.callout.warning"),
+    caution: zhMsg("editor.callout.caution"),
+  },
+  copyCode: zhMsg("markdown.code.copy"),
+  copyCodeTitle: zhMsg("markdown.code.copyTitle"),
+  taskToggle: zhMsg("markdown.task.toggle"),
+  taskNestedDisabled: zhMsg("markdown.task.nestedDisabled"),
+  frontmatter: zhMsg("markdown.frontmatter"),
+  footnotes: zhMsg("markdown.footnotes"),
+  footnoteBack: zhMsg("markdown.footnoteBack"),
+  mermaidError: zhMsg("markdown.mermaid.error"),
+  mermaidAlt: zhMsg("markdown.mermaid.alt"),
+  mathError: zhMsg("markdown.math.error"),
+  zenumlError: zhMsg("markdown.zenuml.error"),
+  zenumlLoadError: zhMsg("markdown.zenuml.loadError"),
+  zenumlParseError: zhMsg("markdown.zenuml.invalidContent"),
+  zenumlLineColumn: (d) => interp(zhMsg("markdown.zenuml.lineColumn"), { line: d.line, column: d.column, msg: d.msg }),
+  zenumlRenderError: zhMsg("markdown.zenuml.renderError"),
+  zenumlAlt: zhMsg("markdown.zenuml.alt"),
+  uiLang: "zh-CN",
+};
+
+/** 本次渲染使用的文案（mdToHtml 入口设置、出口恢复；渲染全程同步，不存在并发交错）。 */
+let RO: RenderOptions = DEFAULT_RENDER_OPTIONS;
+/** opts 合并：缺字段回落中文默认，Partial 传入也安全。 */
+function resolveOpts(opts?: Partial<RenderOptions>): RenderOptions {
+  if (!opts) return DEFAULT_RENDER_OPTIONS;
+  return {
+    ...DEFAULT_RENDER_OPTIONS, ...opts,
+    callout: { ...DEFAULT_RENDER_OPTIONS.callout, ...(opts.callout ?? {}) },
+  };
+}
+/** lang 属性（uiLang 是 BCP 47 短串，仍走 escapeHtml 兜属性注入）。 */
+const langAttr = (): string => ` lang="${escapeHtml(RO.uiLang)}"`;
 
 /** CommonMark 4.6 类型 6 块标签表（规范原单，含已废弃项保持同集合）：这些标签的行可带后续内容直接开块。 */
-const HTML_BLOCK_TAGS = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)$/i;
+const HTML_BLOCK_TAGS = /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul|svg)$/i;
 
 /** HTML 块起始判定（第三档，audit 4.6-c/6.11-a）：
  *  - `<!--` 注释行 → 开块（终止仍按"吃到空行"，跨空行注释属 4.6-b 残余）；
@@ -675,12 +746,14 @@ function splitRow(s: string): string[] {
 /* ── GFM Callouts：`> [!NOTE]` 等五类；body 为其余引用行（可含列表/代码/嵌套引用）──
  * 变体：`[!NOTE] 自定义标题`；`[!NOTE]-` 默认折叠、`[!NOTE]+` 默认可展开（点击标题切换）。
  * 未知类型自动回落普通 blockquote（与 GitHub 行为一致）。 */
+/* P4b：默认标题不内联中文——图标留这里，标题按当前 RenderOptions 取（缺省=zh-CN 目录中文）。
+ * 用户自定义标题 `[!NOTE] 我的标题` 保持原文不译、也不加 lang（那是文档内容，不是应用 chrome）。 */
 const CALLOUT_TYPES = {
-  note: { label: "说明", icon: "i-co-note" },
-  tip: { label: "提示", icon: "i-co-tip" },
-  important: { label: "重要", icon: "i-co-important" },
-  warning: { label: "警告", icon: "i-co-warning" },
-  caution: { label: "危险", icon: "i-co-caution" },
+  note: { icon: "i-co-note" },
+  tip: { icon: "i-co-tip" },
+  important: { icon: "i-co-important" },
+  warning: { icon: "i-co-warning" },
+  caution: { icon: "i-co-caution" },
 } as const;
 
 const CALLOUT_RE = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]([+-])?(?:[ \t]+(.*))?$/i;
@@ -693,12 +766,15 @@ function parseCallout(buf: string[], defs: Defs, nested: boolean, lineAttrs: str
   const spec = CALLOUT_TYPES[key];
   const fold = m[2] === "-" || m[2] === "+";
   const collapsed = m[2] === "-";
-  const title = (m[3] ?? "").trim() || spec.label;
+  const customTitle = (m[3] ?? "").trim();
+  const title = customTitle || RO.callout[key as keyof RenderOptions["callout"]];
   // 正文行与原始行逐行 1:1（仅剥 "> " 前缀），故传 bodyBaseLine 让子块记绝对行号（方案 §4.1(a) 嵌套记账）
   const body = buf.length > 1 ? renderBlocks(buf.slice(1).join("\n"), defs, nested, bodyBaseLine) : "";
+  // lang 只随应用 chrome（默认标题）走 head；用户自定义标题属文档内容，不标 lang（设计 §4.6.2）
+  const headLang = customTitle ? "" : langAttr();
   return (
     `<div class="callout co-${key}${collapsed ? " folded" : ""}" data-callout="${key}"${fold ? ` data-fold="1"` : ""}${lineAttrs}>` +
-      `<div class="co-head"${fold ? ` role="button" tabindex="0" aria-expanded="${!collapsed}"` : ""}>` +
+      `<div class="co-head"${headLang}${fold ? ` role="button" tabindex="0" aria-expanded="${!collapsed}"` : ""}>` +
         `<svg class="ico ico-14"><use href="#${spec.icon}"/></svg><span>${escapeHtml(title)}</span>` +
         (fold ? `<svg class="ico ico-12 co-chev"><use href="#i-chev-d"/></svg>` : "") +
       `</div><div class="co-body">${body}</div>` +
@@ -744,7 +820,7 @@ export function defParse(lines: string[], i: number): { label: string; url: stri
 /* ── 第二档行种类状态机（2026-11-21 GFM）：与 Rust folio-core::markdown::
  * {fence_open,fence_close,indent_col,after_list_marker,line_kinds} 逐条镜像。
  * 块层分支路由、flipTaskInSrc、taskMarksIn、DEF 预扫、api.ts mock 全共用这一台机器——
- * 两侧坐标系的唯一入口，改任何一支必须双跑（tests/md.test.ts ↔ markdown.rs::tests）。 ── */
+ * 两侧坐标系的唯一入口，改任何一支必须双跑（tests/unit/md.test.ts ↔ markdown.rs::tests）。 ── */
 
 export interface Fence { ch: string; len: number }
 
@@ -1348,7 +1424,7 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
   /** 围栏/缩进代码共用的代码块壳；<pre> 子锚只记内容行（不含围栏行），行→像素映射以它为精（方案 §4.1(a)） */
   const codeblockHtml = (code: string, lang: string, s: number, e: number, preS: number, preE: number) =>
     `<div class="codeblock"${LA(s, e)}><div class="cbh"><span class="lang">${escapeHtml(lang)}</span><span class="sp"></span>` +
-    `<button class="cb-copy" type="button" title="复制代码块"><svg class="ico ico-14"><use href="#i-copy"/></svg>复制</button></div>` +
+    `<button class="cb-copy" type="button" title="${escapeHtml(RO.copyCodeTitle)}"${langAttr()}><svg class="ico ico-14"><use href="#i-copy"/></svg>${escapeHtml(RO.copyCode)}</button></div>` +
     `<pre${LA(preS, preE)}><code class="language-${escapeHtml(lang.toLowerCase())}">${escapeHtml(code)}</code></pre></div>`;
   /** 正文/懒延续/项内段落行积累（原循环尾部抽提；含 GFM 6.12 硬换行标记） */
   const accumulate = (line: string) => {
@@ -1396,7 +1472,7 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
           ? `<div class="fmr"><span class="fmk">${escapeHtml(kv[1].trim())}</span><span class="fmv">${escapeHtml((kv[2] ?? "").trim())}</span></div>`
           : `<div class="fmp">${escapeHtml(l)}</div>`;
       });
-      out.push(`<div class="frontmatter"${LA(0, fmEnd)}><div class="fmh">文档头部（YAML）</div>${rows.join("")}</div>`);
+      out.push(`<div class="frontmatter"${LA(0, fmEnd)}><div class="fmh"${langAttr()}>${escapeHtml(RO.frontmatter)}</div>${rows.join("")}</div>`);
       i = fmEnd + 1;
       continue;
     }
@@ -1533,7 +1609,7 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       //  - 类型 2 注释 `<!--`：吃到含 `-->` 的行（空行不算界，audit 4.6-b）；
       //  - 类型 3/5 声明 `<!`/`<?`：吃到含 `>` 的行；正文经 DOMParser 会把声明当噪声丢，
       //    故「起始声明段」原文直出（惰性无害），`>` 之后若有残留走净化（audit 4.6-a）；
-      //  - 类型 1 `<script|pre|style|textarea`：吃到对应闭标签行（空行不算界）；
+      //  - 类型 1 `<script|pre|style|textarea`：吃到对应闭标签行（空行不算界）；svg 同走该模式（产品 2026-11-20 解禁，单行/多行 SVG 都按整块净化）；
       //  - 其余（类型 6/7 标签块）：吃到空行（简化保留——类型 6 的规范终止本就是空行）。
       // 块内 HTML 不跑 markdown 内联解析（GFM 同规则）；坐标记账同 $$：块内行照喂状态机，
       // 标题/任务按 Rust 口径计入（块内 ``` 围栏两侧同步生效）。
@@ -1542,7 +1618,7 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       const hb0 = i;
       const cmtMode = /^ {0,3}<!--/.test(line);
       const declMode = !cmtMode && /^ {0,3}<[!?]/.test(line);
-      const t1 = !cmtMode && !declMode ? /^ {0,3}<(script|pre|style|textarea)(?![\w-])/i.exec(line) : null;
+      const t1 = !cmtMode && !declMode ? /^ {0,3}<(script|pre|style|textarea|svg)(?![\w-])/i.exec(line) : null;
       let done = cmtMode ? line.includes("-->") : declMode ? line.includes(">") : false;
       if (t1) { const endTag = new RegExp("</" + t1[1] + ">", "i"); done = endTag.test(line); }
       const buf: string[] = [line]; // 本行已在循环顶 feed 过，不再重复
@@ -1851,10 +1927,10 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
       }
       if (task !== null) {
         const cbx = (clickable: boolean, t: boolean) =>
-          `<span class="cbx${t ? " done" : ""}"` +
+          `<span class="cbx${t ? " done" : ""}"` + langAttr() +
           (clickable
-            ? ` role="checkbox" tabindex="0" aria-checked="${t}" title="点一下打勾或取消，改完按 Ctrl+S 保存"`
-            : ` aria-hidden="true" title="引用块里的任务不能勾选"`) +
+            ? ` role="checkbox" tabindex="0" aria-checked="${t}" title="${escapeHtml(RO.taskToggle)}"`
+            : ` aria-hidden="true" title="${escapeHtml(RO.taskNestedDisabled)}"`) +
           `><svg class="ico ico-12"><use href="#i-check"/></svg></span>`;
         if (nested) {
           // 引用块/提示块内的任务：只显示不可勾选（Rust toggle_task 不认引用前缀行，
@@ -1879,13 +1955,13 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
     // 任务不可勾选——可勾选序号的坐标系占位已打在正文里定义块的位置（与 $$ 隐藏占位同方案）。
     const f = FN;
     const labels = [...f.defs.keys()].filter((l) => f.num.has(l)).sort((a, b) => f.num.get(a)! - f.num.get(b)!);
-    let s = '<div class="footnotes" role="doc-endnotes"><hr><div class="fn-title">脚注</div><ol>';
+    let s = `<div class="footnotes" role="doc-endnotes"><hr><div class="fn-title"${langAttr()}>${escapeHtml(RO.footnotes)}</div><ol>`;
     for (const l of labels) {
       const n = f.num.get(l)!;
       // 回跳 ↩ 与正文同行（需求 2026-11-23）：插进最后一段的 </p> 之前（追加在 <p> 之后会被块级换行）；
       // 末块非段落（列表/代码等）时退回末尾追加。
       const fnInner = renderBlocks(f.defs.get(l)!.join("\n"), defs, true, 0);
-      const fnBack = `<a class="fnback" href="#fnref-${n}" title="跳回正文">↩</a>`;
+      const fnBack = `<a class="fnback" href="#fnref-${n}" title="${escapeHtml(RO.footnoteBack)}">↩</a>`;
       const fnWithBack = /<\/p>\s*$/.test(fnInner) ? fnInner.replace(/<\/p>\s*$/, `${fnBack}</p>`) : fnInner + fnBack;
       s += `<li id="fn-${n}">${fnWithBack}</li>`;
     }
@@ -1895,13 +1971,21 @@ function renderBlocks(src: string, defs: Defs, nested = false, baseLine = 0): st
   return out.join("\n");
 }
 
-export function mdToHtml(src: string): string {
-  // 真实 U+0001（异常字节/GBK 解码噪声）会与转义占位符撞车：入口剥除，可见性无损；
-  // NUL→U+FFFD（CommonMark 2.1 输入预处理，P2；仅显示层，内存/磁盘 src 不动）。
-  // 尾随 \n：cmark 每块输出都以换行收尾——HTML 解析器的活跃格式元素重建（<a> 跨 </p>）
-  // 依赖该换行落位，缺它会让 #476 一类官方例结构比对错位。空文档仍返回空串。
-  const body = renderBlocks(normalizeInput(src.split(ESCAPED).join("")), new Map());
-  return body === "" ? "" : body + "\n";
+/** 主渲染入口。opts=渲染 chrome 文案（P4b，设计 §4.6.1）：不传时用 zh-CN 源语言默认值，
+ *  tests/unit/md.test.ts 等纯函数用例零影响；Reader 传当前 locale 的 RenderOptions。 */
+export function mdToHtml(src: string, opts?: Partial<RenderOptions>): string {
+  const prev = RO;
+  RO = resolveOpts(opts);
+  try {
+    // 真实 U+0001（异常字节/GBK 解码噪声）会与转义占位符撞车：入口剥除，可见性无损；
+    // NUL→U+FFFD（CommonMark 2.1 输入预处理，P2；仅显示层，内存/磁盘 src 不动）。
+    // 尾随 \n：cmark 每块输出都以换行收尾——HTML 解析器的活跃格式元素重建（<a> 跨 </p>）
+    // 依赖该换行落位，缺它会让 #476 一类官方例结构比对错位。空文档仍返回空串。
+    const body = renderBlocks(normalizeInput(src.split(ESCAPED).join("")), new Map());
+    return body === "" ? "" : body + "\n";
+  } finally {
+    RO = prev;   // 嵌套/外部调用交错也不串文案
+  }
 }
 
 /** 与 Rust toggle_task 同一坐标系：围栏外第 nth 个任务（0 起）。

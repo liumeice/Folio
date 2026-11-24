@@ -1,21 +1,50 @@
 /* Markdown 插入模板的纯函数层（方案 N-CTX-01 §3/§4）。
  * 所有函数只做字符串计算：输入源文本 + 选区/光标，输出一次连续替换 + 新选区，
- * 由编辑器侧一次性 dispatch（一次 Ctrl+Z 撤销整段）。不碰 DOM、不碰 CodeMirror。 */
+ * 由编辑器侧一次性 dispatch（一次 Ctrl+Z 撤销整段）。不碰 DOM、不碰 CodeMirror。
+ * 多语言（设计 §4.6.7，P4b）：占位文案经可选 InsertLabels 传入；缺省=zh-CN 目录中文
+ *  （只读静态目录，不依赖 locale/t()，纯函数与现有测试不受影响）。
+ * 生成时跟随当前 UI 语言（Overlays 编辑菜单传入），写入文档后不回改（2026-11-24 定夺）。 */
+import { zhCN } from "./i18n/catalog/zh-CN.ts";
 
 export type ListKind = "ul" | "ol" | "task";
 export type WrapKind = "bold" | "italic" | "code" | "strike" | "link";
 /** GitHub 风格标注块类型（口径对齐原型 editor-ctxmenu.html 与 md.ts 的 GFM Callouts） */
 export type CalloutKind = "NOTE" | "TIP" | "IMPORTANT" | "WARNING" | "CAUTION";
 
+/** 插入模板占位文案（P4b）：由 Overlays 菜单在构造命令时用 t() 生成；
+ *  不传则回落 zh-CN 目录中文（纯函数缺省，与旧输出逐字一致）。 */
+export interface InsertLabels {
+  /** 表头列名：列1 / Column 1 */
+  column: (n: number) => string;
+  /** 图片 alt 占位：描述 / description */
+  imageAlt: string;
+  /** 图片路径占位：images/文件名.png / images/filename.png（images/ 目录名保持字面） */
+  imagePath: string;
+  /** 链接文字占位：文本 / text */
+  linkText: string;
+  /** 链接 URL 占位：url（中英同串） */
+  linkUrl: string;
+}
+
+const zhMsg = (k: string): string => (zhCN as unknown as Record<string, string>)[k];
+
+export const DEFAULT_INSERT_LABELS: InsertLabels = {
+  column: (n) => zhMsg("markdown.insert.column").replace("{index}", String(n)),
+  imageAlt: zhMsg("markdown.insert.imageAlt"),
+  imagePath: zhMsg("markdown.insert.imagePath"),
+  linkText: zhMsg("markdown.insert.linkText"),
+  linkUrl: zhMsg("markdown.insert.linkUrl"),
+};
+
 /** 编辑窗右键菜单的命令（EditorBridge 执行，菜单只负责发命令） */
 export type EditorCmd =
-  | { kind: "table"; cols: number; rows: number }
+  | { kind: "table"; cols: number; rows: number; labels?: InsertLabels }
   | { kind: "code"; lang: string }
   | { kind: "heading"; level: number }
   | { kind: "callout"; callout: CalloutKind }
   | { kind: "emoji"; text: string }
-  | { kind: "image" }
-  | { kind: "link" }
+  | { kind: "image"; labels?: InsertLabels }
+  | { kind: "link"; labels?: InsertLabels }
   | { kind: "hr" }
   | { kind: "wrap"; style: WrapKind }
   | { kind: "list"; list: ListKind | "quote" }
@@ -84,10 +113,10 @@ export function insertBlock(
 }
 
 /** 表格：rows 含表头行；输出 M-1 行数据行。光标进第一格。 */
-export function tableOp(src: string, from: number, to: number, cols: number, rows: number): EditOp {
+export function tableOp(src: string, from: number, to: number, cols: number, rows: number, labels: InsertLabels = DEFAULT_INSERT_LABELS): EditOp {
   const c = Math.max(1, Math.min(8, Math.floor(cols)));
   const r = Math.max(2, Math.min(6, Math.floor(rows)));
-  const head = "| " + Array.from({ length: c }, (_, i) => `列${i + 1}`).join(" | ") + " |";
+  const head = "| " + Array.from({ length: c }, (_, i) => labels.column(i + 1)).join(" | ") + " |";
   const sep = "| " + Array(c).fill("---").join(" | ") + " |";
   const data = "| " + Array(c).fill("").join(" | ") + " |";
   const text = [head, sep, ...Array(r - 1).fill(data)].join("\n");
@@ -131,13 +160,16 @@ export function emojiOp(_src: string, from: number, to: number, text: string): E
   return { from, to, insert: text, selFrom: pos, selTo: pos };
 }
 
-export function imageOp(src: string, from: number, to: number): EditOp {
-  return insertBlock(src, from, to, "![描述](images/文件名.png)", 2, 2, 4);
+export function imageOp(src: string, from: number, to: number, labels: InsertLabels = DEFAULT_INSERT_LABELS): EditOp {
+  // 选区盖住 alt 占位（长度随语言变化，不能像旧版一样硬编码 2..4）
+  const block = `![${labels.imageAlt}](${labels.imagePath})`;
+  return insertBlock(src, from, to, block, 2, 2, 2 + labels.imageAlt.length);
 }
 
-export function linkOp(src: string, from: number, to: number): EditOp {
+export function linkOp(src: string, from: number, to: number, labels: InsertLabels = DEFAULT_INSERT_LABELS): EditOp {
   if (from !== to) return wrapOp(src, from, to, "link");
-  return insertBlock(src, from, to, "[文本](url)", 1, 1, 3);
+  const block = `[${labels.linkText}](${labels.linkUrl})`;
+  return insertBlock(src, from, to, block, 1, 1, 1 + labels.linkText.length);
 }
 
 export function hrOp(src: string, from: number, to: number): EditOp {

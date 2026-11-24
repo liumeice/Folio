@@ -11,7 +11,7 @@ globalThis.HTMLElement = dom.window.HTMLElement;
 // @ts-expect-error browser globals for lib
 globalThis.NodeFilter = dom.window.NodeFilter;
 
-const { applyColorChips, colorToken } = await import("../src/lib/colorchip.ts");
+const { applyColorChips, colorToken } = await import("../../src/lib/colorchip.ts");
 
 const article = dom.window.document.querySelector("article.prose")!;
 function reset(html: string) { article.innerHTML = html; applyColorChips(article as any); }

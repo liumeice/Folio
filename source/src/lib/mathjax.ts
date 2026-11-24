@@ -4,7 +4,7 @@
  * 且 MathJax es5 包是经典脚本，ESM import() 下 var 不挂全局——必须 script 标签加载）。
  * 失败策略（需求方 2026-11-16 最终定夺）：原文位置「框起源码 + 标注语法错误」；
  * 单块抛错只退化它自己，整篇零中断；MathJax 缺失同样走可见退化，绝不白屏。 */
-import { escapeHtml } from "./md.ts";
+import { escapeHtml, DEFAULT_RENDER_OPTIONS, type RenderOptions } from "./md.ts";
 import { compensateAnchor } from "./nav.ts";
 
 interface MathJaxLike {
@@ -58,11 +58,11 @@ function codeOf(el: Element): string {
 
 /** 失败退化（需求方最终定夺：阅读窗对应位置把源码框起来并标注语法错误）；
  *  **保留 [data-task] 记账占位**（丢了它，后续任务序号全体错位） */
-function fallback(el: HTMLElement, code: string): void {
+function fallback(el: HTMLElement, code: string, ro: RenderOptions): void {
   const marks = [...el.querySelectorAll("[data-task]")].map((n) => n.outerHTML).join("");
   // 原地替换即布局推挤事件：经可见锚补偿（滚动同步方案 §4.2 第一层），用户正在读也不跳
   compensateAnchor(() => {
-    el.innerHTML = marks + '<div class="fb-box"><div class="fb-label">⚠ 公式语法错误 · 以下为源码原文</div>' +
+    el.innerHTML = marks + `<div class="fb-box"><div class="fb-label">${escapeHtml(ro.mathError)}</div>` +
       `<pre class="formula-fallback">${escapeHtml(code)}</pre></div>`;
     el.classList.add("f-error"); // CSS：.f-block.f-error{opacity:1;min-height:0!important}，退化态直接可见
   });
@@ -74,24 +74,26 @@ export async function typesetMathIn(
   scope: HTMLElement,
   codeOfFn: (el: Element) => string = codeOf,
   isBlockOf: (el: Element) => boolean = (el) => el.getAttribute("data-math") !== "inline",
+  opts?: Partial<RenderOptions>,
 ): Promise<void> {
+  const ro = { ...DEFAULT_RENDER_OPTIONS, ...(opts ?? {}) };
   const els = [...scope.querySelectorAll<HTMLElement>("[data-math]")];
   if (!els.length) return;
   const M = await loadMathJax();
   if (!M) { // 库缺失/未就绪：全部走可见退化，绝不留 opacity:0 的空白
-    for (const el of els) fallback(el, codeOfFn(el));
+    for (const el of els) fallback(el, codeOfFn(el), ro);
     return;
   }
   for (const el of els) {
     if (!el.isConnected) return;
     const code = codeOfFn(el);
-    if (!code.trim()) { fallback(el, code); continue; }
+    if (!code.trim()) { fallback(el, code, ro); continue; }
     const display = isBlockOf(el);
     try {
       const container = await M.tex2svgPromise!(code.trim(), { display });
       const svg = container?.querySelector?.("svg");
       if (!svg || container.querySelector("mjx-merror, [data-mml-node='merror']")) {
-        fallback(el, code);
+        fallback(el, code, ro);
         continue;
       }
       const marks = [...el.querySelectorAll("[data-task]")].map((n) => n.outerHTML).join("");
@@ -101,7 +103,7 @@ export async function typesetMathIn(
         container.remove?.();
       });
     } catch {
-      fallback(el, code);
+      fallback(el, code, ro);
     }
   }
 }

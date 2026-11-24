@@ -1,12 +1,12 @@
 /* 大纲树纯函数断言（大纲折叠方案 §1）。
- * 运行：node --experimental-strip-types --test tests/oltree.test.ts
+ * 运行：node --experimental-strip-types --test tests/unit/oltree.test.ts
  * 覆盖：level 跳跃建树、祖先链、默认只展开第一层、overrides/softOpen 优先级、全部折叠键。 */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   allOutlineFoldKeys, ancestorChain, buildOutlineTree, flattenOutline, isOutlineOpen,
-} from "../src/lib/oltree.ts";
-import type { OutlineItem } from "../src/lib/types.ts";
+} from "../../src/lib/oltree.ts";
+import type { OutlineItem } from "../../src/lib/types.ts";
 
 const item = (sec: number, level: number, text = `h${sec}`): OutlineItem => ({ sec, level, text, line: sec * 10 });
 

@@ -8,6 +8,7 @@
  * 否则 Windows 上的英文目录会被压成小写。与 folio-db::schema::path_under 同口径。 */
 
 import type { DocMeta } from "./types";
+import { locale, t } from "./i18n/index.ts";
 
 export interface DirNode {
   /** 归一后的绝对目录路径：展开状态与列表 key 都用它 */
@@ -56,11 +57,21 @@ export function rootOf(dir: string, roots: string[]): { key: string; raw: string
 const mkDir = (key: string, name: string, depth: number): DirNode =>
   ({ key, name, depth, dirs: [], files: [], count: 0 });
 
-/** 目录=名称自然序（中文拼音、数字按数值）；文件=文件名自然序升序（2026-11-16 需求：不再按 mtime 倒序） */
-const byName = (a: DirNode, b: DirNode) =>
-  a.name.localeCompare(b.name, "zh-Hans-CN", { numeric: true, sensitivity: "base" });
-const byFileName = (a: DocMeta, b: DocMeta) =>
-  a.fileName.localeCompare(b.fileName, "zh-Hans-CN", { numeric: true, sensitivity: "base" });
+/** 目录=名称自然序（中文拼音、数字按数值）；文件=文件名自然序升序（2026-11-16 需求：不再按 mtime 倒序）。
+ *  P4b（设计 §4.8.3）：排序跟随当前 UI 语言——Collator 按 locale 缓存；树构建（SidePanels 的 memo）
+ *  经由这里读 locale()/t() 建立依赖，语言切换后目录树重算重排。 */
+const collators = new Map<string, Intl.Collator>();
+function natCollator(): Intl.Collator {
+  const l = locale();
+  let c = collators.get(l);
+  if (!c) {
+    c = new Intl.Collator(l, { numeric: true, sensitivity: "base" });
+    collators.set(l, c);
+  }
+  return c;
+}
+const byName = (a: DirNode, b: DirNode) => natCollator().compare(a.name, b.name);
+const byFileName = (a: DocMeta, b: DocMeta) => natCollator().compare(a.fileName, b.fileName);
 
 /** 后序整理：先排序子节点，再汇总「含子目录的文档数」 */
 function prepTree(n: DirNode): void {
@@ -89,7 +100,7 @@ export function buildLibTree(roots: string[], libDocs: DocMeta[]): DirNode[] {
     }
     return child;
   };
-  const loose = mkDir("*", "其他文件夹的文档", 0);
+  const loose = mkDir("*", t("side.tree.otherFolders"), 0);
   for (const d of libDocs) {
     const r = rootOf(d.dir, roots);
     if (!r) { loose.files.push(d); continue; }

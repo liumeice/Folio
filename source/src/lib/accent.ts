@@ -9,10 +9,13 @@
  *   · 旧六枚与任意手输 hex 一律原样使用、墨色走旧亮度阈值——「按亮度自动配墨」的既有承诺不破；
  *   · 新六枚墨色改用对比度择优（提案注 02：亮度阈值会把珊瑚红/茶金判反）。 */
 
+import type { MessageKey } from "./i18n/catalog/zh-CN.ts";
+
 export interface AccentDef {
   /** 设置里持久化的值（= 浅色档 hex） */
   id: string;
-  name: string;
+  /** 色名文案 key（多语言：视图渲染期 t()；持久化只认 id hex） */
+  nameKey: MessageKey;
   light: string;
   dark: string;
   /** true = 日夜双档（按主题取档 + 对比度择优墨色） */
@@ -21,18 +24,18 @@ export interface AccentDef {
 
 /** 色板。顺序即色板渲染序（青绿仍是默认高亮；六枚新色按提案 02 排在其后）。 */
 export const ACCENTS: readonly AccentDef[] = [
-  { id: "#2DD4BF", name: "青绿", light: "#2DD4BF", dark: "#2DD4BF", tiered: false },
-  { id: "#7FB2FF", name: "淡蓝", light: "#7FB2FF", dark: "#7FB2FF", tiered: false },
-  { id: "#A78BFA", name: "紫罗兰", light: "#A78BFA", dark: "#A78BFA", tiered: false },
-  { id: "#F59E0B", name: "琥珀", light: "#F59E0B", dark: "#F59E0B", tiered: false },
-  { id: "#FB7185", name: "玫红", light: "#FB7185", dark: "#FB7185", tiered: false },
-  { id: "#A0562A", name: "赭石", light: "#A0562A", dark: "#A0562A", tiered: false },
-  { id: "#B53825", name: "朱砂", light: "#B53825", dark: "#FF826D", tiered: true },
-  { id: "#1F6749", name: "松针", light: "#1F6749", dark: "#71D3A4", tiered: true },
-  { id: "#3456B5", name: "黛蓝", light: "#3456B5", dark: "#86A7FF", tiered: true },
-  { id: "#8F417B", name: "藕荷", light: "#8F417B", dark: "#E5A3D5", tiered: true },
-  { id: "#7E5A18", name: "茶金", light: "#7E5A18", dark: "#E3B25E", tiered: true },
-  { id: "#1B6372", name: "石青", light: "#1B6372", dark: "#6CC8D6", tiered: true },
+  { id: "#2DD4BF", nameKey: "accent.teal", light: "#2DD4BF", dark: "#2DD4BF", tiered: false },
+  { id: "#7FB2FF", nameKey: "accent.sky", light: "#7FB2FF", dark: "#7FB2FF", tiered: false },
+  { id: "#A78BFA", nameKey: "accent.violet", light: "#A78BFA", dark: "#A78BFA", tiered: false },
+  { id: "#F59E0B", nameKey: "accent.amber", light: "#F59E0B", dark: "#F59E0B", tiered: false },
+  { id: "#FB7185", nameKey: "accent.rose", light: "#FB7185", dark: "#FB7185", tiered: false },
+  { id: "#A0562A", nameKey: "accent.ochre", light: "#A0562A", dark: "#A0562A", tiered: false },
+  { id: "#B53825", nameKey: "accent.vermilion", light: "#B53825", dark: "#FF826D", tiered: true },
+  { id: "#1F6749", nameKey: "accent.pine", light: "#1F6749", dark: "#71D3A4", tiered: true },
+  { id: "#3456B5", nameKey: "accent.indigo", light: "#3456B5", dark: "#86A7FF", tiered: true },
+  { id: "#8F417B", nameKey: "accent.mauve", light: "#8F417B", dark: "#E5A3D5", tiered: true },
+  { id: "#7E5A18", nameKey: "accent.teaGold", light: "#7E5A18", dark: "#E3B25E", tiered: true },
+  { id: "#1B6372", nameKey: "accent.azurite", light: "#1B6372", dark: "#6CC8D6", tiered: true },
 ];
 
 export function hexRgb(h: string): [number, number, number] {

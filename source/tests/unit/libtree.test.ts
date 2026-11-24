@@ -1,10 +1,10 @@
 /* 文档库目录树（schema v3）的纯函数断言。
- * 运行：node --experimental-strip-types --test tests/libtree.test.ts
+ * 运行：node --experimental-strip-types --test tests/unit/libtree.test.ts
  * 覆盖：库根→层级、最长根匹配、分隔符边界、大小写归一、排序与计数、展开状态（默认+手动）。 */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { allDirKeys, buildLibTree, flattenAll, isDirOpen, leafName, revealKeys, rootOf } from "../src/lib/libtree.ts";
-import type { DocMeta } from "../src/lib/types.ts";
+import { allDirKeys, buildLibTree, flattenAll, isDirOpen, leafName, revealKeys, rootOf } from "../../src/lib/libtree.ts";
+import type { DocMeta } from "../../src/lib/types.ts";
 
 function doc(path: string, mtime = 0, over: Partial<DocMeta> = {}): DocMeta {
   const fileName = path.split(/[\\/]/).pop() as string;

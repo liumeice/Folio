@@ -1,7 +1,7 @@
-// FR-13.2 导出 PDF 文件名净化（纯函数）。跑法：node --experimental-strip-types --test tests/pdfname.test.ts
+// FR-13.2 导出 PDF 文件名净化（纯函数）。跑法：node --experimental-strip-types --test tests/unit/pdfname.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pdfExportName } from "../src/lib/pdfname.ts";
+import { pdfExportName } from "../../src/lib/pdfname.ts";
 
 test("常规文档名：换后缀为 .pdf", () => {
   assert.equal(pdfExportName("readme.md"), "readme.pdf");

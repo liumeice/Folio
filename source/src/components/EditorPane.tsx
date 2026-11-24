@@ -3,7 +3,7 @@
  * （v1.2 一把尺：小数源码行号 lineFloat，方案 §4.1(c)(d)）：
  *  topLine() —— 视口顶 → 小数行号（软换行按可视块折算，非整行吸附）；
  *  jumpToLine(lineFloat) —— scrollIntoView 贴整行 + 下一帧 coordsAtPos 精确对齐视口顶。 */
-import { Show, createEffect, onCleanup, onMount } from "solid-js";
+import { Show, createEffect, createMemo, onCleanup, onMount } from "solid-js";
 import { basicSetup } from "codemirror";
 import { EditorView, keymap } from "@codemirror/view";
 import { indentLess, insertTab } from "@codemirror/commands";
@@ -14,6 +14,7 @@ import { mdHighlight } from "../lib/mdstyle";
 import { mdStructural } from "../lib/mdStructural";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
+import { t } from "../lib/i18n";
 import { SYNC_EPSILON } from "../lib/nav";
 import { commonEditRange } from "../lib/textedit";
 import {
@@ -36,7 +37,7 @@ export default function EditorPane() {
     if (!v || !s.current()) return null;
     try {
       const r = v.scrollDOM.getBoundingClientRect();
-      if (r.width < 2) throw new Error("未挂载");
+      if (r.width < 2) throw new Error(t("editorpane.notMounted"));   // 内部异常串，不进界面
       const h = (r.top + SYNC_EPSILON) - v.documentTop;   // 视口顶的文档相对 y
       const blk = v.lineBlockAtHeight(Math.max(0, h));
       const ln = v.state.doc.lineAt(blk.from);
@@ -129,7 +130,7 @@ export default function EditorPane() {
     switch (cmd.kind) {
       case "table": {
         const w = localWindow("block", from, to);
-        applyOp(tableOp(w.src, w.from, w.to, cmd.cols, cmd.rows), w.base);
+        applyOp(tableOp(w.src, w.from, w.to, cmd.cols, cmd.rows, cmd.labels), w.base);
         break;
       }
       case "code": {
@@ -164,16 +165,16 @@ export default function EditorPane() {
       }
       case "image": {
         const w = localWindow("block", from, to);
-        applyOp(imageOp(w.src, w.from, w.to), w.base);
+        applyOp(imageOp(w.src, w.from, w.to, cmd.labels), w.base);
         break;
       }
       case "link": {
         if (from !== to) {
           const w = localWindow("selection", from, to);
-          applyOp(linkOp(w.src, 0, w.to), w.base);
+          applyOp(linkOp(w.src, 0, w.to, cmd.labels), w.base);
         } else {
           const w = localWindow("block", from, to);
-          applyOp(linkOp(w.src, w.from, w.to), w.base);
+          applyOp(linkOp(w.src, w.from, w.to, cmd.labels), w.base);
         }
         break;
       }
@@ -210,18 +211,18 @@ export default function EditorPane() {
         }
         if (cmd.action === "copy") {
           if (!text) return false;
-          try { await navigator.clipboard.writeText(text); s.toast("已复制"); }
-          catch { s.toast("剪贴板不可用"); }
+          try { await navigator.clipboard.writeText(text); s.toast(t("editorpane.copied")); }
+          catch { s.toast(t("side.status.clipboardFail")); }
           v.focus();
           return true;
         }
         if (cmd.action === "cut") {
           if (!text) return false;
           try { await navigator.clipboard.writeText(text); }
-          catch { s.toast("剪贴板不可用"); return false; }
+          catch { s.toast(t("side.status.clipboardFail")); return false; }
           if (v.state.doc !== doc) return false;   // 等待期间文档已变：不作废用户输入
           applyOp({ from, to, insert: "", selFrom: from, selTo: from }, 0);
-          s.toast("已剪切");
+          s.toast(t("editorpane.cut"));
           return false;
         }
         if (cmd.action === "delete") {
@@ -232,11 +233,11 @@ export default function EditorPane() {
         // paste
         let clip: string | null = null;
         try { clip = await navigator.clipboard.readText(); } catch { /* 权限/非安全上下文 */ }
-        if (clip == null) { s.toast("无法读取剪贴板，请按 Ctrl+V"); return false; }
-        if (!clip) { s.toast("剪贴板为空"); return false; }
+        if (clip == null) { s.toast(t("editorpane.clipboard.readFailed")); return false; }
+        if (!clip) { s.toast(t("editorpane.clipboard.empty")); return false; }
         if (v.state.doc !== doc) return false;
         applyOp({ from, to, insert: clip, selFrom: from + clip.length, selTo: from + clip.length }, 0);
-        s.toast("已粘贴");
+        s.toast(t("editorpane.pasted"));
         return false;
       }
     }
@@ -383,21 +384,29 @@ export default function EditorPane() {
     });
   });
 
+  /* 底栏状态句（对照表 编辑器 #9–#11 按 v2.0 片段合并口径）：整句 + {x} 占位建模，
+   * 渲染期按占位切前后段、中段保留 <b> 加粗。中文拼出与旧版逐字一致
+   * （"编辑模式 — 行号 / 高亮已开启"），英文拼出
+   * "Edit mode — Line numbers / highlighting enabled"，语言切换随 locale() 重渲染。 */
+  const barStatus = createMemo(() => {
+    const full = t("editorpane.bar.status");
+    const at = full.indexOf("{x}");
+    return at < 0 ? { pre: full, post: "" } : { pre: full.slice(0, at), post: full.slice(at + 3) };
+  });
+
   return (
     <div class="editor-wrap" classList={{ "is-hidden": s.mode() !== "edit" }}>
       <div class="editor-bar">
-        <span class="hint" title="编辑模式已开启行号和高亮；滚动、大纲与阅读视图保持同步">
-          编辑模式 — <b>行号 / 高亮</b>已开启
-        </span>
+        <span class="hint" title={t("editorpane.bar.hint")}>{barStatus().pre}<b>{t("editorpane.bar.features")}</b>{barStatus().post}</span>
         <span class="sp" />
         <Show when={s.dirty()}>
-          <span class="hint" style={{ color: "var(--amber)" }}>● 未保存</span>
+          <span class="hint" style={{ color: "var(--amber)" }}>{t("editorpane.dirty")}</span>
         </Show>
         {/* §8.2 按钮组口径：等宽、dismiss（放弃修改）居左 */}
         <span class="mfb">
-          <button class="btn" title="不保存本次修改，返回阅读 (Esc)" onClick={() => s.discard()}>放弃修改</button>
-          <button class="btn primary" title="保存到文件 (Ctrl+S)" onClick={() => void s.save()}>
-            <svg class="ico ico-14"><use href="#i-save" /></svg>保存并返回阅读
+          <button class="btn" title={t("editorpane.discard.title")} onClick={() => s.discard()}>{t("editorpane.discard")}</button>
+          <button class="btn primary" title={t("editorpane.save.title")} onClick={() => void s.save()}>
+            <svg class="ico ico-14"><use href="#i-save" /></svg>{t("editorpane.saveAndReturn")}
           </button>
         </span>
       </div>

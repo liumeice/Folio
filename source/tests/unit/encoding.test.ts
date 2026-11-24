@@ -1,8 +1,8 @@
 /* 编码标签显示文案（与 folio-fs 的 decode_bytes 标签口径一致）。
- * 运行：node --experimental-strip-types --test tests/encoding.test.ts */
+ * 运行：node --experimental-strip-types --test tests/unit/encoding.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { encLabel } from "../src/lib/encoding.ts";
+import { encLabel } from "../../src/lib/encoding.ts";
 
 test("编码标签 → 显示名（镜像 Rust 标签集）", () => {
   assert.equal(encLabel("utf-8"), "UTF-8");

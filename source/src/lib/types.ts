@@ -1,4 +1,5 @@
 /* 与 folio-core serde(camelCase) 一一对应 */
+import type { LanguagePref } from "./i18n/types.ts";
 
 export interface DocMeta {
   id: number;
@@ -90,6 +91,8 @@ export interface Settings {
   restoreOnLaunch: boolean;
   /** 段落内单个换行按换行显示（false = 按 GFM 折叠为空格；true = 逐行显示，需求 2026-11-23） */
   softBreakBr: boolean;
+  /** 界面语言：auto=跟随系统 / zh-CN / en-US（多语言支持设计 2026-11-24） */
+  language: LanguagePref;
 }
 
 export type SearchScope = "current" | "library";

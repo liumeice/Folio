@@ -2,7 +2,7 @@
  * 链接包图 / 参考式 / 自动链接 / 转义 / title 语法 / 代码段保护 / 强调 */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mdToHtml, renderSnippet, headingMatch, flipTaskInSrc, headingsOfSrc, lineKinds, setSoftBreakBr } from "../src/lib/md.ts";
+import { mdToHtml, renderSnippet, headingMatch, flipTaskInSrc, headingsOfSrc, lineKinds, setSoftBreakBr } from "../../src/lib/md.ts";
 
 const imgAttrs = (html: string) => /<img([^>]*)>/.exec(html)?.[1] ?? "";
 

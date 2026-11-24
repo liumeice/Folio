@@ -10,8 +10,8 @@ globalThis.document = dom.window.document;
 // @ts-expect-error browser globals for lib
 globalThis.HTMLElement = dom.window.HTMLElement;
 
-const { mdToHtml } = await import("../src/lib/md.ts");
-const { highlightCodeBlocks } = await import("../src/lib/codehl.ts");
+const { mdToHtml } = await import("../../src/lib/md.ts");
+const { highlightCodeBlocks, registeredLanguages } = await import("../../src/lib/codehl.ts");
 
 const src = [
   "```rust",
@@ -61,4 +61,10 @@ test("幂等：二次调用不重复处理", async () => {
   const before = host.querySelector("code.language-rust")!.innerHTML;
   await highlightCodeBlocks(host as any);
   assert.equal(host.querySelector("code.language-rust")!.innerHTML, before);
+});
+
+
+test("registeredLanguages：按需加载后注册表非空（不做全量预注册）", () => {
+  const n = registeredLanguages();
+  assert.ok(n >= 1, `已着色语言应已注册：${n}`);
 });

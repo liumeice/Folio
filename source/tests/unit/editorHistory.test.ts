@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EditorState, type Transaction } from "@codemirror/state";
 import { history } from "@codemirror/commands";
-import { historyDepths, undoOnce, redoOnce } from "../src/lib/editorHistory.ts";
+import { historyDepths, undoOnce, redoOnce } from "../../src/lib/editorHistory.ts";
 
 function makeTarget() {
   let st = EditorState.create({ doc: "abc", extensions: [history({ newGroupDelay: 0 })] });

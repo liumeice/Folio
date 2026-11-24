@@ -9,6 +9,8 @@ import {
 import { api } from "./api";
 import { swapPathPrefix } from "./filename";
 import { DEFAULT_SETTINGS } from "./defaults";
+import { t, resolveLocale } from "./i18n/index.ts";
+import { formatPercent } from "./i18n/format.ts";
 import type { DocFull, DocMeta, FormatResult, HistEntry, Position, RecentDoc, Settings } from "./types";
 
 import { isTypesetSettled, lineForSec, navForHistEntrySameDoc, navForRestorePos, type NavRequest } from "./nav";
@@ -127,7 +129,7 @@ export interface Store {
 const Ctx = createContext<Store>();
 export function useStore(): Store {
   const c = useContext(Ctx);
-  if (!c) throw new Error("useStore 必须在 StoreProvider 内使用");
+  if (!c) throw new Error(t("store.dev.useStore"));
   return c;
 }
 
@@ -292,12 +294,12 @@ export function StoreProvider(props: ParentProps): JSX.Element {
         // 「放弃保存」不写盘直接关；「保存并关闭」（主按钮）先落盘再关。Esc/✕/遮罩=取消。
         // 脏检查与模式无关（阅读态打勾也拦得住）。
         const r = await ui.ask({
-          icon: "i-info", title: "关闭页签",
-          note: "有未保存的修改，确定关闭页签吗？未保存内容将丢失。",
+          icon: "i-info", title: t("store.closeTab.title"),
+          note: t("store.closeTab.note"),
           notePlain: true,
           buttons: [
-            { label: "放弃保存", value: "discard" },
-            { label: "保存并关闭", value: "save", primary: true },
+            { label: t("act.quit.discard"), value: "discard" },
+            { label: t("store.closeTab.save"), value: "save", primary: true },
           ],
         });
         if (r === "save") {
@@ -357,7 +359,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     // 退出链仍强制 await（quitApp/beforeunload/closeTab），最坏情况硬杀丢一次防抖窗口内的位置。
     void flushPosition();
     // v1.1：切文档必然结束编辑会话（预览文档/会话信号清空）——脏则按既有策略自动保存
-    if (dirty()) await save(`切换文档：已自动保存「${current()?.meta.fileName ?? ""}」的修改`);
+    if (dirty()) await save(t("store.autoSavedOnSwitch", { name: current()?.meta.fileName ?? "" }));
     else if (mode() === "edit") endEdit();
     // 双保险：即使上面走了 applySaved/无脏分支，会话与预览也不得跨文档残留
     setPreviewDoc(null);
@@ -378,7 +380,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
           ?? { kind: "restore", sec: pos.sec, secText: pos.secText, ratio: pos.ratio, secOff: pos.secOff });
         // 位置恢复同属「主动跳转」：旧库可能只有 secText，按文本兜一层
         revealOutline(pos.sec ?? doc.outline.find((o) => o.text === pos.secText)?.sec);
-        toast(`已恢复「${doc.meta.fileName}」上次阅读位置 · ${Math.round(pos.ratio * 100)}%`);
+        toast(t("store.restored", { name: doc.meta.fileName, pct: formatPercent(pos.ratio) }));
       } else if (!first) {
         setNavRequest({ kind: "top" });
       }
@@ -395,12 +397,12 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     const dr = getDraft(doc.meta.path);
     if (dr && dr.at > doc.meta.mtime * 1000 + 1500 && dr.text !== doc.src) {
       const yes = (await ui.ask({
-        icon: "i-info", title: "发现未保存的修改",
-        sub: `「${doc.meta.fileName}」上次退出前的修改还没保存到文件`,
-        note: "点「恢复修改」，内容会回到上次编辑的样子，确认后按 Ctrl+S 保存到文件；点「取消」，这些修改就丢掉了，文件保持原来的内容。",
-        ok: "恢复修改",
+        icon: "i-info", title: t("store.draftFound.title"),
+        sub: t("store.draftFound.sub", { name: doc.meta.fileName }),
+        note: t("store.draftFound.note"),
+        ok: t("store.draftFound.ok"),
       })) === true;
-      if (yes) { setDraftSrc(dr.text); setDirty(true); toast("已找回上次未保存的修改 · 按 Ctrl+S 保存到文件"); }
+      if (yes) { setDraftSrc(dr.text); setDirty(true); toast(t("store.draftRestored")); }
       else clearDraft(doc.meta.path);
     }
   }
@@ -421,11 +423,12 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       return true;
     } catch (e) {
       const msg = ui.fmtErr(e);
-      if (msg.includes("文件不存在")) {
+      // P4a：按错误码判（not_found）；字符串判据仅过渡兜底（设计 §4.7.3）
+      if (ui.apiErrorCode(e) === "not_found") {
         await dropMissingFromRecents(meta.id);
-        toast("文件不存在或已被移动，已从最近打开清除");
+        toast(t("store.missingPruned"));
       } else {
-        toast("打开失败：" + msg);
+        toast(t("act.openFailed") + msg);
       }
       return false;
     }
@@ -436,12 +439,12 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       return true;
     } catch (e) {
       const msg = ui.fmtErr(e);
-      if (msg.includes("文件不存在")) {
+      if (ui.apiErrorCode(e) === "not_found") {
         const key = path.toLowerCase();
         await dropMissingFromRecents(docs().find((d) => d.path.toLowerCase() === key)?.id);
-        toast("文件不存在或已被移动，已从最近打开清除");
+        toast(t("store.missingPruned"));
       } else {
-        toast("打开失败：" + msg);
+        toast(t("act.openFailed") + msg);
       }
       return false;
     }
@@ -450,7 +453,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     try {
       await switchTo(await api.openBySlug(slug), { secText });
     } catch {
-      toast("没有找到这个文档链接对应的文件：" + slug);
+      toast(t("store.linkNotFound") + slug);
     }
   }
 
@@ -495,7 +498,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     try {
       await switchTo(await api.openDoc(entry.path), { secText: entry.secText ?? null, record: false });
     } catch {
-      toast("历史文档已不可读：" + entry.path);
+      toast(t("store.histUnreadable") + entry.path);
     }
   }
 
@@ -633,10 +636,10 @@ export function StoreProvider(props: ParentProps): JSX.Element {
         if (tabs().some((t) => t.docId === draftId)) void closeTab(draftId);
         // Rust 侧 delete_scratch 现在连登记行（历史/进度/FTS）一并回收
         void api.deleteScratch(draftPath).catch(() => undefined);
-        toast(`已保存为 ${res.name}`);
+        toast(t("store.savedTo", { name: res.name }));
         return true;
       } catch (e) {
-        toast("保存失败：" + ui.fmtErr(e));
+        toast(t("store.saveFailed") + ui.fmtErr(e));
         return false;
       }
     }
@@ -652,25 +655,25 @@ export function StoreProvider(props: ParentProps): JSX.Element {
         applySaved(next);                // 阅读态（打勾待存被「保存」）：原位重渲染不跳顶
       }
       clearDraft(cur.meta.path);
-      toast(customMsg ?? "已保存到文件");
+      toast(customMsg ?? t("store.saved"));
       return true;
     } catch (e) {
-      const msg = String(e);
-      if (msg.includes("CONFLICT") && !force) {
+      // P4a：外部修改冲突按 code=conflict 判（旧串 includes("CONFLICT") 由 apiErrorCode 过渡兜底）
+      if (ui.apiErrorCode(e) === "conflict" && !force) {
         // FR-7.5：外部并发编辑 → 重新加载 / 覆盖 二选一；取消/Esc/✕/遮罩 = 零副作用（§8.6）
         const pick = await ui.ask({
-          icon: "i-info", title: "文件已被其他程序改动",
-          note: "这份文件在 Folio 之外被改过了。你想保留哪一个版本？",
+          icon: "i-info", title: t("store.conflict.title"),
+          note: t("store.conflict.note"),
           buttons: [
-            { label: "重新加载", value: "reload", primary: true },
-            { label: "用我的内容覆盖", value: "overwrite" },
+            { label: t("store.conflict.reload"), value: "reload", primary: true },
+            { label: t("store.conflict.overwrite"), value: "overwrite" },
           ],
         });
         if (pick === "reload") { setDraftSrc(cur.src); setDirty(false); await openPath(cur.meta.path); return true; }
         if (pick === "overwrite") return await save(customMsg, true);
         return false;
       }
-      toast("保存失败：" + ui.fmtErr(msg));
+      toast(t("store.saveFailed") + ui.fmtErr(e));
       return false;
     }
   }
@@ -683,14 +686,14 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     endEdit();
     clearDraft(cur.meta.path);
     recomputeDirty();  // Esc 只弃编辑缓冲；阅读态挂账的打勾不属于"编辑修改"，保留待存
-    toast(dirty() ? "已放弃编辑修改；刚勾选的改动还没保存" : "已放弃未保存修改，返回阅读模式");
+    toast(dirty() ? t("store.discardedTasks") : t("store.discarded"));
   }
   /** Ctrl+S / 菜单「保存」统一入口（§6.4）：编辑态=保存并返回阅读；
    *  阅读态有待存改动（打勾）→ 写盘；干净 → 如实告知无事可存。 */
   async function saveSmart(): Promise<boolean> {
     if (!current()) return false;
     if (mode() === "edit" || dirty()) return await save();
-    toast("当前没有待保存的修改");
+    toast(t("store.nothingToSave"));
     return false;
   }
   /** 页签原位替换：删旧文档页签，把新文件页签挪到旧位置（setDoc upsert 已将其追加在尾）。 */
@@ -729,7 +732,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
         await api.writeFile(path, content, cur.encoding);
         setDisk(cur.meta.id, content);
         if (mode() === "edit") { setDraftSrc(content); endEdit(); } else recomputeDirty();
-        toast(`已另存为 ${cur.meta.fileName}`);
+        toast(t("store.savedAs", { name: cur.meta.fileName }));
         return true;
       }
       await api.writeFile(path, content, cur.encoding);
@@ -740,10 +743,10 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       await switchTo(next);
       retargetTab(oldId, next.meta.id);
       if (line != null) setNavRequest({ kind: "line", line });
-      toast(`已另存为 ${next.meta.fileName}`);
+      toast(t("store.savedAs", { name: next.meta.fileName }));
       return true;
     } catch (e) {
-      toast("另存为失败：" + ui.fmtErr(e));
+      toast(t("store.saveAsFailed") + ui.fmtErr(e));
       recomputeDirty();                // 半途失败（如 openDoc 出错）：挂账的打勾/编辑仍须可见
       return false;
     }
@@ -923,8 +926,19 @@ export function StoreProvider(props: ParentProps): JSX.Element {
       api.drainPending().catch(() => [] as string[]),
     ]);
     if (st) setSettings(st);
+    // i18n P5（设计 §4.10）：内置文档（welcome/guide）按解析后的 UI locale 校正语言。
+    // 先于恢复打开 await：首次启动按该 locale 生成、语言切换后未修改副本换成目标模板；
+    // 内容已是目标语言时 Rust 侧零写盘（幂等），失败不阻塞启动。
+    // force=true：即便 App 首帧效果已按镜像 locale 发过一次，这里仍以设置解析出的权威 locale 再同步（幂等，先于恢复打开）
+    // 真发生了模板替换（返回数 >0）时列表里的内置行（标题/统计）已过时，重取一次再落信号
+    let docsList = list;
+    try {
+      if (await api.syncBuiltinDocs(resolveLocale(st?.language), true) > 0) {
+        docsList = await api.listDocs().catch(() => list);
+      }
+    } catch { /* 兜底：setup 已按持久化设置初同步 */ }
     if (posList) setPositionsMap(Object.fromEntries(posList));
-    setDocs(list);
+    setDocs(docsList);
     setRecents(rc);
     setRoots(rs);
     // 启动恢复=上次「打开过」的那篇（历史序），不是磁盘上最新改动的那篇（mtime 序）。

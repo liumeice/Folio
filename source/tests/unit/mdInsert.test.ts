@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   calloutOp, codeBlockOp, emojiOp, hrOp, imageOp, insertBlock, linkOp, listOp, prefixLinesOp, tableOp, wrapOp,
   type EditOp,
-} from "../src/lib/mdInsert.ts";
+} from "../../src/lib/mdInsert.ts";
 
 const apply = (src: string, op: EditOp) => src.slice(0, op.from) + op.insert + src.slice(op.to);
 
@@ -165,4 +165,16 @@ test("Emoji：代理对按 UTF-16 码元计位（与 CM6 位置同系），选�
   const op = emojiOp(src, 1, 3, "🎉");
   assert.equal(apply(src, op), "x🎉y");
   assert.deepEqual([op.selFrom, op.selTo], [3, 3]);
+});
+test("行内包裹：bold / italic / code / strike 四种符号与选区回位", () => {
+  assert.deepEqual(wrapOp("abc", 0, 3, "bold"), { from: 0, to: 3, insert: "**abc**", selFrom: 2, selTo: 5 });
+  assert.deepEqual(wrapOp("abc", 0, 3, "italic"), { from: 0, to: 3, insert: "*abc*", selFrom: 1, selTo: 4 });
+  assert.deepEqual(wrapOp("abc", 0, 3, "code"), { from: 0, to: 3, insert: "`abc`", selFrom: 1, selTo: 4 });
+  assert.deepEqual(wrapOp("abc", 0, 3, "strike"), { from: 0, to: 3, insert: "~~abc~~", selFrom: 2, selTo: 5 });
+});
+
+test("有序列表续号：同缩进上一条编号 +1；被非列表行截断则从 1", () => {
+  assert.equal(listOp("1. one\n\n", 7, 7, "ol").insert, "2. ");
+  assert.equal(listOp("para\n", 5, 5, "ol").insert, "1. ");
+  assert.equal(listOp("1. one\ntext\n\n", 13, 13, "ol").insert, "1. ", "中间非列表行截断");
 });

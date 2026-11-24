@@ -8,28 +8,41 @@ import { api, isTauri } from "../lib/api";
 import { revealInFolder, confirmBox, pickFolderAndScan } from "../lib/actions";
 import { encLabel } from "../lib/encoding";
 import { APP_VERSION, IS_DEV } from "../lib/version";
+import { t, tp, type MessageKey } from "../lib/i18n";
+import { formatNumber, formatDateTime, formatFileSize, formatPercent } from "../lib/i18n/format";
 import type { CtxTarget } from "../lib/ui";
-import type { CalloutKind, EditorCmd, ListKind, WrapKind } from "../lib/mdInsert";
+import type { CalloutKind, EditorCmd, InsertLabels, ListKind, WrapKind } from "../lib/mdInsert";
 
-const KEYMAP: [string, string][] = [
-  ["Ctrl O", "打开本地 .md（可多选）"],
-  ["Ctrl N", "新建文档（建好直接写，第一次保存时确认文件名和位置）"],
-  ["Ctrl F / Ctrl K", "全文搜索"],
-  ["F3 / Shift+F3", "搜索命中下一处 / 上一处"],
-  ["Ctrl E", "阅读 ⇄ 编辑（有改动时保存并提示）"],
-  ["Ctrl Z", "撤销编辑（仅编辑窗口）"],
-  ["Ctrl Y / Ctrl Shift Z", "重做（仅编辑窗口）"],
-  ["Ctrl S", "保存（编辑时保存并回到阅读；阅读时保存刚勾选的改动）"],
-  ["Ctrl Shift S", "另存为…（当前内容写到新路径，页签切到新文件，原文件不动）"],
-  ["Ctrl 滚轮 ↑ / ↓", "阅读区正文字号放大 / 缩小（仅正文排版，不缩放应用界面）"],
-  ["Shift Alt F", "源码自动格式化（整理标题、列表、引用的空格和空行；代码块内容不动）"],
-  ["Alt ↑ / Alt ↓", "上一章 / 下一章"],
-  ["Alt ← / Alt →", "后退 / 前进（同文档回当时行）"],
-  ["↑ ↓ ← →", "大纲内：移动 / 收起 / 展开（Enter 或空格跳转）"],
-  ["Home", "回到顶部（输入焦点内不劫持光标）"],
-  ["F2", "重命名选中的文件或文件夹（目录树内，就地编辑）"],
-  ["Esc", "关弹层 → 清高亮 → 退专注 → 编辑中放弃修改"],
-  ["Ctrl Q", "退出（有未保存内容需确认）"],
+/* P4b（设计 §4.6.7）：右键插入模板的占位文案在点击时按当前 UI 语言生成（InsertLabels），
+ * 写入文档后不回改；缺省中文在 mdInsert.ts 的 zh-CN 目录默认值里兜底。 */
+const insertLabels = (): InsertLabels => ({
+  column: (n: number) => t("markdown.insert.column", { index: n }),
+  imageAlt: t("markdown.insert.imageAlt"),
+  imagePath: t("markdown.insert.imagePath"),
+  linkText: t("markdown.insert.linkText"),
+  linkUrl: t("markdown.insert.linkUrl"),
+});
+
+/* 快捷键一览数据：只存 key，中英文案在渲染期经 t() 从目录取（对照表 #1–#19）。 */
+const KEYMAP: { keys: MessageKey; desc: MessageKey }[] = [
+  { keys: "help.keymap.open.keys", desc: "help.keymap.open.desc" },
+  { keys: "help.keymap.new.keys", desc: "help.keymap.new.desc" },
+  { keys: "help.keymap.search.keys", desc: "help.keymap.search.desc" },
+  { keys: "help.keymap.stepHit.keys", desc: "help.keymap.stepHit.desc" },
+  { keys: "help.keymap.toggleEdit.keys", desc: "help.keymap.toggleEdit.desc" },
+  { keys: "help.keymap.undo.keys", desc: "help.keymap.undo.desc" },
+  { keys: "help.keymap.redo.keys", desc: "help.keymap.redo.desc" },
+  { keys: "help.keymap.save.keys", desc: "help.keymap.save.desc" },
+  { keys: "help.keymap.saveAs.keys", desc: "help.keymap.saveAs.desc" },
+  { keys: "help.keymap.wheelZoom.keys", desc: "help.keymap.wheelZoom.desc" },
+  { keys: "help.keymap.format.keys", desc: "help.keymap.format.desc" },
+  { keys: "help.keymap.section.keys", desc: "help.keymap.section.desc" },
+  { keys: "help.keymap.history.keys", desc: "help.keymap.history.desc" },
+  { keys: "help.keymap.outline.keys", desc: "help.keymap.outline.desc" },
+  { keys: "help.keymap.home.keys", desc: "help.keymap.home.desc" },
+  { keys: "help.keymap.rename.keys", desc: "help.keymap.rename.desc" },
+  { keys: "help.keymap.esc.keys", desc: "help.keymap.esc.desc" },
+  { keys: "help.keymap.quit.keys", desc: "help.keymap.quit.desc" },
 ];
 
 function OverlayShell(props: { id: string; open: boolean; onClose: () => void; mid?: boolean; children: any }) {
@@ -47,19 +60,19 @@ export function KeysModal() {
       <div class="modal">
         <div class="modal-h">
           <span class="mi2"><svg class="ico ico-18"><use href="#i-md" /></svg></span>
-          <div><div class="mt">快捷键一览</div><div class="md2">编辑态内快捷键已隔离，不会穿透</div></div>
+          <div><div class="mt">{t("help.keys.title")}</div><div class="md2">{t("help.keys.sub")}</div></div>
           <span class="sp" />
           <span class="x" onClick={() => ui.setKeysOpen(false)}><svg class="ico ico-14"><use href="#i-x" /></svg></span>
         </div>
         <div class="modal-b">
-          <For each={KEYMAP}>{([k, d]) => (
-            <div class="krow"><kbd>{k}</kbd><span class="sp" /><span>{d}</span></div>
+          <For each={KEYMAP}>{(r) => (
+            <div class="krow"><kbd>{t(r.keys)}</kbd><span class="sp" /><span>{t(r.desc)}</span></div>
           )}</For>
         </div>
         <div class="modal-f">
-          <span style={{ "font-size": "11.5px", color: "var(--text-3)" }}>应用内加速键 · 窗口聚焦态生效</span>
+          <span style={{ "font-size": "11.5px", color: "var(--text-3)" }}>{t("help.keys.footer")}</span>
           <span class="sp" />
-          <button class="btn" onClick={() => ui.setKeysOpen(false)}>知道了</button>
+          <button class="btn" onClick={() => ui.setKeysOpen(false)}>{t("help.keys.gotIt")}</button>
         </div>
       </div>
     </OverlayShell>
@@ -81,7 +94,7 @@ export function AboutModal() {
         const { openUrl } = await import("@tauri-apps/plugin-opener");
         await openUrl(REPO_URL);
       } catch {
-        s.toast("打开外链失败");
+        s.toast(t("about.openLinkFailed"));
       }
     } else {
       window.open(REPO_URL, "_blank", "noopener");
@@ -92,27 +105,27 @@ export function AboutModal() {
       <div class="modal" style={{ width: "440px" }}>
         <div class="modal-h">
           <span class="mark" style={{ width: "32px", height: "32px", "border-radius": "9px", "font-size": "15px" }}>F</span>
-          <div><div class="mt">Folio <span style={{ "font-size": "11px", color: "var(--text-3)", "font-weight": "400" }}>v{APP_VERSION} · {IS_DEV ? "开发版" : "正式版"}</span></div>
-            <div class="md2">把一堆 .md 当成「书」来读</div></div>
+          <div><div class="mt">Folio <span style={{ "font-size": "11px", color: "var(--text-3)", "font-weight": "400" }}>v{APP_VERSION} · {IS_DEV ? t("titlebar.chip.dev") : t("titlebar.chip.release")}</span></div>
+            <div class="md2">{t("about.tagline")}</div></div>
           <span class="sp" />
           <span class="x" onClick={() => ui.setAboutOpen(false)}><svg class="ico ico-14"><use href="#i-x" /></svg></span>
         </div>
         <div class="modal-b">
           <div style={{ "font-size": "12.5px", color: "var(--text-2)", "line-height": "1.8", "margin-bottom": "14px" }}>
-            Windows 桌面本地 Markdown 阅读器。阅读状态存于本地 SQLite，数据不上传；文档中的网络图片按需在线加载。
+            {t("about.intro")}
           </div>
           <div class="about-stack">
-            <For each={tags}>{([t, plain]) => <span class={plain ? "tag plain" : "tag"}>{t}</span>}</For>
+            <For each={tags}>{([tag, plain]) => <span class={plain ? "tag plain" : "tag"}>{tag}</span>}</For>
           </div>
           <div style={{ "margin-top": "16px", padding: "10px 12px", border: "1px solid var(--line)", "border-radius": "var(--r-2)", "font-family": "var(--font-mono)", "font-size": "11px", color: "var(--text-3)" }}>
-            GitHub：<a class="about-repo" href={REPO_URL} target="_blank" rel="noopener"
+            {t("about.githubLabel")}<a class="about-repo" href={REPO_URL} target="_blank" rel="noopener"
               onClick={(e) => { e.preventDefault(); openRepo(); }}>github.com/liumeice/Folio</a><br />
-            文档链接：<span style={{ color: "var(--accent)" }}>folio://open?doc=&lt;slug&gt;&amp;sec=…</span><br />
-            {isTauri ? "本地运行 · 已收录 " + s.docs().length + " 篇文档" : "浏览器预览模式（数据保存在浏览器里，不写磁盘）"}
+            {t("about.docLinkLabel")}<span style={{ color: "var(--accent)" }}>folio://open?doc=&lt;slug&gt;&amp;sec=…</span><br />
+            {isTauri ? tp("about.docCount", s.docs().length) : t("about.browserPreview")}
           </div>
         </div>
-        <div class="modal-f"><span style={{ "font-size": "11.5px", color: "var(--text-3)" }}>数据只存在这台电脑上 · 网络图片按需加载</span><span class="sp" />
-          <button class="btn primary" onClick={() => ui.setAboutOpen(false)}>好</button></div>
+        <div class="modal-f"><span style={{ "font-size": "11.5px", color: "var(--text-3)" }}>{t("about.footer")}</span><span class="sp" />
+          <button class="btn primary" onClick={() => ui.setAboutOpen(false)}>{t("about.ok")}</button></div>
       </div>
     </OverlayShell>
   );
@@ -135,7 +148,7 @@ export function CopyPop() {
 export function ExportBusy() {
   return (
     <Show when={ui.exportBusy()}>
-      <div class="exporting" role="status"><span class="spin" aria-hidden="true" />正在导出 PDF…</div>
+      <div class="exporting" role="status"><span class="spin" aria-hidden="true" />{t("export.busy")}</div>
     </Show>
   );
 }
@@ -158,7 +171,7 @@ export function ScanBusy() {
     <Show when={ui.scanBusy()} keyed>{(dir) => (
       <div class="scanning" role="status">
         <span class="spin" aria-hidden="true" />
-        <span>正在扫描文件夹「{leafOf(dir)}」…</span>
+        <span>{t("scan.busy", { name: leafOf(dir) })}</span>
         <span class="el">{elapsed().toFixed(1)}s</span>
       </div>
     )}</Show>
@@ -183,17 +196,17 @@ export function PropsModal() {
   }
   const rows = (): [string, string][] => {
     const c = cur();
-    if (!c) return [["状态", "未打开文档"]];
+    if (!c) return [[t("props.status"), t("side.status.noDoc")]];
     return [
-      ["路径", c.meta.path],
-      ["大小", (c.meta.size / 1024).toFixed(1) + " KB"],
-      ["字数", countWords(c.src).toLocaleString() + " 字（只统计正文，不含公式和图表源码）"],
-      ["小节 / 标题", c.meta.secCount + " 节 / " + c.outline.length + " 条"],
-      ["编码", encLabel(c.encoding)],
-      ["修改时间", new Date(c.meta.mtime * 1000).toLocaleString()],
-      ["当前章节", s.activeSec() != null ? (c.outline[s.activeSec()! - 1]?.text ?? "—") : "—"],
-      ["阅读进度", Math.round(ui.readPct() * 100) + "%"],
-      ["文档链接", link()],
+      [t("props.path"), c.meta.path],
+      [t("props.size"), formatFileSize(c.meta.size)],
+      [t("props.chars"), t("props.charsValue", { count: formatNumber(countWords(c.src)) })],
+      [t("props.sections"), t("props.sectionsValue", { sections: formatNumber(c.meta.secCount), headings: formatNumber(c.outline.length) })],
+      [t("props.encoding"), encLabel(c.encoding)],
+      [t("props.modified"), formatDateTime(c.meta.mtime * 1000)],
+      [t("props.currentSection"), s.activeSec() != null ? (c.outline[s.activeSec()! - 1]?.text ?? "—") : "—"],
+      [t("props.progress"), formatPercent(ui.readPct())],
+      [t("props.docLink"), link()],
     ];
   };
   return (
@@ -201,7 +214,7 @@ export function PropsModal() {
       <div class="modal" style={{ width: "480px" }}>
         <div class="modal-h">
           <span class="mi2"><svg class="ico ico-18"><use href="#i-info" /></svg></span>
-          <div style={{ "min-width": "0" }}><div class="mt">文档信息</div><div class="md2 ellip">{cur()?.meta.fileName ?? "—"}</div></div>
+          <div style={{ "min-width": "0" }}><div class="mt">{t("side.status.info")}</div><div class="md2 ellip">{cur()?.meta.fileName ?? "—"}</div></div>
           <span class="sp" />
           <span class="x" onClick={() => ui.setPropsOpen(false)}><svg class="ico ico-14"><use href="#i-x" /></svg></span>
         </div>
@@ -213,11 +226,11 @@ export function PropsModal() {
         </div>
         {/* §8.2 按钮组口径：等宽、dismiss（关闭）居左 */}
         <div class="modal-f"><span class="sp" /><span class="mfb">
-          <button class="btn" onClick={() => ui.setPropsOpen(false)}>关闭</button>
+          <button class="btn" onClick={() => ui.setPropsOpen(false)}>{t("common.action.close")}</button>
           <button class="btn primary" onClick={() => {
-            navigator.clipboard?.writeText(link()).then(() => ui.showCopied("已复制文档链接", link()))
-              .catch(() => s.toast("剪贴板不可用"));
-          }}><svg class="ico ico-14"><use href="#i-copy" /></svg>复制文档链接</button>
+            navigator.clipboard?.writeText(link()).then(() => ui.showCopied(t("side.status.linkCopied"), link()))
+              .catch(() => s.toast(t("side.status.clipboardFail")));
+          }}><svg class="ico ico-14"><use href="#i-copy" /></svg>{t("app.menu.document.copyLink")}</button>
         </span></div>
       </div>
     </OverlayShell>
@@ -232,7 +245,7 @@ export function ImgBox() {
         <Show when={ui.imgSrc()}>
           <img src={ui.imgSrc()!} alt="" style={{ "max-width": "90vw", "max-height": "78vh", "box-shadow": "var(--shadow-pop)" }} />
         </Show>
-        <div style={{ "margin-top": "10px", "font-size": "11.5px", color: "var(--text-3)" }}>点击任意处关闭 · Esc</div>
+        <div style={{ "margin-top": "10px", "font-size": "11.5px", color: "var(--text-3)" }}>{t("imgbox.hint")}</div>
       </div>
     </div>
   );
@@ -244,14 +257,14 @@ export function HitNav() {
   return (
     <Show when={ui.hitNavVisible()}>
       <div class="hitnav">
-        <button type="button" title="上一处 (Shift+Enter)" onClick={() => ui.stepHit(-1)}>
+        <button type="button" title={t("hitnav.prevTitle")} aria-label={t("hitnav.prevTitle")} onClick={() => ui.stepHit(-1)}>
           <svg class="ico ico-14"><use href="#i-chev-u" /></svg>
         </button>
-        <span>命中 <b>{ui.hitIdx() + 1} / {ui.hitCount()}</b></span>
-        <button type="button" title="下一处 (Enter / F3)" onClick={() => ui.stepHit(1)}>
+        <span>{t("hitnav.match")} <b>{formatNumber(ui.hitIdx() + 1)} / {formatNumber(ui.hitCount())}</b></span>
+        <button type="button" title={t("hitnav.nextTitle")} aria-label={t("hitnav.nextTitle")} onClick={() => ui.stepHit(1)}>
           <svg class="ico ico-14"><use href="#i-chev-d" /></svg>
         </button>
-        <span><kbd>Enter</kbd> 下一处 · <kbd>Esc</kbd> 清除</span>
+        <span><kbd>Enter</kbd> {t("hitnav.nextWord")} · <kbd>Esc</kbd> {t("common.action.clear")}</span>
       </div>
     </Show>
   );
@@ -262,49 +275,52 @@ export function HitNav() {
  * 分别用原型线性符号 ix-callout 与 🙂 字形；
  * 表格/标题/代码（语言分组面板）/标注块/Emoji 表情走子面板；列表连点不关菜单。
  * 动作全部经 EditorBridge 回到 CM，文档变更一次事务。 */
-interface CTool { act: string; label: string; kbd: string; needSel: boolean; icon?: string; glyph?: string; glyphCls?: string }
-interface WTool { style: WrapKind; label: string; kbd: string; icon?: string; glyph?: string; glyphCls?: string }
-interface LTool { list: ListKind | "quote"; label: string; icon?: string; glyph?: string; glyphCls?: string }
+/* 文案迁移 P3：常量只存 MessageKey（对照表 Overlays #62–#75），渲染期 t() 取词，语言切换即重渲染 */
+interface CTool { act: string; label: MessageKey; kbd: string; needSel: boolean; icon?: string; glyph?: string; glyphCls?: string }
+interface WTool { style: WrapKind; label: MessageKey; kbd: string; icon?: string; glyph?: string; glyphCls?: string }
+interface LTool { list: ListKind | "quote"; label: MessageKey; icon?: string; glyph?: string; glyphCls?: string }
 
 const EDIT_ACTIONS: CTool[] = [
-  { act: "cut", label: "剪切", kbd: "Ctrl+X", needSel: true, icon: "i-scissors" },
-  { act: "copy", label: "复制", kbd: "Ctrl+C", needSel: true, icon: "i-copy" },
-  { act: "paste", label: "粘贴", kbd: "Ctrl+V", needSel: false, icon: "i-paste" },
-  { act: "delete", label: "删除所选", kbd: "Delete", needSel: true, icon: "i-trash" },
-  { act: "selectAll", label: "全选", kbd: "Ctrl+A", needSel: false, icon: "i-select-all" },
+  { act: "cut", label: "editor.action.cut", kbd: "Ctrl+X", needSel: true, icon: "i-scissors" },
+  { act: "copy", label: "editor.action.copy", kbd: "Ctrl+C", needSel: true, icon: "i-copy" },
+  { act: "paste", label: "editor.action.paste", kbd: "Ctrl+V", needSel: false, icon: "i-paste" },
+  { act: "delete", label: "editor.action.delete", kbd: "Delete", needSel: true, icon: "i-trash" },
+  { act: "selectAll", label: "editor.action.selectAll", kbd: "Ctrl+A", needSel: false, icon: "i-select-all" },
 ];
 
 const WRAP_ACTIONS: WTool[] = [
-  { style: "bold", label: "加粗", kbd: "Ctrl+B", icon: "i-bold" },
-  { style: "italic", label: "斜体", kbd: "Ctrl+I", icon: "i-italic" },
-  { style: "code", label: "行内代码", kbd: "", icon: "i-code" },
-  { style: "strike", label: "删除线", kbd: "", icon: "i-strikethrough" },
-  { style: "link", label: "链接", kbd: "", icon: "i-link" },
+  { style: "bold", label: "editor.wrap.bold", kbd: "Ctrl+B", icon: "i-bold" },
+  { style: "italic", label: "editor.wrap.italic", kbd: "Ctrl+I", icon: "i-italic" },
+  { style: "code", label: "editor.wrap.code", kbd: "", icon: "i-code" },
+  { style: "strike", label: "editor.wrap.strike", kbd: "", icon: "i-strikethrough" },
+  { style: "link", label: "editor.wrap.link", kbd: "", icon: "i-link" },
 ];
 
 const LIST_ACTIONS: LTool[] = [
-  { list: "ul", label: "无序列表", icon: "i-list-bullet" },
-  { list: "ol", label: "有序列表", icon: "i-list-number" },
-  { list: "task", label: "任务清单", icon: "i-task-list" },
-  { list: "quote", label: "引用", icon: "i-quote" },
+  { list: "ul", label: "editor.list.ul", icon: "i-list-bullet" },
+  { list: "ol", label: "editor.list.ol", icon: "i-list-number" },
+  { list: "task", label: "editor.list.task", icon: "i-task-list" },
+  { list: "quote", label: "editor.list.quote", icon: "i-quote" },
 ];
 
-/* 代码块语言面板（原型口径）：分组 + 芯片；lang 即写进围栏的值，""=不带语言标识 */
-interface LangItem { lang: string; label: string; tip: string; mute?: boolean }
-const LANG_GROUPS: { group: string; items: LangItem[] }[] = [
-  { group: "通用", items: [
-    { lang: "plaintext", label: "纯文本", tip: "plaintext / text" },
+/* 代码块语言面板（原型口径）：分组 + 芯片；lang 即写进围栏的值，""=不带语言标识。
+ * 语言标识与技术名（Rust/Python/JavaScript 等）按对照表「不翻译」口径保留字面；
+ * 分组名与 纯文本/无/差异对比、「不带语言标识」提示是文案，走 key（对照表 #76–#86）。 */
+interface LangItem { lang: string; label?: string; labelKey?: MessageKey; tip?: string; tipKey?: MessageKey; mute?: boolean }
+const LANG_GROUPS: { group: MessageKey; items: LangItem[] }[] = [
+  { group: "editor.lang.group.general", items: [
+    { lang: "plaintext", labelKey: "editor.lang.option.plaintext", tip: "plaintext / text" },
     { lang: "md", label: "Markdown", tip: "md / markdown" },
-    { lang: "", label: "无", tip: "不带语言标识", mute: true },
+    { lang: "", labelKey: "editor.lang.option.none", tipKey: "editor.lang.tip.noTag", mute: true },
   ] },
-  { group: "前端", items: [
+  { group: "editor.lang.group.frontend", items: [
     { lang: "js", label: "JavaScript", tip: "js / javascript" },
     { lang: "ts", label: "TypeScript", tip: "ts / typescript" },
     { lang: "jsx", label: "React", tip: "jsx / tsx" },
     { lang: "html", label: "HTML", tip: "html" },
     { lang: "css", label: "CSS", tip: "css" },
   ] },
-  { group: "后端", items: [
+  { group: "editor.lang.group.backend", items: [
     { lang: "rust", label: "Rust", tip: "rust" },
     { lang: "python", label: "Python", tip: "python / py" },
     { lang: "go", label: "Go", tip: "go" },
@@ -312,106 +328,110 @@ const LANG_GROUPS: { group: string; items: LangItem[] }[] = [
     { lang: "cpp", label: "C / C++", tip: "c / cpp / c++" },
     { lang: "cs", label: "C#", tip: "cs" },
   ] },
-  { group: "数据", items: [
+  { group: "editor.lang.group.data", items: [
     { lang: "json", label: "JSON", tip: "json" },
     { lang: "yaml", label: "YAML", tip: "yaml / yml" },
     { lang: "toml", label: "TOML", tip: "toml" },
     { lang: "xml", label: "XML", tip: "xml" },
     { lang: "sql", label: "SQL", tip: "sql" },
   ] },
-  { group: "脚本", items: [
+  { group: "editor.lang.group.scripts", items: [
     { lang: "bash", label: "Shell", tip: "bash / sh / shell" },
     { lang: "powershell", label: "PowerShell", tip: "powershell" },
   ] },
-  { group: "图表", items: [
+  { group: "editor.lang.group.diagrams", items: [
     { lang: "mermaid", label: "Mermaid", tip: "mermaid" },
     { lang: "mathjax", label: "MathJax", tip: "mathjax / math" },
   ] },
-  { group: "其他", items: [
+  { group: "editor.lang.group.other", items: [
     { lang: "dockerfile", label: "Dockerfile", tip: "dockerfile" },
-    { lang: "diff", label: "差异对比", tip: "diff" },
+    { lang: "diff", labelKey: "editor.lang.option.diff", tip: "diff" },
   ] },
 ];
 
-/* GitHub 风格标注块（> [!KIND]，阅读区按 md.ts GFM Callouts 渲染）；配色沿用原型口径 */
-const CALLOUTS: { kind: CalloutKind; label: string }[] = [
-  { kind: "NOTE", label: "提示" },
-  { kind: "TIP", label: "技巧" },
-  { kind: "IMPORTANT", label: "重要" },
-  { kind: "WARNING", label: "警告" },
-  { kind: "CAUTION", label: "危险" },
+/* GitHub 风格标注块（> [!KIND]，阅读区按 md.ts GFM Callouts 渲染）；配色沿用原型口径。
+ * H2 口径统一（设计文档 4.4.8）：菜单中文标签改为 NOTE=「说明」、TIP=「提示」，
+ * 与 md.ts 渲染标题（说明/提示/重要/警告/危险）一致；标签走 editor.callout.* key。 */
+const CALLOUTS: { kind: CalloutKind; label: MessageKey }[] = [
+  { kind: "NOTE", label: "editor.callout.note" },      // 说明 / Note
+  { kind: "TIP", label: "editor.callout.tip" },        // 提示 / Tip
+  { kind: "IMPORTANT", label: "editor.callout.important" },
+  { kind: "WARNING", label: "editor.callout.warning" },
+  { kind: "CAUTION", label: "editor.callout.caution" },
 ];
 
 /* Emoji 插入面板（原型 2026-11-19 新增）：五种文档高频场景分组，展示顺序即此顺序
- * （原型 EMOJI_GROUP_ORDER：状态与标记优先）；alt 为短代码别名，仅进悬浮提示。 */
-interface EmojiItem { char: string; code: string; scene: string; alt?: string }
-const EMOJI_GROUPS: { group: string; items: EmojiItem[] }[] = [
-  { group: "状态与标记", items: [
-    { char: "✅", code: ":white_check_mark:", scene: "已完成、通过" },
-    { char: "☑️", code: ":ballot_box_with_check:", scene: "已勾选" },
-    { char: "❌", code: ":x:", scene: "错误、不支持" },
-    { char: "⚠️", code: ":warning:", scene: "警告、注意" },
-    { char: "❗", code: ":exclamation:", scene: "重点提示" },
-    { char: "❓", code: ":question:", scene: "待确认" },
-    { char: "🚧", code: ":construction:", scene: "进行中、施工中" },
-    { char: "🔒", code: ":lock:", scene: "锁定、权限" },
-    { char: "🔥", code: ":fire:", scene: "热门、重点" },
-    { char: "⭐", code: ":star:", scene: "推荐、收藏" },
-    { char: "🆕", code: ":new:", scene: "新增" },
-    { char: "🆗", code: ":ok:", scene: "可以、同意" },
+ * （原型 EMOJI_GROUP_ORDER：状态与标记优先）；alt 为短代码别名，仅进悬浮提示。
+ * P3 迁移：Emoji 字符与 :shortcode: 不翻译；场景提示按短代码派生 key
+ * （editor.emoji.scene.<shortcode>，对照表 #92–#153），组名走 editor.emoji.group.*。 */
+interface EmojiItem { char: string; code: string; scene: MessageKey; alt?: string }
+const EMOJI_GROUPS: { group: MessageKey; items: EmojiItem[] }[] = [
+  { group: "editor.emoji.group.status", items: [
+    { char: "✅", code: ":white_check_mark:", scene: "editor.emoji.scene.white_check_mark" },
+    { char: "☑️", code: ":ballot_box_with_check:", scene: "editor.emoji.scene.ballot_box_with_check" },
+    { char: "❌", code: ":x:", scene: "editor.emoji.scene.x" },
+    { char: "⚠️", code: ":warning:", scene: "editor.emoji.scene.warning" },
+    { char: "❗", code: ":exclamation:", scene: "editor.emoji.scene.exclamation" },
+    { char: "❓", code: ":question:", scene: "editor.emoji.scene.question" },
+    { char: "🚧", code: ":construction:", scene: "editor.emoji.scene.construction" },
+    { char: "🔒", code: ":lock:", scene: "editor.emoji.scene.lock" },
+    { char: "🔥", code: ":fire:", scene: "editor.emoji.scene.fire" },
+    { char: "⭐", code: ":star:", scene: "editor.emoji.scene.star" },
+    { char: "🆕", code: ":new:", scene: "editor.emoji.scene.new" },
+    { char: "🆗", code: ":ok:", scene: "editor.emoji.scene.ok" },
   ] },
-  { group: "表情与情绪", items: [
-    { char: "🙂", code: ":slightly_smiling_face:", scene: "友好、中性" },
-    { char: "😄", code: ":smile:", scene: "开心、顺利" },
-    { char: "😂", code: ":joy:", scene: "幽默、自嘲" },
-    { char: "😊", code: ":blush:", scene: "温和、客气" },
-    { char: "😉", code: ":wink:", scene: "暗示、玩笑" },
-    { char: "🤔", code: ":thinking:", scene: "思考、疑问" },
-    { char: "😅", code: ":sweat_smile:", scene: "尴尬、勉强" },
-    { char: "😢", code: ":cry:", scene: "遗憾、惋惜" },
-    { char: "😮", code: ":open_mouth:", scene: "惊讶" },
-    { char: "😡", code: ":rage:", scene: "强烈不满，慎用" },
-    { char: "❤️", code: ":heart:", scene: "喜欢、感谢" },
-    { char: "🎉", code: ":tada:", scene: "发布、完成、庆祝" },
+  { group: "editor.emoji.group.emotion", items: [
+    { char: "🙂", code: ":slightly_smiling_face:", scene: "editor.emoji.scene.slightly_smiling_face" },
+    { char: "😄", code: ":smile:", scene: "editor.emoji.scene.smile" },
+    { char: "😂", code: ":joy:", scene: "editor.emoji.scene.joy" },
+    { char: "😊", code: ":blush:", scene: "editor.emoji.scene.blush" },
+    { char: "😉", code: ":wink:", scene: "editor.emoji.scene.wink" },
+    { char: "🤔", code: ":thinking:", scene: "editor.emoji.scene.thinking" },
+    { char: "😅", code: ":sweat_smile:", scene: "editor.emoji.scene.sweat_smile" },
+    { char: "😢", code: ":cry:", scene: "editor.emoji.scene.cry" },
+    { char: "😮", code: ":open_mouth:", scene: "editor.emoji.scene.open_mouth" },
+    { char: "😡", code: ":rage:", scene: "editor.emoji.scene.rage" },
+    { char: "❤️", code: ":heart:", scene: "editor.emoji.scene.heart" },
+    { char: "🎉", code: ":tada:", scene: "editor.emoji.scene.tada" },
   ] },
-  { group: "手势与人物", items: [
-    { char: "👍", code: ":+1:", scene: "赞同、通过", alt: ":thumbsup:" },
-    { char: "👎", code: ":-1:", scene: "反对、否决", alt: ":thumbsdown:" },
-    { char: "👏", code: ":clap:", scene: "赞赏、鼓掌" },
-    { char: "🙏", code: ":pray:", scene: "感谢、拜托" },
-    { char: "💪", code: ":muscle:", scene: "加油、有干劲" },
-    { char: "👀", code: ":eyes:", scene: "关注、围观、评审中" },
-    { char: "🤝", code: ":handshake:", scene: "合作、达成" },
-    { char: "✌️", code: ":v:", scene: "完成、轻松" },
+  { group: "editor.emoji.group.gesture", items: [
+    { char: "👍", code: ":+1:", scene: "editor.emoji.scene.+1", alt: ":thumbsup:" },
+    { char: "👎", code: ":-1:", scene: "editor.emoji.scene.-1", alt: ":thumbsdown:" },
+    { char: "👏", code: ":clap:", scene: "editor.emoji.scene.clap" },
+    { char: "🙏", code: ":pray:", scene: "editor.emoji.scene.pray" },
+    { char: "💪", code: ":muscle:", scene: "editor.emoji.scene.muscle" },
+    { char: "👀", code: ":eyes:", scene: "editor.emoji.scene.eyes" },
+    { char: "🤝", code: ":handshake:", scene: "editor.emoji.scene.handshake" },
+    { char: "✌️", code: ":v:", scene: "editor.emoji.scene.v" },
   ] },
-  { group: "开发与文档常备", items: [
-    { char: "🐛", code: ":bug:", scene: "缺陷、问题" },
-    { char: "🔧", code: ":wrench:", scene: "修复、配置" },
-    { char: "✨", code: ":sparkles:", scene: "新特性" },
-    { char: "📝", code: ":memo:", scene: "笔记、文档" },
-    { char: "📌", code: ":pushpin:", scene: "固定说明、要点" },
-    { char: "📎", code: ":paperclip:", scene: "附件" },
-    { char: "🔗", code: ":link:", scene: "链接、关联" },
-    { char: "💡", code: ":bulb:", scene: "提示、想法" },
-    { char: "📊", code: ":bar_chart:", scene: "数据、统计" },
-    { char: "🚀", code: ":rocket:", scene: "上线、发布" },
-    { char: "🎯", code: ":dart:", scene: "目标、重点" },
-    { char: "🕐", code: ":clock1:", scene: "时间、排期" },
-    { char: "💬", code: ":speech_balloon:", scene: "评论、反馈" },
-    { char: "👉", code: ":point_right:", scene: "指向下一步" },
-    { char: "🔍", code: ":mag:", scene: "搜索、查找" },
-    { char: "📦", code: ":package:", scene: "发布包、模块" },
-    { char: "🧪", code: ":test_tube:", scene: "测试" },
-    { char: "🗑️", code: ":wastebasket:", scene: "删除、废弃" },
+  { group: "editor.emoji.group.dev", items: [
+    { char: "🐛", code: ":bug:", scene: "editor.emoji.scene.bug" },
+    { char: "🔧", code: ":wrench:", scene: "editor.emoji.scene.wrench" },
+    { char: "✨", code: ":sparkles:", scene: "editor.emoji.scene.sparkles" },
+    { char: "📝", code: ":memo:", scene: "editor.emoji.scene.memo" },
+    { char: "📌", code: ":pushpin:", scene: "editor.emoji.scene.pushpin" },
+    { char: "📎", code: ":paperclip:", scene: "editor.emoji.scene.paperclip" },
+    { char: "🔗", code: ":link:", scene: "editor.emoji.scene.link" },
+    { char: "💡", code: ":bulb:", scene: "editor.emoji.scene.bulb" },
+    { char: "📊", code: ":bar_chart:", scene: "editor.emoji.scene.bar_chart" },
+    { char: "🚀", code: ":rocket:", scene: "editor.emoji.scene.rocket" },
+    { char: "🎯", code: ":dart:", scene: "editor.emoji.scene.dart" },
+    { char: "🕐", code: ":clock1:", scene: "editor.emoji.scene.clock1" },
+    { char: "💬", code: ":speech_balloon:", scene: "editor.emoji.scene.speech_balloon" },
+    { char: "👉", code: ":point_right:", scene: "editor.emoji.scene.point_right" },
+    { char: "🔍", code: ":mag:", scene: "editor.emoji.scene.mag" },
+    { char: "📦", code: ":package:", scene: "editor.emoji.scene.package" },
+    { char: "🧪", code: ":test_tube:", scene: "editor.emoji.scene.test_tube" },
+    { char: "🗑️", code: ":wastebasket:", scene: "editor.emoji.scene.wastebasket" },
   ] },
-  { group: "箭头与分隔", items: [
-    { char: "➡️", code: ":arrow_right:", scene: "下一步" },
-    { char: "⬅️", code: ":arrow_left:", scene: "返回" },
-    { char: "⬆️", code: ":arrow_up:", scene: "上升、更新" },
-    { char: "⬇️", code: ":arrow_down:", scene: "下降、下载" },
-    { char: "🔁", code: ":repeat:", scene: "循环、重试" },
-    { char: "➕", code: ":heavy_plus_sign:", scene: "增加" },
-    { char: "➖", code: ":heavy_minus_sign:", scene: "减少" },
+  { group: "editor.emoji.group.arrow", items: [
+    { char: "➡️", code: ":arrow_right:", scene: "editor.emoji.scene.arrow_right" },
+    { char: "⬅️", code: ":arrow_left:", scene: "editor.emoji.scene.arrow_left" },
+    { char: "⬆️", code: ":arrow_up:", scene: "editor.emoji.scene.arrow_up" },
+    { char: "⬇️", code: ":arrow_down:", scene: "editor.emoji.scene.arrow_down" },
+    { char: "🔁", code: ":repeat:", scene: "editor.emoji.scene.repeat" },
+    { char: "➕", code: ":heavy_plus_sign:", scene: "editor.emoji.scene.heavy_plus_sign" },
+    { char: "➖", code: ":heavy_minus_sign:", scene: "editor.emoji.scene.heavy_minus_sign" },
   ] },
 ];
 type EmojiMode = "code" | "unicode";
@@ -535,7 +555,8 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
     }
   }
 
-  const menuItem = (icon: string, label: string, runFn: () => void,
+  /* label 为 MessageKey：data-ctx 用它做稳定标识（ASCII），显示文案渲染期 t() 取 */
+  const menuItem = (icon: string, label: MessageKey, runFn: () => void,
     opts: { sub?: string; default?: boolean; glyph?: string; subClass?: string } = {}) => (
     <div class="mi" classList={{ sub: !!opts.sub }}
       data-ctx={opts.sub ?? label} data-sub={opts.sub ? "1" : undefined}
@@ -552,7 +573,7 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
       {opts.glyph
         ? <span class="mi-glyph">{opts.glyph}</span>
         : <svg class="ico ico-14"><use href={"#" + icon} /></svg>}
-      <span class="t">{label}</span>
+      <span class="t">{t(label)}</span>
       <Show when={opts.sub}>
         <svg class="ico ico-12"><use href="#i-chev-r" /></svg>
         <Show when={openSub() === opts.sub}>
@@ -560,14 +581,14 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
           ref={(node) => queueMicrotask(() => positionSub(node))}>
           {opts.sub === "table" ? (
             <div class="ctx-gridwrap" onClick={(e) => e.stopPropagation()}>
-              <div class="ctx-gridlab">{hover().c} 列 × {hover().r} 行</div>
+              <div class="ctx-gridlab">{t("editor.panel.tableSize", { c: hover().c, r: hover().r })}</div>
               <div class="ctx-grid">
                 <For each={[1, 2, 3, 4, 5, 6]}>{(r) => (
                   <For each={[1, 2, 3, 4, 5, 6, 7, 8]}>{(c) => (
                     <span class="cell" classList={{ fill: c <= hover().c && r <= hover().r }}
-                      role="button" aria-label={`${c} 列 × ${r} 行`}
+                      role="button" aria-label={t("editor.panel.tableSize", { c, r })}
                       onMouseEnter={() => setHover({ c, r })}
-                      onClick={(e) => { e.stopPropagation(); void run({ kind: "table", cols: c, rows: r }); }} />
+                      onClick={(e) => { e.stopPropagation(); void run({ kind: "table", cols: c, rows: r, labels: insertLabels() }); }} />
                   )}</For>
                 )}</For>
               </div>
@@ -577,7 +598,7 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
               <div class="mi" data-ctx={`head-${lv}`} role="menuitem" tabIndex={-1}
                 onClick={(e) => { e.stopPropagation(); void run({ kind: "heading", level: lv }); }}>
                 <span class="mi-glyph">{`H${lv}`}</span>
-                <span class="t">{`标题 ${lv} 级`}</span>
+                <span class="t">{t("editor.panel.headingLevel", { lv })}</span>
               </div>
             )}</For>
           ) : opts.sub === "callout" ? (
@@ -589,22 +610,22 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
                   <svg class="ico ico-14"><use href={"#s-" + c.kind.toLowerCase()} /></svg>
                   <b>{c.kind}</b>
                 </span>
-                <span class="t">{c.label}</span>
+                <span class="t">{t(c.label)}</span>
               </div>
             )}</For>
           ) : opts.sub === "emoji" ? (
             <div class="ctx-emoji" onClick={(e) => e.stopPropagation()}>
               <div class="emoji-top">
                 <div>
-                  <div class="emoji-title">Emoji 表情</div>
-                  <div class="emoji-sub">悬停查看短代码，单击插入</div>
+                  <div class="emoji-title">{t("editor.emoji.title")}</div>
+                  <div class="emoji-sub">{t("editor.emoji.hint")}</div>
                 </div>
                 <div class="emoji-modes">
                   <For each={["code", "unicode"] as EmojiMode[]}>{(m) => (
                     <button type="button" class="emoji-mode" classList={{ on: emojiMode() === m }}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={(e) => { e.stopPropagation(); setEmojiMode(m); }}>
-                      {m === "code" ? "短代码" : "Unicode"}
+                      {m === "code" ? t("editor.emoji.modeCode") : "Unicode"}
                     </button>
                   )}</For>
                 </div>
@@ -612,12 +633,12 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
               <div class="emoji-body">
                 <For each={EMOJI_GROUPS}>{(g) => (
                   <div class="emoji-group">
-                    <div class="emoji-gt">{`${g.group} · ${g.items.length}`}</div>
+                    <div class="emoji-gt">{`${t(g.group)} · ${formatNumber(g.items.length)}`}</div>
                     <div class="emoji-grid">
                       <For each={g.items}>{(it) => (
                         <button type="button" class="emoji-item"
-                          title={`${emojiCodes(it)} · ${it.scene}`}
-                          aria-label={`${emojiCodes(it)}，${it.scene}`}
+                          title={t("editor.emoji.tipFmt", { codes: emojiCodes(it), scene: t(it.scene) })}
+                          aria-label={t("editor.emoji.ariaFmt", { codes: emojiCodes(it), scene: t(it.scene) })}
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -631,21 +652,21 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
                 )}</For>
               </div>
               <div class="emoji-foot">
-                <span>Unicode 直接插入字符</span>
-                <span>短代码示例：<code>:smile:</code></span>
+                <span>{t("editor.emoji.footUnicode")}</span>
+                <span>{t("editor.emoji.footCodeExample")}<code>:smile:</code></span>
               </div>
             </div>
           ) : (
             <div class="ctx-lang" onClick={(e) => e.stopPropagation()}>
               <For each={LANG_GROUPS}>{(g) => (
                 <div class="lgroup">
-                  <span class="glabel">{g.group}</span>
+                  <span class="glabel">{t(g.group)}</span>
                   <span class="lchips">
                     <For each={g.items}>{(it) => (
                       <span class="lchip" classList={{ mute: !!it.mute }} role="menuitem" tabIndex={-1}
-                        data-ctx={`lang-${it.lang || "none"}`} title={it.tip}
+                        data-ctx={`lang-${it.lang || "none"}`} title={it.tipKey ? t(it.tipKey) : it.tip}
                         onClick={(e) => { e.stopPropagation(); void run({ kind: "code", lang: it.lang }); }}>
-                        {it.label}
+                        {it.labelKey ? t(it.labelKey) : it.label}
                       </span>
                     )}</For>
                   </span>
@@ -668,7 +689,7 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
       onClick={(e) => e.stopPropagation()} onKeyDown={onKey}>
       <div class="ctx-tools">
         <For each={EDIT_ACTIONS}>{(a) => (
-          <button type="button" class="ctool" title={`${a.label}（${a.kbd}）`} aria-label={a.label}
+          <button type="button" class="ctool" title={t("editor.panel.tooltip", { label: t(a.label), kbd: a.kbd })} aria-label={t(a.label)}
             role="menuitem" disabled={a.needSel && !hasSel()}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void run({ kind: "clip", action: a.act as "cut" | "copy" | "paste" | "delete" | "selectAll" })}>
@@ -679,7 +700,7 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
       <div class="msep" />
       <div class="ctx-tools">
         <For each={WRAP_ACTIONS}>{(a) => (
-          <button type="button" class="ctool" title={`${a.label}（${a.kbd || "需先选中文字"}）`} aria-label={a.label}
+          <button type="button" class="ctool" title={t("editor.panel.tooltip", { label: t(a.label), kbd: a.kbd || t("editor.panel.needSel") })} aria-label={t(a.label)}
             role="menuitem" disabled={!hasSel()}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void run({ kind: "wrap", style: a.style })}>
@@ -688,24 +709,24 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
         )}</For>
       </div>
       <div class="msep" />
-      <div class="mgrp">插入块</div>
+      <div class="mgrp">{t("editor.block.insert")}</div>
       <div class="ctx-tools">
         <For each={LIST_ACTIONS}>{(a) => (
-          <button type="button" class="ctool" title={a.label} aria-label={a.label} role="menuitem"
+          <button type="button" class="ctool" title={t(a.label)} aria-label={t(a.label)} role="menuitem"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void run({ kind: "list", list: a.list }, a.list !== "quote")}>
             {toolIcon(a)}
           </button>
         )}</For>
       </div>
-      {menuItem("i-table", "表格", () => void run({ kind: "table", cols: 3, rows: 3 }), { sub: "table", default: true })}
-      {menuItem("i-heading", "标题", () => setOpenSub("heading"), { sub: "heading" })}
-      {menuItem("i-code", "代码块", () => void run({ kind: "code", lang: "" }), { sub: "code", default: true, subClass: "langpick" })}
-      {menuItem("ix-callout", "标注块", () => setOpenSub("callout"), { sub: "callout" })}
-      {menuItem("", "Emoji 表情", () => setOpenSub("emoji"), { sub: "emoji", glyph: "🙂" })}
-      {menuItem("i-image", "图片", () => void run({ kind: "image" }))}
-      {menuItem("i-link", "链接（新建）", () => void run({ kind: "link" }))}
-      {menuItem("i-divider", "分隔线", () => void run({ kind: "hr" }))}
+      {menuItem("i-table", "editor.block.table", () => void run({ kind: "table", cols: 3, rows: 3, labels: insertLabels() }), { sub: "table", default: true })}
+      {menuItem("i-heading", "editor.block.heading", () => setOpenSub("heading"), { sub: "heading" })}
+      {menuItem("i-code", "editor.block.code", () => void run({ kind: "code", lang: "" }), { sub: "code", default: true, subClass: "langpick" })}
+      {menuItem("ix-callout", "editor.block.callout", () => setOpenSub("callout"), { sub: "callout" })}
+      {menuItem("", "editor.emoji.title", () => setOpenSub("emoji"), { sub: "emoji", glyph: "🙂" })}
+      {menuItem("i-image", "editor.block.image", () => void run({ kind: "image", labels: insertLabels() }))}
+      {menuItem("i-link", "editor.block.link", () => void run({ kind: "link", labels: insertLabels() }))}
+      {menuItem("i-divider", "editor.block.divider", () => void run({ kind: "hr" }))}
     </div>
   );
 }
@@ -719,34 +740,34 @@ export function ContextMenu() {
     try {
       // 重命名 = 只进就地编辑态（Enter/失焦提交、Esc 取消，见 SidePanels::RenameBox）
       if (item === "rename") { ui.setRenaming({ kind: "file", path: m.path }); return; }
-      if (item === "pin") { await api.setPinned(m.id, !m.pinned); s.toast(m.pinned ? "已取消置顶" : "已置顶"); }
+      if (item === "pin") { await api.setPinned(m.id, !m.pinned); s.toast(m.pinned ? t("ctx.unpinned") : t("ctx.pinned")); }
       // 从文档库移除 = 取消库成员身份：登记/进度/打开历史都留着，重扫该目录会再入库
       else if (item === "unlibrary") {
         await api.setInLibrary(m.id, false);
-        s.toast("已从文件夹移除（阅读进度和打开记录都保留 · 重新打开这个文件夹会再出现）");
+        s.toast(t("ctx.removedFromFolder"));
       }
       // 从最近打开移除 = 删打开记录；若这文件从没入过库，登记连带回收
       else if (item === "unrecent") {
         const purged = await api.removeRecent(m.id);
-        s.toast(purged ? "已从最近打开移除（这个文件不在任何文件夹里，阅读进度也一并清除了）" : "已从最近打开移除");
+        s.toast(purged ? t("ctx.removedFromRecentPruned") : t("ctx.removedFromRecent"));
       }
       else if (item === "reveal") { void revealInFolder(m.path, s); return; }
       else if (item === "path") { void copyText(m.path); return; }
       else if (item === "link") {
         const l = "folio://open?doc=" + m.slug;
-        navigator.clipboard?.writeText(l).then(() => ui.showCopied("已复制文档链接", l))
-          .catch(() => s.toast("剪贴板不可用"));
+        navigator.clipboard?.writeText(l).then(() => ui.showCopied(t("side.status.linkCopied"), l))
+          .catch(() => s.toast(t("side.status.clipboardFail")));
         return;
       }
       void s.refreshDocs();
     } catch (e) {
-      s.toast("操作失败：" + String(e));   // UI-15：菜单动作失败必须有声
+      s.toast(t("ctx.actionFailed") + String(e));   // UI-15：菜单动作失败必须有声
     }
   }
   function copyText(text: string) {
     navigator.clipboard?.writeText(text)
-      .then(() => s.toast("已复制：" + (text.length > 40 ? text.slice(0, 40) + "…" : text)))
-      .catch(() => s.toast("剪贴板不可用"));
+      .then(() => s.toast(t("ctx.copied") + (text.length > 40 ? text.slice(0, 40) + "…" : text)))
+      .catch(() => s.toast(t("side.status.clipboardFail")));
   }
   const item = (label: string, key: string, tt: CtxTarget & { kind: "doc" }, icon = "i-md") => (
     <div class="mi" onClick={() => run(tt, key)}>
@@ -764,29 +785,29 @@ export function ContextMenu() {
                 ui.setCtxMenu(null);
                 ui.setRenaming({ kind: "dir", path: tt.path });
               }}>
-                <svg class="ico ico-14"><use href="#i-edit" /></svg><span class="t">重命名</span>
+                <svg class="ico ico-14"><use href="#i-edit" /></svg><span class="t">{t("ctx.rename")}</span>
               </div>
             </div>
           : <div class="ctxmenu" style={{ left: tt.x + "px", top: tt.y + "px" }} onClick={(e) => e.stopPropagation()}>
             {/* 文件夹/历史是两套清单：置顶与「从文件夹移除」只对文件夹成员开放，「从最近打开移除」只在历史面板开放 */}
             {(() => { const d = tt as CtxTarget & { kind: "doc" }; return (<>
               <Show when={d.meta.inLibrary}>
-                {item(d.meta.pinned ? "取消置顶" : "置顶", "pin", d, "i-arrow-up")}
+                {item(d.meta.pinned ? t("ctx.unpin") : t("side.library.pinned"), "pin", d, "i-arrow-up")}
               </Show>
               {/* 重命名只在文件夹目录树开放（需求方 2026-11-20）：历史面板同文件走这里也能改，
                   但入口口径是目录树；内置文档不许改（帮助链接按文件名找它） */}
               <Show when={d.from === "library" && !d.meta.builtin}>
-                {item("重命名", "rename", d, "i-edit")}
+                {item(t("ctx.rename"), "rename", d, "i-edit")}
               </Show>
-              {item("打开所在目录", "reveal", d, "i-folder-open")}
-              {item("复制路径", "path", d, "i-copy")}
-              {item("复制文档链接", "link", d, "i-external")}
+              {item(t("ctx.reveal"), "reveal", d, "i-folder-open")}
+              {item(t("ctx.copyPath"), "path", d, "i-copy")}
+              {item(t("app.menu.document.copyLink"), "link", d, "i-external")}
               <div class="msep" />
               <Show when={d.meta.inLibrary}>
-                {item("从文件夹移除", "unlibrary", d, "i-x")}
+                {item(t("ctx.removeFromFolder"), "unlibrary", d, "i-x")}
               </Show>
               <Show when={d.from === "recents"}>
-                {item("从最近打开移除", "unrecent", d, "i-x")}
+                {item(t("side.recents.remove"), "unrecent", d, "i-x")}
               </Show>
             </>); })()}
           </div>
@@ -797,8 +818,8 @@ export function ContextMenu() {
 export function DropVeil(props: { on: boolean }) {
   return (
     <div id="dropveil" classList={{ on: props.on }}>
-      松开鼠标即打开
-      <small>支持 .md / .markdown / .txt · 多文件 · 整目录（{isTauri ? "真实磁盘路径" : "浏览器演示环境"}）</small>
+      {t("dragdrop.release")}
+      <small>{t("dragdrop.hint", { mode: isTauri ? t("dragdrop.modeDisk") : t("dragdrop.modeBrowser") })}</small>
     </div>
   );
 }

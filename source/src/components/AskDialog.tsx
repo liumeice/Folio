@@ -3,6 +3,7 @@
  * 取消 / ✕ / 点遮罩 / Esc 一律 = 取消，零副作用；按钮等宽、取消居左（§8.2），焦点默认给取消。 */
 import { For, Show } from "solid-js";
 import * as ui from "../lib/ui";
+import { t } from "../lib/i18n";
 
 export default function AskDialog() {
   return (
@@ -30,9 +31,9 @@ export default function AskDialog() {
           </div>
           <div class="modal-f"><span class="sp" /><span class="mfb">
             <button class="btn" ref={(el) => queueMicrotask(() => el.focus())}
-              onClick={() => ui.finishAsk(false)}>取消</button>
+              onClick={() => ui.finishAsk(false)}>{t("common.action.cancel")}</button>
             <Show when={a.buttons} fallback={
-              <button class="btn primary" onClick={() => ui.finishAsk(true)}>{a.ok ?? "确定"}</button>
+              <button class="btn primary" onClick={() => ui.finishAsk(true)}>{a.ok ?? t("common.action.ok")}</button>
             }>{(bs) => (
               <For each={bs()}>{(b) => (
                 <button class={"btn" + (b.primary ? " primary" : "")}

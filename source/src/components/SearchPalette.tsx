@@ -6,12 +6,14 @@ import { api } from "../lib/api";
 import * as ui from "../lib/ui";
 import { renderSnippet, escapeHtml } from "../lib/md";
 import type { SearchHit } from "../lib/types";
+import { t, tp, locale } from "../lib/i18n";
+import { formatNumber } from "../lib/i18n/format";
 
 const [query, setQuery] = createSignal("");
 const [hits, setHits] = createSignal<SearchHit[]>([]);
 const [sel, setSel] = createSignal(0);
-const IDLE_STATUS = "范围：当前文档 · 点右上角可搜索全部文档";
-const [status, setStatus] = createSignal(IDLE_STATUS);
+const idleStatus = () => t("sr.scope.idle");
+const [status, setStatus] = createSignal(idleStatus());
 let inputEl!: HTMLInputElement;
 let debTimer: number | undefined;
 /** 请求序号守卫（P2-5）：快速输入时旧查询晚到不得覆盖新结果 */
@@ -22,10 +24,12 @@ export default function SearchPalette() {
   createEffect(() => {
     if (ui.searchOpen()) requestAnimationFrame(() => { inputEl.focus(); inputEl.select(); });
   });
+  // 语言切换后结果状态回到 idle，不残留旧语言字符串（多语言设计 §2.4-3）
+  createEffect(() => { locale(); setStatus(idleStatus()); });
 
   function runQuery(text: string) {
     const seq = ++querySeq;
-    if (!text.trim()) { setHits([]); setStatus(IDLE_STATUS); return; }
+    if (!text.trim()) { setHits([]); setStatus(idleStatus()); return; }
     const scope = ui.searchScope();
     // 当前文档：只有「眼前正文 ≠ 磁盘」时才随请求传 src（编辑缓冲 / 未保存打勾）。
     // 干净阅读态不传——Rust 读盘走 OS 缓存，省下一次整篇 IPC 序列化（大文档收益明显）。
@@ -46,12 +50,12 @@ export default function SearchPalette() {
         setSel(0);
         const total = r.reduce((a, h) => a + h.count, 0);
         // UI-11：状态文案不许说谎——当前文档是现算不是 FTS；命中数达 limit 时明示截断
-        const engine = scope === "library" ? "全部文档" : "当前文档";
-        const capped = r.length >= 200 ? " · 只显示前 200 条" : "";
-        setStatus(`${total} 处匹配（${engine}${capped}）`);
+        const engine = scope === "library" ? t("sr.scope.all") : t("sr.scope.current");
+        const capped = r.length >= 200 ? t("sr.status.capped") : "";
+        setStatus(tp("sr.status.matches", total, { count: formatNumber(total), scope: engine, capped }));
       } catch (e) {
         if (seq !== querySeq) return;
-        setStatus("搜索失败：" + String(e));
+        setStatus(t("sr.searchFailed") + String(e));
       }
     })();
   }
@@ -72,7 +76,7 @@ export default function SearchPalette() {
     const h = hits()[i];
     if (!h) return;
     if (s.mode() === "edit") {
-      if (s.dirty()) await s.save("跳转阅读：已自动保存当前编辑");
+      if (s.dirty()) await s.save(t("sr.toast.savedBeforeJump"));
       else s.toggleEdit();
     }
     ui.setSearchOpen(false);
@@ -121,7 +125,7 @@ export default function SearchPalette() {
       }
       if (h.sec !== lastSec) {
         lastSec = h.sec;
-        out.push({ type: "sec", text: h.sec || "文档开头", hitIdx: h.isHeading ? i : -1 });
+        out.push({ type: "sec", text: h.sec || t("sr.startOfDoc"), hitIdx: h.isHeading ? i : -1 });
       }
       if (!h.isHeading) out.push({ type: "body", text: h.snippet, hitIdx: i, count: h.count });
       i++;
@@ -147,21 +151,21 @@ export default function SearchPalette() {
       <div class="pal">
         <div class="pal-in">
           <svg class="ico"><use href="#i-search" /></svg>
-          <input id="search-input" ref={inputEl} spellcheck="false" placeholder={ui.searchScope() === "library" ? "搜索全部文档…" : "搜索当前文档…"}
+          <input id="search-input" ref={inputEl} spellcheck="false" placeholder={ui.searchScope() === "library" ? t("sr.placeholder.all") : t("sr.placeholder.current")}
             value={query()} onInput={(e) => onInput(e.currentTarget.value)} onKeyDown={onKey} />
           <button
             style={{ "font-size": "11px", color: "var(--text-3)", border: "1px solid var(--line)", "border-radius": "6px", padding: "3px 7px", cursor: "pointer" }}
-            title="切换搜索范围：当前文档 ⇄ 全部文档（包括只打开过、没放进文件夹的文件）" onClick={() => {
+            title={t("sr.switchScopeTitle")} onClick={() => {
               ui.setSearchScope(ui.searchScope() === "library" ? "current" : "library");
-              if (query()) runQuery(query()); else setStatus(IDLE_STATUS);
-            }}>{ui.searchScope() === "library" ? "全部文档" : "当前文档"}</button>
+              if (query()) runQuery(query()); else setStatus(idleStatus());
+            }}>{ui.searchScope() === "library" ? t("sr.scope.all") : t("sr.scope.current")}</button>
         </div>
         <div class="pal-list" id="search-results">
           <Show when={!query().trim() && !hits().length}>
-            <div class="sr-empty">范围：{ui.searchScope() === "library" ? "全部文档（包括只打开过、没放进文件夹的文件）" : "仅当前文档"}<br />输入关键词开始搜索</div>
+            <div class="sr-empty">{t("sr.empty.scope", { scope: ui.searchScope() === "library" ? t("sr.empty.scopeAll") : t("sr.empty.scopeCurrent") })}<br />{t("sr.empty.hint")}</div>
           </Show>
           <Show when={query().trim() && !hits().length}>
-            <div class="sr-empty">没有找到与 “{escapeHtml(query().trim())}” 匹配的内容</div>
+            <div class="sr-empty">{t("sr.noResults", { query: escapeHtml(query().trim()) })}</div>
           </Show>
           <For each={rows()}>{(r) => r.type === "doc" ? (
             <div class="hgrp"><svg class="ico ico-12"><use href="#i-file-text" /></svg><span>{r.text}</span></div>
@@ -172,17 +176,17 @@ export default function SearchPalette() {
           ) : (
             <div class="hit" classList={{ sel: r.hitIdx === sel() }} onClick={() => void jump(r.hitIdx)}>
               <Show when={r.count && r.count > 1}>
-                <div class="hf"><span class="hcount">{r.count} 处</span></div>
+                <div class="hf"><span class="hcount">{tp("sr.count", r.count ?? 0, { count: formatNumber(r.count ?? 0) })}</span></div>
               </Show>
               <div class="hx" innerHTML={renderSnippet(r.text)} />
             </div>
           )}</For>
         </div>
         <div class="pal-foot">
-          <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
-          <span><kbd>Enter</kbd> 跳转</span>
-          <span><kbd>F3</kbd> 命中循环</span>
-          <span><kbd>Esc</kbd> 关闭</span>
+          <span><kbd>↑</kbd><kbd>↓</kbd> {t("sr.footer.select")}</span>
+          <span><kbd>Enter</kbd> {t("sr.footer.go")}</span>
+          <span><kbd>F3</kbd> {t("sr.footer.cycle")}</span>
+          <span><kbd>Esc</kbd> {t("sr.footer.close")}</span>
           <span class="sp" />
           <span>{status()}</span>
         </div>

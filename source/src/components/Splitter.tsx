@@ -7,6 +7,7 @@
 import { createEffect, onCleanup, onMount } from "solid-js";
 import { useStore } from "../lib/store";
 import { applySide, clampSide, sideMax, SIDE_DEFAULT, SIDE_MIN, STEP } from "../lib/layout";
+import { t } from "../lib/i18n";
 
 export default function Splitter() {
   const s = useStore();
@@ -50,7 +51,7 @@ export default function Splitter() {
       const px = at(ev.clientX);
       applySide(px);
       persist(px);                       // 松手才写 settings
-      s.toast(`文件夹面板宽度 ${px} px`);
+      s.toast(t("layout.splitter.width", { width: px }));
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -104,10 +105,10 @@ export default function Splitter() {
       aria-valuenow={px()}
       aria-valuemin={SIDE_MIN}
       aria-valuemax={sideMax(innerWidth)}
-      title="拖动改变左右宽度 · 双击恢复默认 · ←/→ 微调（Shift 加速）"
+      title={t("layout.splitter.hint")}
       onPointerDown={onDown}
       onKeyDown={onKey}
-      onDblClick={() => { applySide(SIDE_DEFAULT); persist(null); s.toast(`已恢复默认宽度 ${SIDE_DEFAULT} px`); }}
+      onDblClick={() => { applySide(SIDE_DEFAULT); persist(null); s.toast(t("layout.splitter.reset", { width: SIDE_DEFAULT })); }}
     >
       <span class="grip" />
     </div>

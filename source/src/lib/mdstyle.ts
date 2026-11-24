@@ -57,7 +57,7 @@ export const MD_SPEC = [
   { tag: t.heading, class: MD_CLASS.plain },
 ];
 
-/* 单独导出实例：spec 数组留作 tests/mdstyle.test.ts 的覆盖度断言之用
+/* 单独导出实例：spec 数组留作 tests/unit/mdstyle.test.ts 的覆盖度断言之用
  * （HighlightStyle 实例不暴露 spec，测试要读原始数组）。 */
 export const mdHighlight = HighlightStyle.define(MD_SPEC);
 

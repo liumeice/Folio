@@ -23,7 +23,7 @@ export type NavRequest =
   | { kind: "top" }
   | null;
 
-/* ── 滚动交接三常量（方案 v1.2 §4.1(e)；改任何一个都要过 tests/nav.test.ts） ── */
+/* ── 滚动交接三常量（方案 v1.2 §4.1(e)；改任何一个都要过 tests/unit/nav.test.ts） ── */
 /** 交接采样线 = 视口真实顶边。唯一容差是 1px 亚像素 epsilon（两端同用）；
  *  容差值一旦混进交接公式，就会变成"每往返一次 +容差"的累计漂移。 */
 export const SYNC_TOP = 0;

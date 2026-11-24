@@ -1,7 +1,7 @@
 /* Markdown 内嵌原始 HTML 的白名单净化器（需求：阅读窗支持嵌入 html 语句显示，如 README 里的
  * <p align="center"><img …> 徽章块）。安全定位=SEC-01 的同族收口：DOMParser 解析后按
  * 标签/属性/URL 三重白名单走树清洗，未知标签拆壳保内容，危险标签整枝删除。
- * 不引入第三方 sanitizer——规则集就是可读的产品契约，逐条有回归测试（tests/html.test.ts）。 */
+ * 不引入第三方 sanitizer——规则集就是可读的产品契约，逐条有回归测试（tests/unit/html.test.ts）。 */
 
 /** md.ts 透传判定用（10.2）：块边界标签是否为白名单成员 */
 export const isAllowedTag = (name: string): boolean => ALLOW.has(name.toLowerCase());

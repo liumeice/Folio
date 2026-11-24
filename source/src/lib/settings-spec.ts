@@ -1,54 +1,58 @@
-/* 设置中心的声明式规格：有哪几组 · 每组哪几行 · 每行吃什么控件 · 取值域 · 文案与换算，
- * 全在这里，视图（SettingsPanel.tsx）一个判断都不做——照 mdediter 的 prefs/settings.ts 那套分法。
+/* 设置中心的声明式规格：有哪几组 · 每组哪几行 · 每行吃什么控件 · 取值域 · 文案 key 与换算，
+ * 全在这里，视图（SettingsPanel.tsx）不做数据判断。
  *
- * 为什么把数据抽出来：① 能单测（每行 get/set 往返、值域与 typography.RANGE 不打架、fmt 单位、
- * 分组齐全）；② 加一栏设置只改这里一行，视图不动；③ 界面不许说谎——没在后端落地的项就不列。
- * Folio 真实可持久化的设置：theme（含护眼米色 sepia）/ accent（强调色，后端已落地，故可摆真实色板）/
- * restoreOnLaunch（启动恢复开关）/ softBreakBr（段落内换行显示开关）/ serif / fs* / lh / letterSpacing / paraSpacing / align / width / codeFs / tableDensity / sideWidth。
- * 仍未做的（文档字体名、内容缩放、自动进入阅读、快捷键编辑、等宽连字 / 行号缩略图 / 保存时自动格式化等
- * MoPage 装饰开关）这里依旧不摆空控件——界面不许说谎。 */
+ * 多语言（2026-11-24）：文案只存 MessageKey，不存译文；视图在渲染期调用 t()，
+ * 语言切换后 Solid 依赖 locale() 信号自动重渲染。中文目录原样搬迁，措辞零 diff。
+ * Folio 真实可持久化的设置：theme / accent / restoreOnLaunch / softBreakBr / language /
+ * serif / fs* / lh / letterSpacing / paraSpacing / align / width / codeFs / tableDensity / sideWidth。 */
 import type { Settings } from "./types";
+import type { MessageKey } from "./i18n/catalog/zh-CN.ts";
 import { DEFAULTS, RANGE, STEP, clampNum } from "./typography.ts";
 
 export type SettingGroupId = "appearance" | "type" | "paragraph" | "layout" | "code";
 
 export interface SettingGroup {
   readonly id: SettingGroupId;
-  readonly title: string;
+  readonly titleKey: MessageKey;
   /** 左导航图标：Icons.tsx 里的 symbol id，与原型 stab 同款（2026-11-16 补齐） */
   readonly icon: string;
 }
 
-/** 行右侧控件的形状。stepper（−值+）/segment（离散胶囊）/range（滑轨）/themeCard（三张预览卡）/swatch（强调色色板）/switch（开关，布尔项）。 */
+/** 离散选项：value 参与持久化，labelKey 走目录（语言项的三个语言名用自身语言，另行处理） */
+export type SettingOption = readonly [value: string, labelKey: MessageKey];
+
+/** 行右侧控件的形状。stepper（−值+）/segment（离散胶囊）/range（滑轨）/themeCard（三张预览卡）/
+ * swatch（强调色色板）/switch（开关，布尔项）/language（界面语言下拉，旗帜 + 语言名）。 */
 export type SettingControl =
   | { kind: "stepper" }
-  | { kind: "segment"; options: readonly (readonly [string, string])[] }
+  | { kind: "segment"; options: readonly SettingOption[] }
   | { kind: "range" }
-  | { kind: "themeCard"; options: readonly (readonly [string, string])[] }
+  | { kind: "themeCard"; options: readonly SettingOption[] }
   | { kind: "swatch" }
-  | { kind: "switch" };
+  | { kind: "switch" }
+  | { kind: "language" };
 
 export interface SettingItem {
   readonly key: string;                       // 调试/测试定位用，不参与读写
   readonly group: SettingGroupId;
-  readonly label: string;
-  readonly hint?: string;                     // 一句解释——正是"层次不清"的解药：每项说清自己在管什么
+  readonly labelKey: MessageKey;
+  readonly hintKey?: MessageKey;              // 一句解释——每项说清自己在管什么
   readonly control: SettingControl;
   /** 数值行的取值域（与 typography.RANGE 同源，构造时校验一致） */
   readonly domain?: { min: number; max: number; step: number };
   readonly get: (s: Settings) => number | string | boolean;
   /** 返回要合并进 settings 的补丁（一行可能写多个字段，如字级按 serif 分两档；switch 行给 boolean） */
   readonly set: (s: Settings, raw: number | string | boolean) => Partial<Settings>;
-  /** 显示文案：把值翻成人话（带单位/比号），住在数据层，视图不拼字符串 */
+  /** 显示文案：把值翻成人话（带单位/比号），住在数据层，视图不拼字符串；单位不翻译 */
   readonly fmt?: (v: number | string, s: Settings) => string;
 }
 
 export const GROUPS: readonly SettingGroup[] = [
-  { id: "appearance", title: "外观", icon: "i-contrast" },
-  { id: "type", title: "字体", icon: "i-type" },
-  { id: "paragraph", title: "段落", icon: "i-list" },
-  { id: "layout", title: "版面", icon: "i-panel-l" },
-  { id: "code", title: "代码与表格", icon: "i-code" },
+  { id: "appearance", titleKey: "settings.group.appearance", icon: "i-contrast" },
+  { id: "type", titleKey: "settings.group.type", icon: "i-type" },
+  { id: "paragraph", titleKey: "settings.group.paragraph", icon: "i-list" },
+  { id: "layout", titleKey: "settings.group.layout", icon: "i-panel-l" },
+  { id: "code", titleKey: "settings.group.code", icon: "i-code" },
 ];
 
 const px = (d: number) => (v: number | string) => `${v} px`;
@@ -59,38 +63,48 @@ const dom = (name: keyof typeof RANGE) => ({ min: RANGE[name][0], max: RANGE[nam
 
 export const ITEMS: readonly SettingItem[] = [
   {
-    key: "theme", group: "appearance", label: "主题",
-    hint: "三套配色都按小字可读性调过对比度；选中立即生效，下次启动仍然记得。",
-    control: { kind: "themeCard", options: [["dark", "深色"], ["light", "浅色"], ["sepia", "护眼米色"]] },
+    key: "theme", group: "appearance", labelKey: "settings.item.theme.label",
+    hintKey: "settings.item.theme.hint",
+    control: { kind: "themeCard", options: [
+      ["dark", "settings.option.theme.dark"], ["light", "settings.option.theme.light"], ["sepia", "settings.option.theme.sepia"],
+    ] },
     get: (s) => s.theme,
     set: (_s, v) => ({ theme: v as Settings["theme"] }),
   },
   {
-    key: "accent", group: "appearance", label: "强调色",
-    hint: "选一个颜色用在按钮、链接和高亮上；深色和浅色主题下会自动取合适的深浅，保证看得清。",
+    key: "accent", group: "appearance", labelKey: "settings.item.accent.label",
+    hintKey: "settings.item.accent.hint",
     control: { kind: "swatch" },
     get: (s) => s.accent,
     set: (_s, v) => ({ accent: String(v) }),
   },
   {
-    key: "restoreOnLaunch", group: "appearance", label: "启动时恢复上次文档",
-    hint: "关闭后启动不再自动打开上次关闭时的文档，启动更快；需要时从「最近打开」随时找回，阅读位置不丢。",
+    key: "restoreOnLaunch", group: "appearance", labelKey: "settings.item.restoreOnLaunch.label",
+    hintKey: "settings.item.restoreOnLaunch.hint",
     control: { kind: "switch" },
     get: (s) => s.restoreOnLaunch,
     set: (_s, v) => ({ restoreOnLaunch: v === true }),
   },
+  {
+    // 界面语言（多语言设计 §4.2.1）：外观与语言组第 4 行；控件是旗帜下拉（原型 2026-11-24 定夺）
+    key: "language", group: "appearance", labelKey: "settings.item.language.label",
+    hintKey: "settings.item.language.hint",
+    control: { kind: "language" },
+    get: (s) => s.language,
+    set: (_s, v) => ({ language: v as Settings["language"] }),
+  },
   // 侧栏宽度不列设置行：它由分隔条拖拽决定（Splitter + settings.sideWidth 持久化），
   // 再放一个 stepper 只会与拖拽各说一套、且改起来反而费劲。
   {
-    key: "serif", group: "type", label: "字体族",
-    hint: "正文用衬线还是无衬线；两族各自记住字号，切换不丢设置。",
-    control: { kind: "segment", options: [["serif", "衬线"], ["sans", "无衬线"]] },
+    key: "serif", group: "type", labelKey: "settings.item.serif.label",
+    hintKey: "settings.item.serif.hint",
+    control: { kind: "segment", options: [["serif", "settings.option.serif.serif"], ["sans", "settings.option.serif.sans"]] },
     get: (s) => (s.serif ? "serif" : "sans"),
     set: (_s, v) => ({ serif: v === "serif" }),
   },
   {
-    key: "fs", group: "type", label: "正文字号",
-    hint: "范围随字体族不同（衬线上限更高）；恢复默认回到各族基准。",
+    key: "fs", group: "type", labelKey: "settings.item.fs.label",
+    hintKey: "settings.item.fs.hint",
     control: { kind: "stepper" },
     domain: dom("fsSerif"),               // 视图会按 serif 现取 domain（见 activeDomain）
     get: (s) => (s.serif ? s.fsSerif : s.fsSans),
@@ -100,8 +114,8 @@ export const ITEMS: readonly SettingItem[] = [
   },
 
   {
-    key: "lh", group: "paragraph", label: "行高",
-    hint: "行距 = 字号 × 倍数。中文正文 1.7–2.0 最舒服。",
+    key: "lh", group: "paragraph", labelKey: "settings.item.lh.label",
+    hintKey: "settings.item.lh.hint",
     control: { kind: "range" },
     domain: dom("lh"),
     get: (s) => s.lh,
@@ -109,8 +123,8 @@ export const ITEMS: readonly SettingItem[] = [
     fmt: (v) => `${v}×`,
   },
   {
-    key: "letterSpacing", group: "paragraph", label: "字距",
-    hint: "字与字之间多加一点空隙，0 就是不加；中文长文稍加一点更好读。",
+    key: "letterSpacing", group: "paragraph", labelKey: "settings.item.letterSpacing.label",
+    hintKey: "settings.item.letterSpacing.hint",
     control: { kind: "range" },
     domain: dom("letterSpacing"),
     get: (s) => s.letterSpacing,
@@ -118,8 +132,8 @@ export const ITEMS: readonly SettingItem[] = [
     fmt: em(3),
   },
   {
-    key: "paraSpacing", group: "paragraph", label: "段落间距",
-    hint: "段与段之间的空白，按正文字号倍数换算。",
+    key: "paraSpacing", group: "paragraph", labelKey: "settings.item.paraSpacing.label",
+    hintKey: "settings.item.paraSpacing.hint",
     control: { kind: "stepper" },
     domain: dom("paraSpacing"),
     get: (s) => s.paraSpacing,
@@ -127,23 +141,23 @@ export const ITEMS: readonly SettingItem[] = [
     fmt: em(2),
   },
   {
-    key: "align", group: "paragraph", label: "对齐方式",
-    hint: "两端对齐让中文右缘整齐；左对齐保留自然参差。",
-    control: { kind: "segment", options: [["left", "左对齐"], ["justify", "两端对齐"]] },
+    key: "align", group: "paragraph", labelKey: "settings.item.align.label",
+    hintKey: "settings.item.align.hint",
+    control: { kind: "segment", options: [["left", "settings.option.align.left"], ["justify", "settings.option.align.justify"]] },
     get: (s) => s.align,
     set: (_s, v) => ({ align: v as Settings["align"] }),
   },
   {
-    key: "softBreakBr", group: "paragraph", label: "段落内换行显示为换行",
-    hint: "默认按标准 Markdown 把段落里的回车折叠成一个空格；打开后逐行显示（Typora 习惯），导出同步生效。只改显示，不改源文件。",
+    key: "softBreakBr", group: "paragraph", labelKey: "settings.item.softBreakBr.label",
+    hintKey: "settings.item.softBreakBr.hint",
     control: { kind: "switch" },
     get: (s) => s.softBreakBr,
     set: (_s, v) => ({ softBreakBr: v === true }),
   },
 
   {
-    key: "width", group: "layout", label: "页面最大宽度",
-    hint: "正文一行最宽多少像素；越窄越好读，越宽屏利用率越高。",
+    key: "width", group: "layout", labelKey: "settings.item.width.label",
+    hintKey: "settings.item.width.hint",
     control: { kind: "range" },
     domain: dom("width"),
     get: (s) => s.width,
@@ -152,8 +166,8 @@ export const ITEMS: readonly SettingItem[] = [
   },
 
   {
-    key: "codeFs", group: "code", label: "代码字号",
-    hint: "代码块比正文略小更耐读；只影响代码块，不动正文。",
+    key: "codeFs", group: "code", labelKey: "settings.item.codeFs.label",
+    hintKey: "settings.item.codeFs.hint",
     control: { kind: "stepper" },
     domain: dom("codeFs"),
     get: (s) => s.codeFs,
@@ -161,9 +175,13 @@ export const ITEMS: readonly SettingItem[] = [
     fmt: px(1),
   },
   {
-    key: "tableDensity", group: "code", label: "表格密度",
-    hint: "表格单元格的松紧三档。",
-    control: { kind: "segment", options: [["compact", "紧凑"], ["standard", "标准"], ["loose", "宽松"]] },
+    key: "tableDensity", group: "code", labelKey: "settings.item.tableDensity.label",
+    hintKey: "settings.item.tableDensity.hint",
+    control: { kind: "segment", options: [
+      ["compact", "settings.option.tableDensity.compact"],
+      ["standard", "settings.option.tableDensity.standard"],
+      ["loose", "settings.option.tableDensity.loose"],
+    ] },
     get: (s) => s.tableDensity,
     set: (_s, v) => ({ tableDensity: v as Settings["tableDensity"] }),
   },
@@ -188,7 +206,7 @@ export function bump(item: SettingItem, s: Settings, dir: number): number | stri
   return Number.isFinite(stepped) ? clampNum(name, stepped) : cur;
 }
 
-/** 「恢复默认」用的补丁（只涵盖本面板能改的字段，theme/sideWidth 不在此列——那是偏好不是排版） */
+/** 「恢复默认」用的补丁（只涵盖本面板能改的排版字段；theme/accent/sideWidth/language 不在此列） */
 export function resetPatch(): Partial<Settings> {
   return {
     serif: DEFAULTS.serif, fsSerif: DEFAULTS.fsSerif, fsSans: DEFAULTS.fsSans,

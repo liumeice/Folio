@@ -1,0 +1,20 @@
+{
+  "theme": "light",
+  "accent": "#1B6372",
+  "serif": true,
+  "fsSerif": 15.5,
+  "fsSans": 14.0,
+  "width": 900,
+  "lh": 1.85,
+  "libraryRoot": null,
+  "scanLimit": null,
+  "sideWidth": null,
+  "letterSpacing": 0.0,
+  "paraSpacing": 1.0,
+  "align": "left",
+  "codeFs": 12.5,
+  "tableDensity": "standard",
+  "restoreOnLaunch": true,
+  "softBreakBr": false,
+  "language": "auto"
+}

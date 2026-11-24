@@ -78,6 +78,8 @@ pub struct FormatResult {
     pub changed: bool,
     /// 与原文同行位比较后不同的行数（压缩空行导致行号平移时按最大长度比较，仅用于提示"N 处更改"）
     pub changed_lines: usize,
+    /// 稳定 warning code（`unclosed_fence` / `unclosed_math`；前端按 `format.warn.<code>` 出文案，
+    /// 设计《多语言支持》P4b：Rust 不产 UI 文案，语言由 TS 目录决定）
     pub warnings: Vec<String>,
 }
 
@@ -922,11 +924,11 @@ pub fn format_markdown(src: &str, opt: &FormatOptions) -> FormatResult {
         // 同缩进 + 同字符 + 同长度：CommonMark 要求闭合围栏不短于开启围栏，
         // 否则标准渲染器不会把这里当闭合（评审 P1-2）
         out.push(format!("{}{}", fence_indent, fence_char.to_string().repeat(fence_ticks)));
-        warnings.push("已补全未闭合的代码围栏".to_string());
+        warnings.push("unclosed_fence".to_string());
     }
     // 未闭合 $$ 数学块：其后内容已整段原样保留（不猜测闭合位置），但用户应知道（完善性检查 §7.2）
     if in_math {
-        warnings.push("数学块 $$ 未闭合，闭界之后的内容按原样保留".to_string());
+        warnings.push("unclosed_math".to_string());
     }
 
     let mut text = out.join(eol);
@@ -1008,7 +1010,7 @@ mod tests {
     fn unclosed_fence_closed_with_warning() {
         let r = format_markdown("```js\nlet x = 1;\n", &FormatOptions::default());
         assert_eq!(r.text, "```js\nlet x = 1;\n```\n");
-        assert_eq!(r.warnings.len(), 1);
+        assert_eq!(r.warnings, vec!["unclosed_fence".to_string()]);
         assert!(r.changed);
     }
 
@@ -1284,7 +1286,6 @@ mod tests {
         let r = format_markdown("$$\n##标题\n", &FormatOptions::default());
         assert_eq!(r.text, "$$\n##标题\n");
         assert!(!r.changed);
-        assert_eq!(r.warnings.len(), 1);
-        assert!(r.warnings[0].contains("数学块"), "{:?}", r.warnings);
+        assert_eq!(r.warnings, vec!["unclosed_math".to_string()]);
     }
 }

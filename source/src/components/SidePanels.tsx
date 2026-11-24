@@ -10,25 +10,23 @@ import { allDirKeys, revealKeys } from "../lib/libtree";
 import { countWords } from "../lib/wordcount";
 import { buildLibTree, flattenAll, isDirOpen, leafName, rootOf, type DirNode, type TreeRow } from "../lib/libtree";
 import { allOutlineFoldKeys, ancestorChain, buildOutlineTree, flattenOutline } from "../lib/oltree";
+import { t, tp } from "../lib/i18n";
+import { dayKind, formatNumber, formatPercent } from "../lib/i18n/format";
 
+/* 今天/昨天走译文，更早仍显示 MM-DD；分组判定用 dayKind（本地零点差，CON-12 口径），
+ * 不再比较中文字面量，语言切换后由渲染期的 t() 追踪 locale 自动更新。 */
 function dayLabel(mtime: number): string {
   const d = new Date(mtime * 1000);
-  const now = new Date();
-  // CON-12 修复：旧实现用 UTC 日序号（getTime/86400000），UTC+8 用户凌晨 0:00–7:59
-  // 打开的文档会被分到「昨天」，而行内时刻却按本地显示——分组与标签自相矛盾。
-  // 改为「本地零点差」数天数；Math.round 吸收夏令时 ±1h 抖动（本机时区无 DST 时零成本）。
-  const midnight = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diff = Math.round((midnight(now) - midnight(d)) / 86400000);
-  if (diff <= 0) return "今天";
-  if (diff === 1) return "昨天";
+  const kind = dayKind(mtime * 1000);
+  if (kind === "today") return t("date.today");
+  if (kind === "yesterday") return t("date.yesterday");
   return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 /** 历史行的右侧标签：今天给时刻，昨天给「昨天」，更早给日期 */
 function recentLabel(openedAt: number): string {
   const d = new Date(openedAt * 1000);
-  const dl = dayLabel(openedAt);
-  if (dl !== "今天") return dl;
+  if (dayKind(openedAt * 1000) !== "today") return dayLabel(openedAt);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
@@ -38,16 +36,16 @@ export function Rail() {
   return (
     <div class="rail">
       {/* 打开文件快捷钮（2026-11-16 增，需求方指定放文档库上方、图标与「文件→打开文档…」菜单项一致）：瞬时动作，不保持选中态 */}
-      <button title="打开文档… (Ctrl+O)" onClick={() => void pickAndOpen(s)}>
+      <button title={t("rail.openFile")} onClick={() => void pickAndOpen(s)}>
         <svg class="ico ico-20"><use href="#i-open-file" /></svg>
       </button>
-      <button title="文件夹" classList={{ on: s.side() === "library" }} onClick={() => toggle("library")}>
+      <button title={t("rail.folder")} classList={{ on: s.side() === "library" }} onClick={() => toggle("library")}>
         <svg class="ico ico-20"><use href="#i-open-folder" /></svg>
       </button>
-      <button title="最近打开" classList={{ on: s.side() === "recents" }} onClick={() => toggle("recents")}>
+      <button title={t("rail.recents")} classList={{ on: s.side() === "recents" }} onClick={() => toggle("recents")}>
         <svg class="ico ico-20"><use href="#i-recent" /></svg>
       </button>
-      <button title="大纲" classList={{ on: s.side() === "outline" }} onClick={() => s.setSide("outline")}>
+      <button title={t("rail.outline")} classList={{ on: s.side() === "outline" }} onClick={() => s.setSide("outline")}>
         <svg class="ico ico-20"><use href="#i-outline" /></svg>
       </button>
       {/* 2026-11-16：rail 底部 ⚙ 与 ⊕ 搜索钮都已撤——搜索入口=标题栏钮 / Ctrl+F / 「文档」菜单 */}
@@ -89,13 +87,12 @@ export function LibraryPanel() {
   async function rescanOne(r: string) {
     try {
       const rep = await api.scanFolder(r);
-      s.toast(`重新扫描「${leafName(r)}」：新增 ${rep.inserted} 篇 · 更新 ${rep.updated} 篇 · `
-        + `未变 ${rep.unchanged} 篇 · 移除 ${rep.removed} 篇`
-        + (rep.skipped ? ` · ${rep.skipped} 篇读取失败，已跳过` : "")
-        + (rep.truncated ? ` · 文件太多，还有 ${rep.truncated} 篇没有纳入` : ""));
+      s.toast(t("side.library.rescanResult", { name: leafName(r), inserted: formatNumber(rep.inserted), updated: formatNumber(rep.updated), unchanged: formatNumber(rep.unchanged), removed: formatNumber(rep.removed) })
+        + (rep.skipped ? t("side.library.rescanSkipped", { count: formatNumber(rep.skipped) }) : "")
+        + (rep.truncated ? t("side.library.rescanTruncated", { count: formatNumber(rep.truncated) }) : ""));
       void s.refreshDocs();
     } catch (e) {
-      s.toast("重新扫描失败：" + String(e));   // UI-15：旧版裸 await，失败无声无息
+      s.toast(t("side.library.rescanFailed") + String(e));   // UI-15：旧版裸 await，失败无声无息
     }
   }
   /** 当前库 = 正在读那篇文档所属的库根；没开文档（或文档不在任何库内）时退到第一个。
@@ -114,57 +111,56 @@ export function LibraryPanel() {
     const r = curRoot();
     if (!r) { await pickFolderAndScan(s); return; }   // 没有库时这个位置就是「打开文件夹…」
     const extra = s.roots().length > 1
-      ? `另外 ${s.roots().length - 1} 个文件夹不受影响。` : "";
+      ? tp("side.library.closeOtherRoots", s.roots().length - 1, { count: formatNumber(s.roots().length - 1) }) : "";
     // 应用内询问框（§8.6）：白话文案 + 新旧信息分行；取消/Esc/遮罩 = 零副作用
     const ok = await ui.ask({
-      icon: "i-x", title: "关闭文件夹", sub: "关闭当前打开的文件夹，不会删除电脑里任何文件。",
-      rows: [["要关闭的文件夹", r], ["里面的文档", `${underCur()} 篇`]],
-      note: "关闭后：这些文件都还在电脑里，一篇也不会少；读到哪儿了也记着，以后在「最近打开」列表里"
-        + `还能找到并继续读。想再打开，选中同一个文件夹就行。${extra}`,
-      ok: "关闭文件夹",
+      icon: "i-x", title: t("side.library.closeFolderTitle"), sub: t("side.library.closeSub"),
+      rows: [[t("side.library.closeRowFolder"), r], [t("side.library.closeRowDocs"), tp("side.library.docCount", underCur(), { count: formatNumber(underCur()) })]],
+      note: t("side.library.closeNote", { extra }),
+      ok: t("side.library.closeFolderTitle"),
     });
     if (!ok) return;
     let n: number;
     try {
       n = await api.removeRoot(r);
-    } catch (e) { s.toast("关闭文件夹失败：" + String(e)); return; }   // UI-15
+    } catch (e) { s.toast(t("side.library.closeFailed") + String(e)); return; }   // UI-15
     await s.refreshDocs();
-    s.toast(n ? `已关闭文件夹「${leafName(r)}」— 文件未删除，可在「最近打开」里继续读（共 ${n} 篇）`
-      : `已关闭文件夹「${leafName(r)}」`);
+    s.toast(n ? t("side.library.closedWithCount", { name: leafName(r), count: formatNumber(n) })
+      : t("side.library.closed", { name: leafName(r) }));
   }
   return (
     <>
       <div class="side-head">
-        <div class="side-title">文件夹<span class="sp" />
-          <span class="act" id="lib-expand" title="全部展开（含更深层目录）"
+        <div class="side-title">{t("side.library.title")}<span class="sp" />
+          <span class="act" id="lib-expand" title={t("side.library.expandAll")}
             onClick={() => setAll(true)}>
             <svg class="ico ico-12"><use href="#i-chev-d" /></svg>
           </span>
-          <span class="act" id="lib-collapse" title="全部收起（只留最外层）"
+          <span class="act" id="lib-collapse" title={t("side.library.collapseAll")}
             onClick={() => setAll(false)}>
             <svg class="ico ico-12"><use href="#i-chev-u" /></svg>
           </span>
         </div>
         {/* chip = 当前这一个库：只显示路径，刷新与关闭都在框内；点路径打开库根管理器（多库切换/添加/关闭） */}
         <Show keyed when={curRoot()} fallback={
-          <div class="root-chip none" title="点击选择一个文件夹打开"
+          <div class="root-chip none" title={t("side.library.pickHint")}
             onClick={() => void pickFolderAndScan(s)}>
             <span class="ri"><svg class="ico ico-14"><use href="#i-folder" /></svg></span>
-            <span class="rp ellip">未打开文件夹 · 点击选择…</span>
+            <span class="rp ellip">{t("side.library.noFolderChip")}</span>
           </div>
         }>
           {(path: string) => (
             <div class="root-chip" id="lib-root-chip"
-              title={path + "\n当前文件夹 · 点击选择另一个文件夹（同一时间只打开一个）"}
+              title={path + "\n" + t("side.library.currentFolder")}
               onClick={() => void pickFolderAndScan(s)}>
               <span class="ri"><svg class="ico ico-14"><use href="#i-folder-open" /></svg></span>
               <span class="rp ellip">{path}</span>
-              <span class="ract" id="lib-rescan" title="重新扫描这个文件夹"
+              <span class="ract" id="lib-rescan" title={t("side.library.rescan")}
                 onClick={(e) => { e.stopPropagation(); void rescanOne(path); }}>
                 <svg class="ico ico-12"><use href="#i-refresh" /></svg>
               </span>
               <span class="ract" id="lib-close"
-                title={`关闭这个文件夹（${underCur()} 篇只保留在「最近打开」里 · 磁盘上的文件和阅读进度都不受影响）`}
+                title={t("side.library.closeFolder", { count: formatNumber(underCur()) })}
                 onClick={(e) => { e.stopPropagation(); void closeLibrary(); }}>
                 <svg class="ico ico-12"><use href="#i-x" /></svg>
               </span>
@@ -173,11 +169,11 @@ export function LibraryPanel() {
         </Show>
         <div class="searchf">
           <svg class="ico ico-14"><use href="#i-search" /></svg>
-          <input id="lib-search" placeholder="筛选文档（名称或路径）…" spellcheck="false"
+          <input id="lib-search" placeholder={t("side.library.filter")} spellcheck="false"
             style={{ flex: "1", "min-width": "0", "font-size": "12.5px", color: "var(--text)" }}
             value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
           <Show when={q()}>
-            <span class="iconbtn" style={{ width: "22px", height: "22px" }} title="清除" onClick={() => setQ("")}>
+            <span class="iconbtn" style={{ width: "22px", height: "22px" }} title={t("common.action.clear")} onClick={() => setQ("")}>
               <svg class="ico ico-12"><use href="#i-x" /></svg>
             </span>
           </Show>
@@ -187,19 +183,19 @@ export function LibraryPanel() {
         <Show when={filtered().length === 0}>
           <div class="ol-empty">
             {kw()
-              ? `无匹配文档：「${kw()}」`
+              ? t("side.library.emptyFilter", { query: kw() })
               : <>
-                  {s.roots().length ? "该文件夹下暂无 Markdown 文档" : "尚未打开文件夹"}<br />
+                  {s.roots().length ? t("side.library.emptyNoDocs") : t("side.library.emptyNoFolder")}<br />
                   <button class="btn primary" style={{ "margin-top": "6px" }}
-                    onClick={() => void pickFolderAndScan(s)}>打开文件夹…</button><br />
+                    onClick={() => void pickFolderAndScan(s)}>{t("side.library.openFolder")}</button><br />
                   <span style={{ "font-size": "11.5px" }}>
-                    （单独打开的文档只进「最近打开」）
+                    {t("side.library.standaloneNote")}
                   </span>
                 </>}
           </div>
         </Show>
         <Show when={pinnedList().length > 0}>
-          <div class="sec-h">置顶<span class="sp" /></div>
+          <div class="sec-h">{t("side.library.pinned")}<span class="sp" /></div>
           <For each={pinnedList()}>{(d) => <LibItem d={d} showPath={!!kw()} />}</For>
         </Show>
         <For each={rows()}>
@@ -210,8 +206,8 @@ export function LibraryPanel() {
         </For>
       </div>
       <div class="side-foot">
-        <span class="dot-ok" /><span>本地存储</span><span class="sp" />
-        <span>{libDocs().length ? `共 ${libDocs().length} 篇` : "还没有打开的文件夹"}</span>
+        <span class="dot-ok" /><span>{t("side.library.storage")}</span><span class="sp" />
+        <span>{libDocs().length ? tp("side.library.count", libDocs().length, { count: formatNumber(libDocs().length) }) : t("side.library.countNone")}</span>
       </div>
     </>
   );
@@ -247,7 +243,7 @@ function RenameBox(props: { kind: "file" | "dir"; initial: string; onSubmit: (na
       ref={(node) => { el = node; }}
       class="rename-input"
       spellcheck={false}
-      title="Enter 或点击别处确认 · Esc 取消"
+      title={t("side.rename.tip")}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       onDblClick={(e) => e.stopPropagation()}
@@ -292,7 +288,7 @@ function LibItem(props: { d: DocMeta; depth?: number; showPath?: boolean }) {
       <Show when={props.showPath && props.d.dir}>
         <span class="src-dir ellip">{leafName(props.d.dir)}</span>
       </Show>
-      <Show when={props.d.builtin}><span class="badge">内置</span></Show>
+      <Show when={props.d.builtin}><span class="badge">{t("side.badge.builtin")}</span></Show>
       <span class="mt">{dayLabel(props.d.mtime)}</span>
     </div>
   );
@@ -357,39 +353,36 @@ export function RecentsPanel() {
     return out;
   });
   async function clearAll() {
-    const ok = await confirmBox(
-      "清空「最近打开」列表？\n只是清掉打开记录，文件夹里的文档一篇都不会少。\n"
-      + "不在任何文件夹里的文件，阅读进度和搜索记录也会一起清掉；磁盘上的文件不动。",
-      "清空最近打开");
+    const ok = await confirmBox(t("side.recents.clearAsk"), t("side.recents.clearTitle"));
     if (!ok) return;
     // UI-15：清空失败必须有声——旧版裸 await，命令排队/异常时静默无反应，看起来像"没清掉"
     let rep: RecentReport;
     try { rep = await api.clearRecents(); }
-    catch (e) { s.toast("清空最近打开失败：" + String(e)); return; }
+    catch (e) { s.toast(t("side.recents.clearFailed") + String(e)); return; }
     await s.refreshDocs();
     s.toast(rep.pruned
-      ? `已清空打开历史（${rep.cleared} 条；其中 ${rep.pruned} 个文件的阅读进度也一并清除了）`
-      : `已清空打开历史（${rep.cleared} 条）`);
+      ? t("side.recents.clearedPruned", { count: formatNumber(rep.cleared), pruned: formatNumber(rep.pruned) })
+      : t("side.recents.cleared", { count: formatNumber(rep.cleared) }));
   }
   return (
     <>
       <div class="side-head">
-        <div class="side-title">最近打开<span class="sp" />
-          <span id="rec-clear" class="sec-act" title="清空打开记录（文件夹和磁盘上的文件都不受影响）" onClick={() => void clearAll()}>
+        <div class="side-title">{t("side.recents.title")}<span class="sp" />
+          <span id="rec-clear" class="sec-act" title={t("side.recents.clearTip")} onClick={() => void clearAll()}>
             <svg class="ico ico-12"><use href="#i-trash" /></svg>
           </span>
-          <span id="rec-add" title="打开文档… (Ctrl+O)" style={{ cursor: "pointer", display: "inline-grid" }}
+          <span id="rec-add" title={t("rail.openFile")} style={{ cursor: "pointer", display: "inline-grid" }}
             onClick={() => void pickAndOpen(s)}>
             <svg class="ico ico-14" style={{ color: "var(--text-3)" }}><use href="#i-plus" /></svg>
           </span>
         </div>
         <div class="searchf">
           <svg class="ico ico-14"><use href="#i-search" /></svg>
-          <input id="rec-search" placeholder="筛选历史（名称或路径）…" spellcheck="false"
+          <input id="rec-search" placeholder={t("side.recents.filter")} spellcheck="false"
             style={{ flex: "1", "min-width": "0", "font-size": "12.5px", color: "var(--text)" }}
             value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
           <Show when={q()}>
-            <span class="iconbtn" style={{ width: "22px", height: "22px" }} title="清除" onClick={() => setQ("")}>
+            <span class="iconbtn" style={{ width: "22px", height: "22px" }} title={t("common.action.clear")} onClick={() => setQ("")}>
               <svg class="ico ico-12"><use href="#i-x" /></svg>
             </span>
           </Show>
@@ -397,7 +390,7 @@ export function RecentsPanel() {
       </div>
       <div class="side-body">
         <Show when={items().length === 0}>
-          <div class="ol-empty">还没有打开记录<br />Ctrl+O 打开文档，或把 .md 拖进窗口</div>
+          <div class="ol-empty">{t("side.recents.empty")}<br />{t("side.recents.emptyHint")}</div>
         </Show>
         <For each={groups()}>{(g) => (
           <>
@@ -407,7 +400,7 @@ export function RecentsPanel() {
         )}</For>
       </div>
       <div class="side-foot">
-        <span>打开历史 · 不限量保留</span><span class="sp" /><span>{s.recents().length} 条</span>
+        <span>{t("side.recents.history")}</span><span class="sp" /><span>{tp("side.recents.entries", s.recents().length, { count: formatNumber(s.recents().length) })}</span>
       </div>
     </>
   );
@@ -422,9 +415,9 @@ function RecentItem(props: { r: RecentDoc }) {
     try {
       const purged = await api.removeRecent(d().id);
       await s.refreshDocs();
-      s.toast(purged ? "已从历史移除（这个文件不在任何文件夹里，阅读进度也一并清除了）" : "已从历史移除");
+      s.toast(purged ? t("side.recents.removedPruned") : t("side.recents.removed"));
     } catch (err) {
-      s.toast("移除失败：" + String(err));   // UI-15：失败必须有声
+      s.toast(t("side.recents.removeFailed") + String(err));   // UI-15：失败必须有声
     }
   }
   return (
@@ -438,10 +431,10 @@ function RecentItem(props: { r: RecentDoc }) {
       <svg class="ico ico-14" style={{ color: on() ? "var(--accent)" : "var(--text-3)" }}><use href="#i-md" /></svg>
       <span class="nm">{d().fileName}</span>
       {/* 需求方 2026-11-17：历史行不显示上级文件夹小字；时间右移贴住关闭按钮留位 */}
-      <Show when={d().inLibrary}><span class="badge">文件夹</span></Show>
-      <Show when={d().builtin}><span class="badge">内置</span></Show>
+      <Show when={d().inLibrary}><span class="badge">{t("side.badge.folder")}</span></Show>
+      <Show when={d().builtin}><span class="badge">{t("side.badge.builtin")}</span></Show>
       <span class="mt">{recentLabel(props.r.openedAt)}</span>
-      <span class="iconbtn row-x" title="从最近打开移除" onClick={(e) => void remove(e)}>
+      <span class="iconbtn row-x" title={t("side.recents.remove")} onClick={(e) => void remove(e)}>
         <svg class="ico ico-12"><use href="#i-x" /></svg>
       </span>
     </div>
@@ -560,22 +553,22 @@ export function OutlinePanel() {
 
   return (
     <>
-      <div class="out-head">大纲<span class="sp" />
+      <div class="out-head">{t("side.outline.title")}<span class="sp" />
         <span style={{ "font-family": "var(--font-mono)", "font-size": "10.5px" }}>
-          {s.displayDoc()?.outline.length ?? 0} 条
+          {tp("side.outline.count", s.displayDoc()?.outline.length ?? 0, { count: formatNumber(s.displayDoc()?.outline.length ?? 0) })}
         </span>
-        <button class="head-btn" title="全部展开" aria-label="全部展开"
+        <button class="head-btn" title={t("side.outline.expandAll")} aria-label={t("side.outline.expandAll")}
           onClick={() => ui.setAllOutlineOpen(foldKeys(), true)}>
           <svg class="ico"><use href="#i-ol-expand" /></svg>
         </button>
-        <button class="head-btn" title="全部收起" aria-label="全部收起"
+        <button class="head-btn" title={t("side.outline.collapseAll")} aria-label={t("side.outline.collapseAll")}
           onClick={() => ui.setAllOutlineOpen(foldKeys(), false)}>
           <svg class="ico"><use href="#i-ol-collapse" /></svg>
         </button>
       </div>
-      <div class="out-body" ref={body} role="tree" aria-label="文档大纲" onKeyDown={onKey}>
+      <div class="out-body" ref={body} role="tree" aria-label={t("side.outline.docOutline")} onKeyDown={onKey}>
         <Show when={s.displayDoc()?.outline.length} fallback={
-          <div class="ol-empty">打开文档后<br />自动生成大纲</div>
+          <div class="ol-empty">{t("side.outline.empty1")}<br />{t("side.outline.empty2")}</div>
         }>
           <For each={rows()}>{(r) => {
             const it = r.node.item;
@@ -588,7 +581,7 @@ export function OutlinePanel() {
                 style={{ "padding-left": `${4 + r.depth * 18}px` }}>
                 <Show when={r.hasKids} fallback={<span class="ol-chev-sp" />}>
                   <button type="button" class="ol-chev" classList={{ open: r.open }} tabIndex={-1}
-                    title={r.open ? "收起" : "展开"} aria-label={r.open ? "收起" : "展开"}
+                    title={r.open ? t("side.outline.collapse") : t("side.outline.expand")} aria-label={r.open ? t("side.outline.collapse") : t("side.outline.expand")}
                     onClick={(e) => { e.stopPropagation(); toggle(it.sec, r.open); }}>
                     <svg class="ico"><use href="#i-chev-r" /></svg>
                   </button>
@@ -610,17 +603,17 @@ export function PaneBar() {
   const s = useStore();
   return (
     <div class="pane-bar">
-      <button class="tbtn" disabled={s.histIdx() <= 0} title="后退 (Alt+←)" onClick={() => void s.back()}>
+      <button class="tbtn" disabled={s.histIdx() <= 0} title={t("side.status.back")} onClick={() => void s.back()}>
         <svg class="ico ico-14"><use href="#i-arrow-left" /></svg>
       </button>
-      <button class="tbtn" disabled={s.histIdx() >= s.histLen() - 1} title="前进 (Alt+→)" onClick={() => void s.forward()}>
+      <button class="tbtn" disabled={s.histIdx() >= s.histLen() - 1} title={t("side.status.forward")} onClick={() => void s.forward()}>
         <svg class="ico ico-14"><use href="#i-arrow-right" /></svg>
       </button>
       <span class="divv" />
-      <button class="tbtn" title="上一章 (Alt+↑)" onClick={() => ui.navSection(-1)}>
+      <button class="tbtn" title={t("side.status.prev")} onClick={() => ui.navSection(-1)}>
         <svg class="ico ico-14"><use href="#i-chev-u" /></svg>
       </button>
-      <button class="tbtn" title="下一章 (Alt+↓)" onClick={() => ui.navSection(1)}>
+      <button class="tbtn" title={t("side.status.next")} onClick={() => ui.navSection(1)}>
         <svg class="ico ico-14"><use href="#i-chev-d" /></svg>
       </button>
     </div>
@@ -635,7 +628,7 @@ export function CrumbBar() {
     const c = s.current();
     const dir = c?.meta.dir ?? "";
     const sep = dir.includes("\\") ? "\\" : "/";
-    return { dir: dir || "文件夹", sep, name: c?.meta.fileName ?? "未打开文档" };
+    return { dir: dir || t("side.crumb.folder"), sep, name: c?.meta.fileName ?? t("side.pane.noDoc") };
   };
   return (
     <div class="crumb-bar">
@@ -661,9 +654,11 @@ export function StatusBar() {
     const c = s.current();
     return c ? "folio://open?doc=" + c.meta.slug : "—";
   }
+  const charCount = createMemo(() => { const c = s.current(); return c ? countWords(c.src) : null; });
+  const secCount = createMemo(() => s.current()?.meta.secCount ?? null);
   return (
     <footer class="status">
-      <span class="si ellip" title="文档信息">
+      <span class="si ellip" title={t("side.status.info")}>
         <svg class="ico ico-14"><use href="#i-md" /></svg>
         <b>{s.current()?.meta.fileName ?? "—"}</b>
       </span>
@@ -671,18 +666,18 @@ export function StatusBar() {
       <span class="si" id="stat-sec"><span class="ellip">{secText()}</span></span>
       <span class="sp" />
       {/* 正文口径字数（公式/图表源码不计，2026-11-17 需求定夺）：从 src 现算，不走 DB 旧口径 */}
-      <span class="si">{s.current() ? countWords(s.current()!.src).toLocaleString() + " 字" : "— 字"}</span>
-      <span class="si">{s.current()?.meta.secCount ?? "—"} 节</span>
-      <span class="si" id="stat-enc" onClick={() => ui.setPropsOpen(true)} title="查看文档信息">{encLabel(s.current()?.encoding)}</span>
-      {/* 百分比定宽槽：位数变化不抖动（样式见 app.css .pct-slot） */}
-      <span class="si">阅读 <span class="pct-slot">{Math.round(ui.readPct() * 100)}%</span></span>
-      <span class="si acc" id="stat-link-btn" title="点击复制当前文档链接"
+      <span class="si">{charCount() != null ? tp("side.status.chars", charCount()!, { count: formatNumber(charCount()!) }) : t("side.status.charsNone")}</span>
+      <span class="si">{secCount() != null ? tp("side.status.sections", secCount()!, { count: formatNumber(secCount()!) }) : t("side.status.sectionsNone")}</span>
+      <span class="si" id="stat-enc" onClick={() => ui.setPropsOpen(true)} title={t("side.status.viewInfo")}>{encLabel(s.current()?.encoding)}</span>
+      {/* 阅读百分比整句走 t("side.status.reading")；原 .pct-slot 定宽槽（防位数抖动）随整句迁移移除，见多语言迁移报告 */}
+      <span class="si">{t("side.status.reading", { pct: formatPercent(ui.readPct()) })}</span>
+      <span class="si acc" id="stat-link-btn" title={t("side.status.copyLink")}
         onClick={() => {
           const c = s.current();
-          if (!c) { s.toast("未打开文档"); return; }
+          if (!c) { s.toast(t("side.status.noDoc")); return; }
           navigator.clipboard?.writeText(link())
-            .then(() => ui.showCopied("已复制文档链接", link()))
-            .catch(() => s.toast("剪贴板不可用"));
+            .then(() => ui.showCopied(t("side.status.linkCopied"), link()))
+            .catch(() => s.toast(t("side.status.clipboardFail")));
         }}>
         <code>{link()}</code>
       </span>

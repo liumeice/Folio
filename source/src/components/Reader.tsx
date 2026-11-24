@@ -1,12 +1,15 @@
 /* 阅读视图：渲染 + 滚动联动 + 位置源注册 + 导航执行 + 任务勾选/外链/图片。
  * 语义全部对齐 PRD：FR-2（渲染）、FR-3（大纲联动/判据）、FR-4（恢复）、FR-5（历史）、FR-7.6（勾选）。 */
-import { createEffect, on, onCleanup, onMount } from "solid-js";
+import { createEffect, createMemo, on, onCleanup, onMount } from "solid-js";
 import { useStore } from "../lib/store";
 import { api } from "../lib/api";
 import * as ui from "../lib/ui";
-import { mdToHtml, taskOrdinalOf, flipTaskInSrc, setSoftBreakBr } from "../lib/md";
+import { mdToHtml, taskOrdinalOf, flipTaskInSrc, setSoftBreakBr, type RenderOptions } from "../lib/md";
 import { applyColorChips } from "../lib/colorchip";
 import { countWords } from "../lib/wordcount";
+import { t, tp, locale } from "../lib/i18n";
+import { formatNumber } from "../lib/i18n/format";
+import { detectContentLang } from "../lib/i18n/detect";
 import { typesetMathIn } from "../lib/mathjax";
 import { renderMermaid } from "../lib/mermaidRender";
 import { renderZenuml } from "../lib/zenumlRender";
@@ -38,20 +41,48 @@ function joinDocPath(baseDir: string, rel: string): string | null {
   return parts.length ? parts.join(sep) : null;
 }
 
-const EMPTY_HTML = `
+/* 空态模板按语言重建（多语言设计 §4.4.7）：kbd 加粗由调用方以占位值传入，消息本身不含 HTML */
+const emptyHtml = () => `
   <div class="empty-state">
     <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto;opacity:.5">
       <path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 13h6M9 17h4"/>
     </svg>
-    <h3>还没有打开文档</h3>
-    <p>按 <b>Ctrl+O</b> 打开本地 .md，或把文件直接拖进窗口。<br>
-    用菜单「文件 → 打开文件夹…」登记整个文档目录。</p>
+    <h3>${t("reader.empty.title")}</h3>
+    <p>${t("reader.empty.hint1", { kbd: "<b>Ctrl+O</b>" })}<br>
+    ${t("reader.empty.hint2")}</p>
   </div>`;
 
 export default function Reader() {
   const s = useStore();
   let view!: HTMLDivElement;
   let article!: HTMLElement;
+
+  /* 渲染 chrome 文案（P4b，设计 §4.6.1）：随 locale() 重算；mdToHtml/图表渲染器共用这一份。
+   * callout 五标签复用 editor.callout.*（与编辑右键菜单同术语）。 */
+  const renderOptions = createMemo<RenderOptions>(() => ({
+    callout: {
+      note: t("editor.callout.note"), tip: t("editor.callout.tip"),
+      important: t("editor.callout.important"), warning: t("editor.callout.warning"),
+      caution: t("editor.callout.caution"),
+    },
+    copyCode: t("markdown.code.copy"),
+    copyCodeTitle: t("markdown.code.copyTitle"),
+    taskToggle: t("markdown.task.toggle"),
+    taskNestedDisabled: t("markdown.task.nestedDisabled"),
+    frontmatter: t("markdown.frontmatter"),
+    footnotes: t("markdown.footnotes"),
+    footnoteBack: t("markdown.footnoteBack"),
+    mermaidError: t("markdown.mermaid.error"),
+    mermaidAlt: t("markdown.mermaid.alt"),
+    mathError: t("markdown.math.error"),
+    zenumlError: t("markdown.zenuml.error"),
+    zenumlLoadError: t("markdown.zenuml.loadError"),
+    zenumlParseError: t("markdown.zenuml.invalidContent"),
+    zenumlLineColumn: (d) => t("markdown.zenuml.lineColumn", { line: d.line, column: d.column, msg: d.msg }),
+    zenumlRenderError: t("markdown.zenuml.renderError"),
+    zenumlAlt: t("markdown.zenuml.alt"),
+    uiLang: locale(),
+  }));
 
   /* ══ 滚动同步坐标设施（方案 v1.2 §4.1/§4.2）══
    * 一把尺：小数源码行号 lineFloat；阅读窗几何一律经 data-line-start/end 锚点块表换算。 */
@@ -160,7 +191,8 @@ export default function Reader() {
     if (s.mode() === "edit") return;
     if (!doc) {
       if (lastRendered !== null) {
-        article.innerHTML = EMPTY_HTML;
+        article.removeAttribute("lang");   // 空态是 UI chrome：不残留上一篇文档的语言判定（P5）
+        article.innerHTML = emptyHtml();
         ui.setReadPct(0);
         s.setActiveSec(null);
         lastRendered = null;
@@ -184,11 +216,15 @@ export default function Reader() {
     });
   });
 
+  /** 元信息四段各自一个消息 key（设计 §4.6.5）：语序由目录模板决定，数字走 Intl；
+   *  勾选 fast path 每次即时调用本函数，语言切换后不会残留旧文案缓存。 */
   function subHtml(wc: number, doc: DocFull): string {
+    const mins = Math.max(1, Math.round(wc / 400));
     return '<div class="sub"><svg class="ico"><use href="#i-file-text"/></svg><span>' +
-      wc.toLocaleString() + " 字</span><span>·</span><span>约 " +
-      Math.max(1, Math.round(wc / 400)) + " 分钟</span><span>·</span><span>" +
-      doc.meta.secCount + " 个小节</span><span>·</span><span>更新于 " + fmtDate(doc.meta.mtime) +
+      tp("reader.chars", wc, { count: formatNumber(wc) }) +
+      "</span><span>·</span><span>" + tp("reader.minutes", mins, { count: formatNumber(mins) }) +
+      "</span><span>·</span><span>" + tp("reader.sections", doc.meta.secCount, { count: formatNumber(doc.meta.secCount) }) +
+      "</span><span>·</span><span>" + t("reader.updated", { date: fmtDate(doc.meta.mtime) }) +
       "</span></div>";
   }
   /** 任务勾选 fast path 的 .sub 同步：只换一小段 HTML，不重算整篇字数 */
@@ -205,7 +241,12 @@ export default function Reader() {
     lastTopLine = 0;
     markTypesetSettled(-1);   // 新一版内容尚未排版：ratio 落定门重新关闸（同文档重开也不豁免）
     performance.mark("folio:render:start");
-    article.innerHTML = mdToHtml(doc.src);
+    // P5（设计 §4.13 / §4.6.6）：正文语言按文档内容判定，与 UI locale 解耦——
+    // 切换界面语言不改变 article lang；判不出（null）就不设，交给浏览器默认。
+    const docLang = detectContentLang(doc.src);
+    if (docLang) article.setAttribute("lang", docLang);
+    else article.removeAttribute("lang");
+    article.innerHTML = mdToHtml(doc.src, renderOptions());
     performance.mark("folio:render:innerHTML");
     performance.measure("folio:render", "folio:render:start", "folio:render:innerHTML");
     // 色值前置色块（规范 §4.5）。性能审查 v3.0 P1-2：两处改动——
@@ -245,8 +286,8 @@ export default function Reader() {
    * MathJax 公式用 currentColor，自动随主题，无需重排。defer 跳过首轮（首排在 typesetDoc 链里）。 */
   createEffect(on(() => s.settings().theme, (theme, prev) => {
     if (prev === undefined || theme === prev) return;
-    void renderMermaid(article, undefined, theme);
-    void renderZenuml(article, theme);
+    void renderMermaid(article, undefined, theme, renderOptions());
+    void renderZenuml(article, theme, renderOptions());
   }, { defer: true }));
 
   /* 公式/图表排版链（MathJax + Mermaid 集成 §3.1；v1.2 升级为显式排版完成信号）：
@@ -261,11 +302,11 @@ export default function Reader() {
     try {
       await whenVisible();
       if (seq !== renderSeq) return;
-      await typesetMathIn(article);
+      await typesetMathIn(article, undefined, undefined, renderOptions());
       if (seq !== renderSeq || !sameDoc(doc)) return; // 或 article.contains(el)：容器已换即停
-      await renderMermaid(article, undefined, s.settings().theme);
+      await renderMermaid(article, undefined, s.settings().theme, renderOptions());
       if (seq !== renderSeq || !sameDoc(doc)) return;
-      await renderZenuml(article, s.settings().theme); // zenuml 原生通道（@zenuml/core，mermaid v11 已不含该类型）
+      await renderZenuml(article, s.settings().theme, renderOptions()); // zenuml 原生通道（@zenuml/core，mermaid v11 已不含该类型）
       await pendingImages;                              // 远程/本地图片尺寸落定（load 迟到由兜底层再收）
       if (seq !== renderSeq || !sameDoc(doc)) return;
       onTypesetSettled(doc, seq);
@@ -302,11 +343,12 @@ export default function Reader() {
     });
   }
 
+  /** 今天/昨天走目录（date.today/date.yesterday）；更早日期保持现有 YYYY-MM-DD 显示口径不变（P4b 定夺） */
   function fmtDate(ts: number): string {
     const d = new Date(ts * 1000);
     const now = Date.now();
-    if (now - ts * 1000 < 86400000) return "今天";
-    if (now - ts * 1000 < 172800000) return "昨天";
+    if (now - ts * 1000 < 86400000) return t("date.today");
+    if (now - ts * 1000 < 172800000) return t("date.yesterday");
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }
 
@@ -397,7 +439,7 @@ export default function Reader() {
   }
   function markMissing(img: HTMLImageElement, src: string) {
     img.classList.add("img-missing");
-    img.title = "本地资源未找到：" + src;
+    img.title = t("reader.localAssetMissing", { path: src });
   }
   /** 远程/asset 图加载失败 → 可见占位态（不再空白）；缓存失败竞态用 complete 判定兜底 */
   function watchImg(img: HTMLImageElement, src: string) {
@@ -415,7 +457,7 @@ export default function Reader() {
         const { openUrl } = await import("@tauri-apps/plugin-opener");
         await openUrl(url);
       } catch {
-        s.toast("打开外链失败");
+        s.toast(t("about.openLinkFailed"));
       }
     } else {
       window.open(url, "_blank", "noopener");
@@ -574,7 +616,7 @@ export default function Reader() {
       let i = ol.findIndex((o) => o.sec === secNow);
       if (i < 0) i = 0;
       if (dir > 0) {
-        if (i >= ol.length - 1) { s.toast("已是最后一章"); return; }
+        if (i >= ol.length - 1) { s.toast(t("reader.lastSection")); return; }
         s.requestAnchor(ol[i + 1].sec, true);
       } else {
         s.requestAnchor(ol[Math.max(0, i - 1)].sec, true);
@@ -587,7 +629,7 @@ export default function Reader() {
     let idx = hs.findIndex((h) => Number(h.dataset.sec) === sec);
     if (idx < 0) idx = 0;
     if (dir > 0) {
-      if (idx >= hs.length - 1) { s.toast("已是最后一章"); return; }
+      if (idx >= hs.length - 1) { s.toast(t("reader.lastSection")); return; }
       goHeading(hs[idx + 1]);
     } else {
       const cur = hs[idx];
@@ -604,10 +646,10 @@ export default function Reader() {
 
   /* ── 正文交互：复制代码块 / 任务勾选 / 外链拦截 / 图片放大 ── */
   async function onArticleClick(e: MouseEvent) {
-    const t = e.target as HTMLElement;
+    const tgt = e.target as HTMLElement;   // 命名避开 i18n 的 t()
 
     // 可折叠 callout（[!NOTE]- / +）：点击标题切换
-    const coHead = t.closest(".co-head");
+    const coHead = tgt.closest(".co-head");
     if (coHead) {
       const box = coHead.closest<HTMLElement>(".callout");
       if (box?.dataset.fold) {
@@ -617,19 +659,19 @@ export default function Reader() {
       return;
     }
 
-    const copy = t.closest(".cb-copy");
+    const copy = tgt.closest(".cb-copy");
     if (copy) {
       const code = copy.closest(".codeblock")?.querySelector("code")?.textContent ?? "";
-      try { await navigator.clipboard.writeText(code); s.toast("已复制代码块 · " + code.length + " 字符"); }
-      catch { s.toast("复制失败：剪贴板不可用"); }
+      try { await navigator.clipboard.writeText(code); s.toast(tp("reader.codeCopied", code.length, { count: code.length })); }
+      catch { s.toast(t("reader.copyFailedClipboard")); }
       return;
     }
 
-    const cbx = t.closest(".cbx");
+    const cbx = tgt.closest(".cbx");
     if (cbx) {
       // v1.1：预览阅读中阅读窗显示的是编辑器草稿，勾选会与隐藏编辑器分叉——
       // 请用户回到编辑再改（直接改磁盘基线会造成预览/编辑器/磁盘三方不一致）
-      if (s.editorSessionAlive()) { s.toast("预览中：请点「编辑」返回后勾选，或先按 Ctrl+S 保存"); return; }
+      if (s.editorSessionAlive()) { s.toast(t("reader.previewTaskHint")); return; }
       const doc = s.current();
       if (!doc) return;
       const li = cbx.closest("li[data-task]");
@@ -639,7 +681,7 @@ export default function Reader() {
        * 翻转只改内存 src（flipTaskInSrc 与 folio-core::toggle_task 同坐标系）并挂脏标记，
        * 页签橙点即反馈；落盘统一走「保存」/Ctrl+S。 */
       const flipped = flipTaskInSrc(doc.src, nth);
-      if (flipped == null) { s.toast("没能在这个文件里找到这一项，勾选没有生效"); return; }
+      if (flipped == null) { s.toast(t("reader.taskFlipMissed")); return; }
       /* P1-4：勾选只改当前 <li> 的一个状态位，不整篇 mdToHtml + innerHTML 重渲染。
        * DOM 先原地改好，再把新 DocFull 登记为 lastRendered——Reader 的渲染 effect 看到
        * doc === lastRendered 就直接跳过 render()；滚动复位仍由 applySaved 的 pixel 导航负责。 */
@@ -663,10 +705,10 @@ export default function Reader() {
       return;
     }
 
-    const img = t.closest("img");
+    const img = tgt.closest("img");
     if (img) { ui.setImgSrc(img.getAttribute("src")); return; }
 
-    const a = t.closest("a");
+    const a = tgt.closest("a");
     if (a) {
       // SEC-03：正文内任何超链接点击都被应用接管，绝不让 WebView 自己导航（FR-2.1 安全边界）
       e.preventDefault();
@@ -681,7 +723,7 @@ export default function Reader() {
         const hs = [...article.querySelectorAll<HTMLElement>(HSEC)];
         const h = hs.find((x) => x.id === want) ?? hs.find((x) => (x.textContent ?? "").trim() === want);
         if (h) { h.scrollIntoView({ behavior: "smooth", block: "start" }); flash(h); }
-        else s.toast("文档内没有对应标题" + (want ? "：" + clip(want) : ""));
+        else s.toast(want ? t("reader.noHeading", { heading: clip(want) }) : t("reader.noHeadingBare"));
         return;
       }
       const sm = href.match(/^([A-Za-z][A-Za-z0-9+.-]*):/);
@@ -694,12 +736,12 @@ export default function Reader() {
           const resolved = joinDocPath(baseDir, clean);
           if (resolved) { void s.openPath(resolved); return; }
         }
-        s.toast("暂不支持打开这种链接：" + clip(href));
+        s.toast(t("reader.linkUnsupported", { url: clip(href) }));
         return;
       }
       if (scheme === "http" || scheme === "https" || scheme === "mailto") { void openExternal(href); return; }
       // data: / javascript: / file: / 任意未知 scheme —— 一律拦截（SEC-03 白名单口径）
-      s.toast("出于安全考虑，这种链接不会打开：" + scheme);
+      s.toast(t("reader.linkBlocked", { url: scheme ?? "" }));
     }
   }
 

@@ -44,7 +44,8 @@ npx tauri dev     # 启动真正的 Windows 桌面窗口
 ### 测试
 
 ```bash
-npm test                  # 前端逻辑测试（node:test）
+npm test                  # 前端单元 + 跨语言契约测试（node:test）
+npm run test:coverage     # 前端测试 + 覆盖率报告
 cargo check --workspace   # Rust 类型检查
 cargo test --workspace    # Rust 单测 + 集成测试
 npm run typecheck         # 只做 TypeScript 检查
@@ -54,7 +55,7 @@ npm run build             # TypeScript 检查 + 前端生产构建
 单独运行某个前端测试：
 
 ```bash
-node --experimental-strip-types --test tests/md.test.ts
+node --experimental-strip-types --test tests/unit/md.test.ts
 ```
 
 真实数据库副本的迁移冒烟测试（发布前可选）：
@@ -121,7 +122,7 @@ source/
 │  ├─ lib/                 状态、API、解析、导航、导出和样式逻辑
 │  ├─ styles/              主题 token 和界面样式
 │  └─ assets/              欢迎页等构建输入
-├─ tests/                  前端逻辑测试
+├─ tests/                  前端单元 + 跨语言契约测试
 ├─ scripts/bump-build.cjs  版本发号器
 └─ release.sh              版本化打包脚本
 ```

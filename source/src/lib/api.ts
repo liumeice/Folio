@@ -5,6 +5,8 @@ import type {
   DirListing, DocFull, DocMeta, FormatOptions, FormatResult, OpenRequest, Position, RecentDoc,
   RecentReport, ScanReport, SearchHit, SearchQuery, Settings,
 } from "./types";
+import type { ApiError, Locale } from "./i18n/types.ts";
+import { t, locale } from "./i18n/index.ts";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { RANGE, clampNum } from "./typography";
 import { flipTaskInSrc, headingsOfSrc } from "./md";
@@ -68,7 +70,9 @@ async function apiFormatMarkdown(src: string, options: FormatOptions): Promise<F
     wordCount: st.wordCount,
     headCount: st.headCount,
     title: null,
-    warnings: ["浏览器演示环境不执行格式化"],
+    // P4b：warnings 统一携带稳定 warning code（unclosed_fence/unclosed_math/demo_noop），
+    // 展示文案由 actions.ts 按 format.warn.<code> 查目录（对照表 Rust #14/#15 同口径）
+    warnings: ["demo_noop"],
   };
 }
 async function apiSetPinned(id: number, on: boolean): Promise<void> {
@@ -209,6 +213,17 @@ async function apiSetSettings(settings: Settings): Promise<void> {
   if (isTauri) await invoke("set_settings", { settings });
   else mock.setSettings(settings);
 }
+/* 内置文档（welcome/guide）语言同步（i18n P5，设计 §4.10）：前端在设置加载解析出 UI locale 后
+ * 与语言切换时调用。会话级 lastSent 防多入口重复 IPC；Rust 侧本身幂等（未修改才替换）。
+ * 浏览器回退层为空操作——docs() 已按 locale 对调演示副本，不承诺落盘。 */
+let lastBuiltinSync: Locale | null = null;
+async function apiSyncBuiltinDocs(loc: Locale, force = false): Promise<number> {
+  if (!force && lastBuiltinSync === loc) return 0;
+  lastBuiltinSync = loc;
+  if (!isTauri) { mock.docs(); return 0; }   // 浏览器回退：docs() 已按 locale 对调演示副本，无登记表可刷
+  try { return await invoke<number>("sync_builtin_docs", { locale: loc }); }
+  catch (e) { lastBuiltinSync = null; throw e; }   // 失败复位，允许语言切换或下次启动重试
+}
 /* 导入/导出配置：把整份 Settings 序列化为 settings.json 落盘 / 从盘读回。
  * 导出用 save 对话框定路径 + write_file；导入用 open 对话框定路径 + read_file。
  * 浏览器回退层用 blob 下载 / <input type=file>，与 Tauri 同语义（不是产品特性，仅便于无 Rust 环境验证 UI）。 */
@@ -270,6 +285,7 @@ function sanitizeSettings(raw: unknown): Settings | null {
     tableDensity: en(o.tableDensity, ["compact", "standard", "loose"] as const, D.tableDensity),
     restoreOnLaunch: typeof o.restoreOnLaunch === "boolean" ? o.restoreOnLaunch : D.restoreOnLaunch,
     softBreakBr: typeof o.softBreakBr === "boolean" ? o.softBreakBr : D.softBreakBr,
+    language: en(o.language, ["auto", "zh-CN", "en-US"] as const, D.language),
   };
 }
 
@@ -280,7 +296,7 @@ async function apiImportSettings(): Promise<ImportResult> {
     const path = await open({ multiple: false, filters: [{ name: "JSON", extensions: ["json"] }] });
     if (typeof path !== "string") return { kind: "cancel" };
     try { text = await invoke<string>("read_file", { path }); }
-    catch (e) { return { kind: "invalid", why: "读取失败：" + String(e) }; }
+    catch (e) { return { kind: "invalid", why: t("api.readFailed") + String(e) }; }
   } else {
     text = await new Promise<string | null>((res) => {
       const el = document.createElement("input");
@@ -293,10 +309,10 @@ async function apiImportSettings(): Promise<ImportResult> {
   }
   try {
     const settings = sanitizeSettings(JSON.parse(text));
-    if (!settings) return { kind: "invalid", why: "文件内容不是有效的设置对象" };
+    if (!settings) return { kind: "invalid", why: t("api.importNotObject") };
     return { kind: "ok", settings };
   } catch {
-    return { kind: "invalid", why: "这个文件不是有效的设置文件" };
+    return { kind: "invalid", why: t("api.importBadFile") };
   }
 }
 async function apiDrainPending(): Promise<string[]> {
@@ -392,10 +408,12 @@ async function apiPickFolder(): Promise<string | null> {
 
 /** 新建文档草稿：写入应用数据目录 drafts/（不进库、不进树），返回可打开路径 */
 async function apiNewDocDraft(): Promise<string> {
-  if (isTauri) return invoke<string>("new_doc_draft");
-  let i = 0, name = "未命名文档.md";
-  while (mock.docs().some((d) => d.fileName === name)) { i++; name = `未命名文档 ${i}.md`; }
-  mock.put("browser://drafts/" + name, name, "# 未命名文档\n\n");
+  // 默认名与正文标题按当前 UI 语言生成（设计 §4.6.7；写入后不回改）
+  const base = t("file.untitled");
+  if (isTauri) return invoke<string>("new_doc_draft", { base });
+  let i = 0, name = `${base}.md`;
+  while (mock.docs().some((d) => d.fileName === name)) { i++; name = `${base} ${i}.md`; }
+  mock.put("browser://drafts/" + name, name, `# ${base}\n\n`);
   return "browser://drafts/" + name;
 }
 /** 清理草稿临时文件（后端校验必须在 appdata/drafts 下；浏览器回退层顺手移出 mock） */
@@ -411,8 +429,46 @@ async function apiWriteFile(path: string, content: string, encoding?: string): P
 }
 
 /* ── 浏览器 mock ── */
-import guideMd from "../assets/guide.md?raw";
+/* i18n P5：内置演示文档中英双份（与 Rust 模板同源），mock 按当前 locale 选择。
+ * rust-notes 是纯 mock 演示文档（正式版不内置），英文版只写在这里，不落 assets。 */
+import welcomeZhMd from "../assets/welcome.zh-CN.md?raw";
+import welcomeEnMd from "../assets/welcome.en-US.md?raw";
+import guideZhMd from "../assets/guide.zh-CN.md?raw";
+import guideEnMd from "../assets/guide.en-US.md?raw";
 import rustMd from "../assets/rust-notes.md?raw";
+
+/* mock 演示文件名（check-i18n 允许集：api mock 草稿名/正文）——只留这一处字面量，其余引用常量 */
+const RUST_MOCK_NAME_ZH = "Rust 学习笔记.md";
+const rustMockName = (en: boolean) => (en ? "Rust Notes.md" : RUST_MOCK_NAME_ZH);
+
+const rustEnMd = `# Rust Notes
+
+Staged notes on ownership and lifetimes.
+
+## 1. Ownership
+
+1. Every value in Rust has an owner
+2. Only one owner at a time
+3. When the owner goes out of scope, the value is dropped
+
+\`\`\`rust
+fn main() {
+    let s = String::from("hello");
+    takes_ownership(s);
+}
+\`\`\`
+
+## 2. Borrowing and References
+
+- \`&T\` immutable reference; many can coexist
+- \`&mut T\` mutable reference; only one at a time
+
+## 3. Next Steps
+
+- [ ] Read chapter 4 of *The Rust Programming Language*
+- [x] Wrap a connection pool around rusqlite
+- [ ] Understand workspace feature unification
+`;
 
 interface MockDoc {
   id: number;
@@ -483,7 +539,7 @@ function underRoot(file: string, dir: string): boolean {
 }
 
 /** 库成员推导优先级：用户显式改过 > 位于任一已登记库根下 > 演示条目
- * （demo/ 下的两份内置文档视作「一次目录扫描的产物」，否则浏览器模式的库面板永远空着） */
+ * （demo/ 下的内置演示文档视作「一次目录扫描的产物」，否则浏览器模式的库面板永远空着） */
 function mockMembership(d: MockDoc): boolean {
   if (d.inLibrary !== undefined) return d.inLibrary;
   try {
@@ -491,6 +547,27 @@ function mockMembership(d: MockDoc): boolean {
     if (roots.some((r) => underRoot(d.path, r))) return true;
   } catch { /* 无根 */ }
   return d.path.startsWith("demo/");
+}
+
+/* 浏览器演示副本随 UI 语言切换：与 Rust sync_builtin_docs 同口径——存的 src 逐字等于
+ * 任一模板（用户没改过）才对调，改过的不覆盖。返回是否有变更（调用方决定回写 localStorage）。 */
+function swapBuiltinMockDocs(docs: MockDoc[]): boolean {
+  const en = locale() === "en-US";
+  let changed = false;
+  for (const d of docs) {
+    const pair =
+      d.path.endsWith("welcome.md") ? [welcomeZhMd, welcomeEnMd] as const :
+      d.path.endsWith("guide.md") ? [guideZhMd, guideEnMd] as const :
+      d.path.endsWith("rust-notes.md") ? [rustMd, rustEnMd] as const : null;
+    if (!pair) continue;
+    const target = en ? pair[1] : pair[0];
+    if (d.src !== target && (d.src === pair[0] || d.src === pair[1])) {
+      d.src = target;
+      if (d.path.endsWith("rust-notes.md")) d.fileName = rustMockName(en);
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 const mock = {
@@ -501,12 +578,17 @@ const mock = {
     } catch {
       docs = [];
     }
+    const en = locale() === "en-US";
+    if (!docs.some((d) => d.path.endsWith("welcome.md"))) {
+      docs.unshift({ id: 3, path: "demo/welcome.md", fileName: "welcome.md", src: en ? welcomeEnMd : welcomeZhMd, mtime: Date.now() / 1000 - 60 });
+    }
     if (!docs.some((d) => d.path.endsWith("guide.md"))) {
-      docs.unshift({ id: 1, path: "demo/guide.md", fileName: "guide.md", src: guideMd, mtime: Date.now() / 1000 });
+      docs.unshift({ id: 1, path: "demo/guide.md", fileName: "guide.md", src: en ? guideEnMd : guideZhMd, mtime: Date.now() / 1000 });
     }
     if (!docs.some((d) => d.path.endsWith("rust-notes.md"))) {
-      docs.push({ id: 2, path: "demo/rust-notes.md", fileName: "Rust 学习笔记.md", src: rustMd, mtime: Date.now() / 1000 - 86400 });
+      docs.push({ id: 2, path: "demo/rust-notes.md", fileName: rustMockName(en), src: en ? rustEnMd : rustMd, mtime: Date.now() / 1000 - 86400 });
     }
+    if (swapBuiltinMockDocs(docs)) this.persist(docs);   // 语言切换后的未修改副本对调（仅演示层）
     return docs;
   },
   persist(docs: MockDoc[]) {
@@ -544,7 +626,8 @@ const mock = {
   async renameDoc(p: string, newName: string): Promise<DocMeta> {
     const { validateFileName } = await import("./filename");
     const bad = validateFileName(newName);
-    if (bad) throw new Error("invalid argument: " + bad);
+    // P4a：mock 与 Rust 同构——拒绝时抛 {code, reason}，由 fmtErr/目录呈现（reason 见 filename.ts FileReason）
+    if (bad) throw { code: "invalid", reason: bad, detail: "mock validate rejected" } satisfies ApiError;
     const docs = this.docs();
     const d = docs.find((x) => x.path.toLowerCase() === p.toLowerCase());
     if (!d) throw new Error("file not found: " + p);
@@ -552,7 +635,7 @@ const mock = {
     const nextPath = (dir ? dir + "/" : "") + newName.trim();
     if (nextPath.toLowerCase() === d.path.toLowerCase() && nextPath === d.path) return toFull(d).meta;
     if (docs.some((x) => x.path.toLowerCase() === nextPath.toLowerCase())) {
-      throw new Error("invalid argument: EXISTS");
+      throw { code: "invalid", reason: "EXISTS", detail: "mock: duplicate path" } satisfies ApiError;
     }
     d.path = nextPath;
     d.fileName = newName.trim();
@@ -563,10 +646,11 @@ const mock = {
   async renameDir(p: string, newName: string): Promise<string> {
     const { validateDirName } = await import("./filename");
     const bad = validateDirName(newName);
-    if (bad) throw new Error("invalid argument: " + bad);
+    // P4a：mock 与 Rust 同构——拒绝时抛 {code, reason}，由 fmtErr/目录呈现（reason 见 filename.ts FileReason）
+    if (bad) throw { code: "invalid", reason: bad, detail: "mock validate rejected" } satisfies ApiError;
     const oldDir = p.replace(/[\\/]+$/, "");
     const cut = Math.max(oldDir.lastIndexOf("\\"), oldDir.lastIndexOf("/"));
-    if (cut <= 0) throw new Error("invalid argument: NO_DIR");
+    if (cut <= 0) throw { code: "invalid", reason: "NO_DIR", detail: "mock: no parent dir" } satisfies ApiError;
     const newDir = oldDir.slice(0, cut + 1) + newName.trim();
     const swap = (s: string): string | null => {
       const sl = s.toLowerCase(), od = oldDir.toLowerCase();
@@ -880,6 +964,7 @@ export const api = {
   getPositions: apiGetPositions,
   getSettings: apiGetSettings,
   setSettings: apiSetSettings,
+  syncBuiltinDocs: apiSyncBuiltinDocs,
   exportSettings: apiExportSettings,
   importSettings: apiImportSettings,
   drainPending: apiDrainPending,

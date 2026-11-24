@@ -1,5 +1,5 @@
 /* 编辑区的 Markdown 解析器配置。单独成模块只为一个目的：
- * 让 tests/mdstyle.test.ts 能用**同一个**入口断言 GFM 构造真的被解析出来。
+ * 让 tests/unit/mdstyle.test.ts 能用**同一个**入口断言 GFM 构造真的被解析出来。
  *
  * 坑在这里：`markdown()` 的默认 base 是 commonmarkLanguage，
  * 而 CommonMark 不认 ~~删除线~~ / - [x] 任务清单 / 表格 —— 于是这三类构造在编辑区

@@ -5,7 +5,7 @@
  *     首行 `zenuml` 关键字的块由 zenumlRender.ts 走 @zenuml/core 原生渲染，这里显式排除。
  * 失败策略（需求方最终定夺）：对应位置「框起源码 + 标注语法错误」；两条错误路都要拦——
  * ① render() reject；② 不抛异常、把"炸弹 + Syntax error in text"错误图当成功返回。 */
-import { escapeHtml } from "./md.ts";
+import { escapeHtml, DEFAULT_RENDER_OPTIONS, type RenderOptions } from "./md.ts";
 import { compensateAnchor } from "./nav.ts";
 
 interface MermaidLike {
@@ -20,7 +20,8 @@ async function getMermaid(): Promise<MermaidLike> {
     modPromise = import("mermaid")
       .then((m) => {
         const mod = m.default ?? (m as unknown as { default: MermaidLike });
-        if (!mod || typeof mod.initialize !== "function") throw new Error("mermaid 模块导出异常");
+        // 内部标记错误（被下方 catch 吞掉转退化框，不上屏）：固定英文技术串，不进 i18n
+        if (!mod || typeof mod.initialize !== "function") throw new Error("Invalid Mermaid module export");
         return mod as unknown as MermaidLike;
       })
       .catch((e) => { modPromise = null; throw e; }); // 失败不缓存：下次含图文档可重试
@@ -51,10 +52,10 @@ export function isMermaidErrorSvg(svg: string): boolean {
   return svg.includes("Syntax error in text");
 }
 
-function fallback(el: HTMLElement): void {
+function fallback(el: HTMLElement, ro: RenderOptions): void {
   // 语法错误退化（需求方最终定夺）：原文位置框起源码 + 标注，尺寸受控（max-height 滚动），绝不炸弹大图
   compensateAnchor(() => {   // 原地替换即布局推挤事件，经可见锚补偿（滚动同步方案 §4.2）
-    el.innerHTML = '<div class="fb-box"><div class="fb-label">⚠ 图表语法错误 · 以下为源码原文</div>' +
+    el.innerHTML = `<div class="fb-box"><div class="fb-label">${escapeHtml(ro.mermaidError)}</div>` +
       `<pre class="formula-fallback">${escapeHtml(el.getAttribute("data-code") ?? "")}</pre></div>`;
     el.classList.add("f-error");
   });
@@ -71,8 +72,10 @@ export function renderMermaid(
   scope: HTMLElement,
   codeOf: (el: Element) => string = (el) => el.getAttribute("data-code") ?? "",
   themeName?: string,
+  opts?: Partial<RenderOptions>,
 ): Promise<void> {
-  const step = () => doRender(scope, codeOf, themeName);
+  const ro = { ...DEFAULT_RENDER_OPTIONS, ...(opts ?? {}) };
+  const step = () => doRender(scope, codeOf, themeName, ro);
   chain = chain.then(step, step);
   return chain;
 }
@@ -80,7 +83,8 @@ export function renderMermaid(
 async function doRender(
   scope: HTMLElement,
   codeOf: (el: Element) => string,
-  themeName?: string,
+  themeName: string | undefined,
+  ro: RenderOptions,
 ): Promise<void> {
   const els = [...scope.querySelectorAll<HTMLElement>("[data-mermaid]:not([data-zuml])")];
   if (!els.length) return;
@@ -88,7 +92,7 @@ async function doRender(
   try {
     m = await getMermaid();
   } catch {
-    for (const el of els) if (el.isConnected) fallback(el); // 引擎缺失：全部退化为源码可见
+    for (const el of els) if (el.isConnected) fallback(el, ro); // 引擎缺失：全部退化为源码可见
     return;
   }
   initForTheme(m, themeName);
@@ -98,7 +102,7 @@ async function doRender(
     const tempId = "folio-mmd-" + ++idSeq;
     try {
       const { svg } = await m.render(tempId, codeOf(el));
-      if (isMermaidErrorSvg(svg)) throw new Error("mermaid 错误回显图");
+      if (isMermaidErrorSvg(svg)) throw new Error(ro.mermaidAlt);   // 内部标记（catch 后走退化框，不上屏）
       if (!el.isConnected) return; // 渲染期间文档已切换：丢弃结果
       compensateAnchor(() => {
         el.innerHTML = svg;
@@ -106,7 +110,7 @@ async function doRender(
         el.classList.remove("f-error"); // 重渲成功要能洗掉上一次的退化态
       });
     } catch {
-      fallback(el);
+      fallback(el, ro);
     } finally {
       // 清理只按「body 直接子级」定位——不能用 getElementById：mermaid 返回的 svg 根元素
       // 自带我们发的 id，写进占位符后文档里同 id 成对，getElementById 命中正文好图、

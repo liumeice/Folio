@@ -3,16 +3,16 @@
  *   B 层叠：着色表用到的类名必须在 app.css 里有定义，且 .cmx-plain 必须排在具体类之前
  *   C 装饰：结构装饰依赖的节点确实存在于语法树（围栏/引用/列表符号/任务标记/表头）
  * 配色表逐条对齐原型：prototype/prototype.html:394-408。
- * 运行：node --experimental-strip-types --test tests/mdstyle.test.ts */
+ * 运行：node --experimental-strip-types --test tests/unit/mdstyle.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { EditorState } from "@codemirror/state";
-import { md } from "../src/lib/mdEditor.ts";
+import { md } from "../../src/lib/mdEditor.ts";
 import { ensureSyntaxTree } from "@codemirror/language";
 import { getStyleTags, tags as t, type Tag } from "@lezer/highlight";
-import { MD_SPEC, MD_CLASS } from "../src/lib/mdstyle.ts";
+import { MD_SPEC, MD_CLASS } from "../../src/lib/mdstyle.ts";
 
 const SAMPLE = [
   "# H1",
@@ -94,7 +94,7 @@ test("A 覆盖度：语法树里的每个 tag 要么被着色，要么确认默�
 });
 
 test("B1 着色表用到的类名，app.css 里必须有定义", () => {
-  const css = readFileSync(fileURLToPath(new URL("../src/styles/app.css", import.meta.url)), "utf8");
+  const css = readFileSync(fileURLToPath(new URL("../../src/styles/app.css", import.meta.url)), "utf8");
   const used = new Set<string>();
   for (const rule of MD_SPEC as { class?: string }[]) if (rule.class) used.add(rule.class);
   used.add("cm-bullet");   // 结构装饰的两个类同样要有 CSS
@@ -106,7 +106,7 @@ test("B1 着色表用到的类名，app.css 里必须有定义", () => {
 });
 
 test("B2 层叠顺序：.cmx-plain 必须早于具体类，否则抹掉行内代码配色", () => {
-  const css = readFileSync(fileURLToPath(new URL("../src/styles/app.css", import.meta.url)), "utf8");
+  const css = readFileSync(fileURLToPath(new URL("../../src/styles/app.css", import.meta.url)), "utf8");
   const at = (cls: string) => css.indexOf("." + cls + "{");
   assert.ok(at("cmx-plain") >= 0 && at("cmx-code") >= 0, "两个类都要存在");
   assert.ok(at("cmx-plain") < at("cmx-code"), "cmx-plain 必须排在 cmx-code 之前");

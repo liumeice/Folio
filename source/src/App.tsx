@@ -17,6 +17,7 @@ import AskDialog from "./components/AskDialog";
 import { clampNum, STEP, typeVars } from "./lib/typography";
 import { setSoftBreakBr } from "./lib/md";
 import { applyAccent } from "./lib/accent";
+import { resolveLocale, rememberPref, setLocale, locale, t as tr, type Locale } from "./lib/i18n";
 import ToastZone from "./components/Toast";
 
 export default function App() {
@@ -37,6 +38,36 @@ export default function App() {
   // 阅读区的重渲染由 Reader 依赖同一设置触发，导出/预览路径读到的也是本开关。
   createEffect(() => setSoftBreakBr(s.settings().softBreakBr === true));
 
+  /* 界面语言（多语言设计 §2.3 / §3.6）：设置是唯一真相；效果跟随 settings().language，
+   * auto 按 navigator.languages 解析。setLocale 更新 locale 信号 → 全 UI 依赖 t() 自动重渲染。
+   * rememberPref 写 localStorage 首帧镜像（boot-locale.js 下次启动用）。 */
+  createEffect(() => {
+    const pref = s.settings().language;
+    setLocale(resolveLocale(pref));
+    rememberPref(pref);
+  });
+  // 跟随系统时的运行中语言变化（设计 §2.4-7）：仅 auto 生效
+  createEffect(() => {
+    if (s.settings().language !== "auto" || typeof window === "undefined") return;
+    const onLang = () => setLocale(resolveLocale("auto"));
+    window.addEventListener("languagechange", onLang);
+    onCleanup(() => window.removeEventListener("languagechange", onLang));
+  });
+  /* i18n P5（设计 §4.10）：UI locale 变化 → 内置文档（welcome/guide）随语言对调（未修改才替换）。
+   * 首启的权威同步在 store 启动路径（先于恢复打开）；这里兜住设置面板切换与 auto 下的 languagechange，
+   * api 层按 locale 去重 + Rust 侧幂等，重复调用零成本。 */
+  let builtinLoc: Locale | null = null;
+  createEffect(() => {
+    const loc = locale();
+    if (loc === builtinLoc) return;
+    const first = builtinLoc === null;
+    builtinLoc = loc;
+    // 真实切换后刷新登记表：内置文档标题/统计随模板语言变（首帧不刷，交给 store 启动路径）
+    api.syncBuiltinDocs(loc)
+      .then(() => { if (!first) void s.refreshDocs(); })
+      .catch(() => { /* 同步失败静默：下次切换/启动重试 */ });
+  });
+
   // 菜单关闭（任何途径）时子菜单一并收起——状态放 ui，复位收敛在这一处
   createEffect(() => { if (!ui.menuOpen()) ui.setThemeSubOpen(false); });
 
@@ -55,11 +86,11 @@ export default function App() {
       if (kind === "dir") {
         try {
           const r = await api.scanFolder(p);
-          s.toast(`已打开文件夹：新增 ${r.inserted} 篇 · 更新 ${r.updated} 篇 · 移除 ${r.removed} 篇`
-            + (r.truncated ? `（文件太多，还有 ${r.truncated} 篇没有纳入）` : ""));
+          s.toast(tr("app.toast.folderOpened", { inserted: r.inserted, updated: r.updated, removed: r.removed })
+            + (r.truncated ? tr("app.toast.folderOpenedTruncated", { count: r.truncated }) : ""));
           s.setSide("library");   // 2026-11-16：拖入文件夹=打开库，自动切到文档库面板
         } catch (e) {
-          s.toast("打开文件夹失败：" + ui.fmtErr(e));
+          s.toast(tr("app.toast.openFolderFailed") + ui.fmtErr(e));
         }
       } else if (kind === "file" && /\.(md|markdown|txt)$/i.test(p)) {
         files.push(p);
@@ -70,9 +101,9 @@ export default function App() {
     if (files.length) {
       const batch = files.slice(0, 100);   // FR-1.2 批量上限与 pickAndOpen 一致
       for (const p of [...batch].reverse()) {
-        try { await s.openPath(p); } catch (e) { s.toast("打开失败：" + String(e) + "（" + p + "）"); }
+        try { await s.openPath(p); } catch (e) { s.toast(tr("app.toast.openFailedWithPath", { detail: String(e), path: p })); }
       }
-      if (files.length > batch.length) s.toast(`文件较多，本次仅打开前 ${batch.length} 个`);
+      if (files.length > batch.length) s.toast(tr("app.toast.manyFiles", { count: batch.length }));
       s.setSide("outline");   // 2026-11-16：打开文件自动切到大纲面板
     }
     void s.refreshDocs();
@@ -80,7 +111,7 @@ export default function App() {
 
   async function handleBrowserDrop(files: FileList) {
     const arr = [...files].filter((f) => /\.(md|markdown|txt)$/i.test(f.name));
-    if (!arr.length) { s.toast("未找到 Markdown 文件（支持 .md / .markdown / .txt；把文件夹拖进窗口请用正式版）"); return; }
+    if (!arr.length) { s.toast(tr("app.toast.noMarkdown")); return; }
     let first: string | null = null;
     for (const f of arr.slice(0, 100)) {
       const p = await api.importBrowserFile(f);
@@ -194,7 +225,7 @@ export default function App() {
         ev.preventDefault();   // 任何焦点下都不漏给浏览器「保存网页」（v2 N7）
         // v1.1：编辑态与预览态都提交落盘；纯阅读态如实提示
         if (s.mode() === "edit" || s.editorSessionAlive()) void s.save();
-        else s.toast("当前处于阅读模式 · Ctrl+E 进入编辑后可保存");
+        else s.toast(tr("app.toast.readingMode"));
         return;
       }
       if (mod && (k === "e" || k === "E")) { ev.preventDefault(); s.toggleEdit(); return; }
@@ -332,7 +363,7 @@ export default function App() {
             <CrumbBar />
             <Reader />
             <Show when={s.editorSessionAlive()}>
-              <Suspense fallback={<div style="display:grid;place-items:center;height:100%;opacity:.6;font-size:12px">编辑器加载中…</div>}>
+              <Suspense fallback={<div style="display:grid;place-items:center;height:100%;opacity:.6;font-size:12px">{tr("app.loadingEditor")}</div>}>
                 <EditorPane />
               </Suspense>
             </Show>

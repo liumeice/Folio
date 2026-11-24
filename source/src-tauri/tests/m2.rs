@@ -4,9 +4,38 @@ use folio_app_lib::commands::{doc_full, save, scan};
 use folio_db::Db;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn mtime_secs(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// 等到墙钟跨过下一个整秒再返回：mtime 以秒入库，测试不能靠固定 sleep 赌时序。
+fn wait_next_second() {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let ms = 1000 - now.subsec_millis() as u64 + 20;
+    std::thread::sleep(std::time::Duration::from_millis(ms));
+}
+
+/// 写入外部改动，直到文件 mtime 秒数严格大于旧值（NTFS/CI 临时盘都适用）。
+fn rewrite_after_second(path: &std::path::Path, bytes: &[u8], old_secs: u64) {
+    for _ in 0..50 {
+        std::fs::write(path, bytes).unwrap();
+        if mtime_secs(path) > old_secs {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("文件 mtime 未能在 5s 内前进");
+}
 
 fn setup(name: &str) -> (Arc<Db>, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("folio-m2-{}", name));
+    let dir = std::env::temp_dir().join(format!("folio-m2-{}-{}", name, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let db = Arc::new(Db::open(&dir.join("lib.db")).unwrap());
@@ -47,9 +76,8 @@ fn save_conflict_then_force() {
     let opened = doc_full(&db, &f, true, true).unwrap();
     assert_eq!(opened.src, "# 原始\n");
 
-    // mtime 以秒计：跨秒后模拟外部编辑器改动
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    std::fs::write(&f, "# 外部改动\n").unwrap();
+    // mtime 以秒计：确保外部改动落在更晚的秒，冲突才可判定
+    rewrite_after_second(&f, "# 外部改动\n".as_bytes(), opened.meta.mtime as u64);
 
     let err = save(&db, f.to_str().unwrap(), "# 我的编辑\n", false, "utf-8").unwrap_err();
     assert!(format!("{}", err).contains("CONFLICT"), "外部更新应触发冲突拦截");
@@ -75,7 +103,7 @@ fn gbk_open_save_reopen_keeps_codepage() {
     assert!(opened.encoding == "gbk" || opened.encoding == "gb18030", "编码标注：{}", opened.encoding);
 
     let edited = format!("{}新增一行回写验证。\n", zh);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    wait_next_second();
     let saved = save(&db, f.to_str().unwrap(), &edited, true, &opened.encoding).unwrap();
     assert_eq!(saved.encoding, opened.encoding, "保存须沿用来源编码");
     let raw = std::fs::read(&f).unwrap();
@@ -87,9 +115,11 @@ fn gbk_open_save_reopen_keeps_codepage() {
     assert!(again.encoding == "gbk" || again.encoding == "gb18030");
 
     // 反证：encoding 参数确实在起作用——显式 utf-8 才会转成 UTF-8 字节
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    save(&db, f.to_str().unwrap(), &edited, true, "utf-8").unwrap();
-    assert!(std::fs::read(&f).is_ok_and(|b| std::str::from_utf8(&b).is_ok()), "显式 utf-8 应写成 UTF-8 字节");
+    wait_next_second();
+    let out = save(&db, f.to_str().unwrap(), &edited, true, "utf-8").unwrap();
+    assert_eq!(out.encoding, "utf-8", "返回的编码标签应反映显式参数");
+    let raw = std::fs::read(&f).unwrap();
+    assert!(std::str::from_utf8(&raw).is_ok(), "显式 utf-8 应写成 UTF-8 字节");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -107,7 +137,7 @@ fn utf16_open_save_reopen_keeps_codepage() {
     assert_eq!(opened.encoding, "utf-16le");
 
     let edited = format!("{}新增一行回写验证。\n", zh);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    wait_next_second();
     save(&db, f.to_str().unwrap(), &edited, true, &opened.encoding).unwrap();
     let raw = std::fs::read(&f).unwrap();
     assert!(raw.starts_with(&[0xFF, 0xFE]), "回写必须仍是 LE+BOM 字节");

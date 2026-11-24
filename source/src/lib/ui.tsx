@@ -4,6 +4,8 @@ import { createSignal } from "solid-js";
 import { escapeHtml } from "./md";
 import type { EditorCmd } from "./mdInsert";
 import type { DocMeta } from "./types";
+import { t, type MessageKey } from "./i18n";
+import type { ApiError } from "./i18n/types.ts";
 
 export const [menuOpen, setMenuOpen] = createSignal<string | null>(null);
 // 设置中心（右侧面板）：取代原 FontPopover 小浮层与挤在一起的 TypeDrawer
@@ -162,19 +164,64 @@ export const [ctxMenu, setCtxMenu] = createSignal<CtxTarget>(null);
 export type RenameTarget = { kind: "file" | "dir"; path: string } | null;
 export const [renaming, setRenaming] = createSignal<RenameTarget>(null);
 
-/** 错误文案人性化（UI 规范 v1.2 §8.7 L2：失败=动词+原因，白话，不泄原始英文栈串）。
- * Rust 侧错误以 String 过 IPC（STD-02 现状），这里把已知的 CoreError 措辞映射成中文；
- * 未知错误截断兜底，绝不再把 "file not found: 全长路径" 原样甩给用户。 */
+/** 结构化错误判据（P4a，设计 §4.7）：CommandError 对象取 code；
+ * 旧字符串（过渡期/浏览器 mock）按已知措辞归一化；识别不了返回 null。 */
+export function apiErrorCode(e: unknown): string | null {
+  if (e && typeof e === "object" && typeof (e as ApiError).code === "string") {
+    return (e as ApiError).code;
+  }
+  // 旧 Rust 串 "file not found: …" 与 mock 串 "Error: not found: …"（锚定，避免 "main window not found" 之类误判）
+  const s = String(e ?? "").replace(/^Error:\s*/i, "");
+  if (/^(file )?not found(:|$)/i.test(s)) return "not_found";
+  if (/CONFLICT/.test(s)) return "conflict";
+  return null;
+}
+
+/** 路径末段（Windows/POSIX 混容忍），异常长串截尾兜底——UI 绝不甩全长路径。 */
+function baseName(p: string): string {
+  let name = (p || "").split(/[\\/]/).pop() || "";
+  if (name.length > 36) name = "…" + name.slice(-35);
+  return name;
+}
+
+/** 错误文案人性化（UI 规范 v1.2 §8.7 L2：失败=动词+原因，白话，不泄原始栈串）。
+ * P4a：Rust 命令层已过 {code, reason, detail, path} 结构化错误（CommandError），文案由 i18n 目录按码查；
+ * detail 只进日志不进 UI。旧字符串（mock/未迁移调用）保留正则兼容分支；未知码回退 error.unknown。 */
 export function fmtErr(e: unknown): string {
-  const s = String(e).replace(/^Error:\s*/i, "");
+  if (e && typeof e === "object" && typeof (e as ApiError).code === "string") {
+    const err = e as ApiError;
+    if (err.code === "invalid" && err.reason) {
+      const rk = `error.invalid.${err.reason}` as MessageKey;
+      const rm = t(rk);                       // 已知子码（EMPTY/EXISTS/…）有专属文案
+      return rm === rk ? t("error.invalid") : rm;
+    }
+    const ck = `error.${err.code}` as MessageKey;
+    let cm = t(ck);
+    if (cm === ck) {
+      if (typeof console !== "undefined") console.warn("[fmtErr] unknown error code:", err.code, err.reason ?? "", err.detail ?? "");
+      cm = t("error.unknown");   // 未知码：目录里没有这个 key → 通用兜底（detail 只进日志）
+    }
+    if (err.code === "not_found" && err.path) {
+      const name = baseName(err.path);
+      return name ? t("error.not_found.path", { name }) : cm;
+    }
+    return cm;
+  }
+  const s = String(e ?? "").replace(/^Error:\s*/i, "");
   const nf = s.match(/^file not found:\s*(.*)$/i);
   if (nf) {
-    let name = (nf[1] || "").split(/[\\/]/).pop() || "";
-    if (name.length > 36) name = "…" + name.slice(-35);   // 兜底：路径异常时也绝不甩长串
-    return name ? `文件不存在或已被移动（${name}）` : "文件不存在或已被移动";
+    const name = baseName(nf[1] || "");
+    return name ? t("error.not_found.path", { name }) : t("error.not_found");
   }
-  if (/unsupported/i.test(s)) return "不支持的文件类型（仅 .md / .markdown / .txt）";
-  if (/db mutex|database|sqlite/i.test(s)) return "读取本地数据失败，请重试";
+  const ia = /invalid argument: ([A-Z_]+)/.exec(s);   // 旧 Rust Invalid 串 → 子码文案（兼容分支）
+  if (ia) {
+    const rk = `error.invalid.${ia[1]}` as MessageKey;
+    const rm = t(rk);
+    if (rm !== rk) return rm;
+    if (ia[1] === "CONFLICT") return t("error.conflict");
+  }
+  if (/unsupported/i.test(s)) return t("error.unsupported");
+  if (/db mutex|database|sqlite/i.test(s)) return t("error.db");
   return s.length > 80 ? s.slice(0, 80) + "…" : s;
 }
 

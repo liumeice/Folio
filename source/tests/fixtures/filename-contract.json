@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "fileCases": [
+    {
+      "id": "FN-F-001",
+      "input": "note.md",
+      "expected": "OK",
+      "normalized": "note.md"
+    },
+    {
+      "id": "FN-F-002",
+      "input": "  note.md  ",
+      "expected": "OK",
+      "normalized": "note.md"
+    },
+    {
+      "id": "FN-F-003",
+      "input": "",
+      "expected": "EMPTY"
+    },
+    {
+      "id": "FN-F-004",
+      "input": "   ",
+      "expected": "EMPTY"
+    },
+    {
+      "id": "FN-F-005",
+      "input": "a:b.md",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-006",
+      "input": "a/b.md",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-007",
+      "input": "a\\b.md",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-008",
+      "input": "a*b.md",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-009",
+      "input": "a?b.md",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-010",
+      "input": "a\"b.md",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-011",
+      "input": "a<b.md",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-012",
+      "input": "a>b.md",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-013",
+      "input": "a|b.md",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-014",
+      "input": "a\nb.md",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-015",
+      "input": "tail.",
+      "expected": "BAD_END"
+    },
+    {
+      "id": "FN-F-016",
+      "input": "tail . ",
+      "expected": "BAD_END"
+    },
+    {
+      "id": "FN-F-017",
+      "input": "noext",
+      "expected": "BAD_EXT"
+    },
+    {
+      "id": "FN-F-018",
+      "input": "x.PNG",
+      "expected": "BAD_EXT"
+    },
+    {
+      "id": "FN-F-019",
+      "input": "x.MD",
+      "expected": "OK",
+      "normalized": "x.MD"
+    },
+    {
+      "id": "FN-F-020",
+      "input": "a.markdown",
+      "expected": "OK",
+      "normalized": "a.markdown"
+    },
+    {
+      "id": "FN-F-021",
+      "input": "a.txt",
+      "expected": "OK",
+      "normalized": "a.txt"
+    },
+    {
+      "id": "FN-F-022",
+      "input": "a:b.",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-F-023",
+      "input": "noext ",
+      "expected": "BAD_EXT"
+    }
+  ],
+  "dirCases": [
+    {
+      "id": "FN-D-001",
+      "input": "notes",
+      "expected": "OK",
+      "normalized": "notes"
+    },
+    {
+      "id": "FN-D-002",
+      "input": "notes.txt",
+      "expected": "OK",
+      "normalized": "notes.txt"
+    },
+    {
+      "id": "FN-D-003",
+      "input": "",
+      "expected": "EMPTY"
+    },
+    {
+      "id": "FN-D-004",
+      "input": "   ",
+      "expected": "EMPTY"
+    },
+    {
+      "id": "FN-D-005",
+      "input": "a:b",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-D-006",
+      "input": "tail.",
+      "expected": "BAD_END"
+    },
+    {
+      "id": "FN-D-007",
+      "input": "a:b.",
+      "expected": "ILLEGAL_CHARS"
+    },
+    {
+      "id": "FN-D-008",
+      "input": "  备份 2024  ",
+      "expected": "OK",
+      "normalized": "备份 2024"
+    },
+    {
+      "id": "FN-D-009",
+      "input": "笔记.2024",
+      "expected": "OK",
+      "normalized": "笔记.2024"
+    }
+  ]
+}

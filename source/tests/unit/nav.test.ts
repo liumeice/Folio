@@ -1,14 +1,15 @@
 /* FR-5.2 历史导航语义断言 + v1.2「一把尺」坐标层断言（滚动定位同步方案 §6）：
  * lineFromAnchors / pxFromLine 的边界（零跨度、零高度、外边距、末块哨兵、嵌套取深）、
  * lineOffFromLine / navForRestorePos 恢复主链、三常量互不串用。
- * 运行：node --experimental-strip-types --test tests/nav.test.ts ） */
+ * 运行：node --experimental-strip-types --test tests/unit/nav.test.ts ） */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ACTIVE_SEC_ZONE, HEAD_OFFSET, SYNC_TOP,
   lineFromAnchors, pxFromLine, lineOffFromLine, navForRestorePos,
-  navForHistEntrySameDoc, lineForSec, type AnchorBlk,
-} from "../src/lib/nav.ts";
+  navForHistEntrySameDoc, lineForSec, secFracFromTopline,
+  registerAnchorCompensate, compensateAnchor, markTypesetSettled, isTypesetSettled, type AnchorBlk,
+} from "../../src/lib/nav.ts";
 
 /* 构造锚点表：top/bottom 直接给定 */
 const blk = (start: number, end: number, top: number, bottom: number): AnchorBlk =>
@@ -96,4 +97,49 @@ test("lineForSec：大纲点击取章节起始行", () => {
   const ol = [{ sec: 1, line: 0 }, { sec: 2, line: 10 }];
   assert.equal(lineForSec(ol, 2), 10);
   assert.equal(lineForSec(ol, 7), null);
+});
+
+
+test("secFracFromTopline：无大纲 / 首标题前 / 章节内 / 末章", () => {
+  assert.deepEqual(secFracFromTopline([], 5), { sec: null, frac: 0 });
+  const ol = [{ sec: 1, line: 10 }, { sec: 2, line: 20 }];
+  assert.deepEqual(secFracFromTopline(ol, 3), { sec: 1, frac: 0 }, "首标题前归第一章");
+  assert.deepEqual(secFracFromTopline(ol, 15), { sec: 1, frac: 0.5 }, "章节内比例");
+  assert.deepEqual(secFracFromTopline(ol, 99), { sec: 2, frac: 1 }, "末章无下一标题时比例夹到 1");
+});
+
+test("navForHistEntrySameDoc：ratio 有效 / 仅章节 / 全空三条兜底", () => {
+  const byRatio = navForHistEntrySameDoc({ docId: 1, sec: 2, secText: "b", ratio: 0.3, lineFloat: 0.2 });
+  assert.equal(byRatio.kind, "restore");
+  if (byRatio.kind === "restore") assert.equal(byRatio.prefer, "position");
+  assert.deepEqual(
+    navForHistEntrySameDoc({ docId: 1, sec: 2, secText: "b", ratio: 0.001 }),
+    { kind: "anchor", sec: 2 },
+  );
+  assert.deepEqual(
+    navForHistEntrySameDoc({ docId: 1, sec: null, secText: null, ratio: null }),
+    { kind: "top" },
+  );
+});
+
+test("锚点补偿：注册后包裹执行；注销后直接执行（异常仍向上抛）", () => {
+  const log: string[] = [];
+  registerAnchorCompensate((fn) => { log.push("before"); fn(); log.push("after"); });
+  compensateAnchor(() => log.push("work"));
+  assert.deepEqual(log, ["before", "work", "after"]);
+
+  registerAnchorCompensate(null);
+  let ran = false;
+  compensateAnchor(() => { ran = true; });
+  assert.equal(ran, true);
+  assert.throws(() => compensateAnchor(() => { throw new Error("boom"); }), /boom/);
+});
+
+test("排版落定标记：只对同一 docId 生效，后写覆盖前值", () => {
+  markTypesetSettled(1);
+  assert.equal(isTypesetSettled(1), true);
+  assert.equal(isTypesetSettled(2), false);
+  markTypesetSettled(2);
+  assert.equal(isTypesetSettled(1), false);
+  assert.equal(isTypesetSettled(2), true);
 });

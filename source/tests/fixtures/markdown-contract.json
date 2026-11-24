@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "MD-C-001",
+      "description": "ATX 标题、正文与章节计数",
+      "src": "# One\n\nintro\n\n## Two\n\n### Three\n",
+      "wordCount": 22,
+      "headCount": 3,
+      "secCount": 2,
+      "headings": [
+        {
+          "sec": 1,
+          "level": 1,
+          "text": "One",
+          "line": 0
+        },
+        {
+          "sec": 2,
+          "level": 2,
+          "text": "Two",
+          "line": 4
+        },
+        {
+          "sec": 3,
+          "level": 3,
+          "text": "Three",
+          "line": 6
+        }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "MD-C-002",
+      "description": "Setext 标题 + 普通代码围栏（围栏内 # 不计标题）",
+      "src": "Title\n=====\n\nSub\n---\n\n```js\n# not heading\n```\n\n## Real",
+      "wordCount": 41,
+      "headCount": 3,
+      "secCount": 2,
+      "headings": [
+        {
+          "sec": 1,
+          "level": 1,
+          "text": "Title",
+          "line": 0
+        },
+        {
+          "sec": 2,
+          "level": 2,
+          "text": "Sub",
+          "line": 3
+        },
+        {
+          "sec": 3,
+          "level": 2,
+          "text": "Real",
+          "line": 10
+        }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "MD-C-003",
+      "description": "YAML front matter 整区跳过",
+      "src": "---\ntitle: X\n---\n\n# Real\n",
+      "wordCount": 18,
+      "headCount": 1,
+      "secCount": 0,
+      "headings": [
+        {
+          "sec": 1,
+          "level": 1,
+          "text": "Real",
+          "line": 4
+        }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "MD-C-004",
+      "description": "缩进代码与段落懒延续不产标题",
+      "src": "    # code\n\n# Real\n\npara\n    # lazy\n",
+      "wordCount": 19,
+      "headCount": 1,
+      "secCount": 0,
+      "headings": [
+        {
+          "sec": 1,
+          "level": 1,
+          "text": "Real",
+          "line": 2
+        }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "MD-C-005",
+      "description": "裸 CR / CRLF 分行与 NUL→U+FFFD",
+      "src": "# A\r# B\r\n正文\r\n## C\u0000\n",
+      "wordCount": 10,
+      "headCount": 3,
+      "secCount": 1,
+      "headings": [
+        {
+          "sec": 1,
+          "level": 1,
+          "text": "A",
+          "line": 0
+        },
+        {
+          "sec": 2,
+          "level": 1,
+          "text": "B",
+          "line": 1
+        },
+        {
+          "sec": 3,
+          "level": 2,
+          "text": "C�",
+          "line": 3
+        }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "MD-C-006",
+      "description": "混合行尾下勾选逐字节保留",
+      "src": "- [ ] a\r- [ ] b\n",
+      "wordCount": 8,
+      "headCount": 0,
+      "secCount": 0,
+      "headings": [],
+      "tasks": [
+        {
+          "nth": 0,
+          "expected": "- [x] a\r- [ ] b\n"
+        },
+        {
+          "nth": 1,
+          "expected": "- [ ] a\r- [x] b\n"
+        }
+      ]
+    },
+    {
+      "id": "MD-C-007",
+      "description": "围栏假任务、引用任务出局；有序列表与缩进保留",
+      "src": "- [ ] one\n\n```\n- [ ] fake\n```\n\n> - [ ] quote\n\n1. [ ] ordered\n   - [x] sub\n",
+      "wordCount": 46,
+      "headCount": 0,
+      "secCount": 0,
+      "headings": [],
+      "tasks": [
+        {
+          "nth": 0,
+          "expected": "- [x] one\n\n```\n- [ ] fake\n```\n\n> - [ ] quote\n\n1. [ ] ordered\n   - [x] sub\n"
+        },
+        {
+          "nth": 1,
+          "expected": "- [ ] one\n\n```\n- [ ] fake\n```\n\n> - [ ] quote\n\n1. [x] ordered\n   - [x] sub\n"
+        },
+        {
+          "nth": 2,
+          "expected": "- [ ] one\n\n```\n- [ ] fake\n```\n\n> - [ ] quote\n\n1. [ ] ordered\n   - [ ] sub\n"
+        }
+      ]
+    },
+    {
+      "id": "MD-C-008",
+      "description": "字数统计剔除公式/图表块，普通代码块照计",
+      "src": "# A\n\n正文四字。\n\n$$\n\\frac{1}{2}\n$$\n\n```mermaid\ngraph TD\nA-->B\n```\n\n```js\nlet x=1\n```\n\n## B\n",
+      "wordCount": 24,
+      "headCount": 2,
+      "secCount": 1,
+      "headings": [
+        {
+          "sec": 1,
+          "level": 1,
+          "text": "A",
+          "line": 0
+        },
+        {
+          "sec": 2,
+          "level": 2,
+          "text": "B",
+          "line": 17
+        }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "MD-C-009",
+      "description": "列表内标题与标题切断列表",
+      "src": "- item\n    1. nested\n\n# H\n\n4. four\n",
+      "wordCount": 21,
+      "headCount": 1,
+      "secCount": 0,
+      "headings": [
+        {
+          "sec": 1,
+          "level": 1,
+          "text": "H",
+          "line": 3
+        }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "MD-C-010",
+      "description": "Tab 缩进围栏配对",
+      "src": "\t```\n# inside\n\t```\n# out\n",
+      "wordCount": 17,
+      "headCount": 1,
+      "secCount": 0,
+      "headings": [
+        {
+          "sec": 1,
+          "level": 1,
+          "text": "out",
+          "line": 3
+        }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "MD-C-011",
+      "description": "未闭合围栏吃到 EOF，不产标题",
+      "src": "```js\n# inside\n",
+      "wordCount": 12,
+      "headCount": 0,
+      "secCount": 0,
+      "headings": [],
+      "tasks": []
+    }
+  ]
+}

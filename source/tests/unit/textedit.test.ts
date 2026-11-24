@@ -1,7 +1,7 @@
 /* textedit：源码格式化整篇替换的最小编辑区间（评审 P3-4 的纯函数覆盖） */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { commonEditRange } from "../src/lib/textedit.ts";
+import { commonEditRange } from "../../src/lib/textedit.ts";
 
 test("相同文本不产生编辑", () => {
   assert.equal(commonEditRange("abc", "abc"), null);

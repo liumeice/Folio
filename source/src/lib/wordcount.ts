@@ -2,7 +2,7 @@
  * 含首行 zenuml 的图）——这类文档的源码不是"读到的字"，计入会让字数严重虚高。
  * 普通代码围栏维持 M0 旧口径（照计，含围栏标记）；PRD 把"代码块是否计字"另列为待定项 N19。
  * 与 Rust folio-core::markdown::stats 的 word_count 逐行同规则（权威=两侧各自的钉桩测试，
- * fixture 数值必须一致：tests/wordcount.test.ts ↔ markdown.rs::tests）。 */
+ * fixture 数值必须一致：tests/unit/wordcount.test.ts ↔ markdown.rs::tests）。 */
 
 import { fenceClose, fenceInfo, fenceOpen, splitSrcLines, type Fence } from "./md.ts";
 

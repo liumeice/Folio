@@ -1,20 +1,20 @@
 /* 设置中心声明层的机械核对（视图不做判断，所以判断都能在这里测）。
- * 运行：node --experimental-strip-types --test tests/settings-spec.test.ts */
+ * 运行：node --experimental-strip-types --test tests/unit/settings-spec.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GROUPS, ITEMS, activeDomain, bump, resetPatch } from "../src/lib/settings-spec.ts";
-import { DEFAULTS, RANGE, STEP, clampNum } from "../src/lib/typography.ts";
-import { DEFAULT_SETTINGS } from "../src/lib/defaults.ts";
-import type { Settings } from "../src/lib/types.ts";
+import { GROUPS, ITEMS, activeDomain, bump, resetPatch } from "../../src/lib/settings-spec.ts";
+import { DEFAULTS, RANGE, STEP, clampNum } from "../../src/lib/typography.ts";
+import { DEFAULT_SETTINGS } from "../../src/lib/defaults.ts";
+import type { Settings } from "../../src/lib/types.ts";
 
 const S = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });
 const numeric = ITEMS.filter((i) => typeof i.get(S()) === "number");
 const segs = ITEMS.filter((i) => i.control.kind === "segment");
 
 test("分组自洽：每组有行、每行归到存在的组", () => {
-  for (const g of GROUPS) assert.ok(ITEMS.some((i) => i.group === g.id), `${g.title} 是空组`);
+  for (const g of GROUPS) assert.ok(ITEMS.some((i) => i.group === g.id), `${g.titleKey} 是空组`);
   const ids = new Set(GROUPS.map((g) => g.id));
-  for (const i of ITEMS) assert.ok(ids.has(i.group), `${i.label} 归到不存在的组`);
+  for (const i of ITEMS) assert.ok(ids.has(i.group), `${i.labelKey} 归到不存在的组`);
 });
 
 test("每个数值行：set→get 落在域内，且域与 typography 单一来源一致", () => {
@@ -23,7 +23,7 @@ test("每个数值行：set→get 落在域内，且域与 typography 单一来�
     for (const raw of [-9999, 0, d.min, d.max, 99999, d.min + (d.max - d.min) / 2]) {
       const back = i.get(S(i.set(S(), raw)));
       assert.ok(typeof back === "number" && back >= d.min - 1e-9 && back <= d.max + 1e-9,
-        `${i.label}: 写入 ${raw} 读回 ${back} 越界 [${d.min},${d.max}]`);
+        `${i.labelKey}: 写入 ${raw} 读回 ${back} 越界 [${d.min},${d.max}]`);
     }
   }
   // 域来自 RANGE/STEP（sideWidth 除外，它另有硬边界）
@@ -50,17 +50,17 @@ test("bump 步进夹在两端，不会溢出区间", () => {
     const d = activeDomain(i, S())!;
     let v = i.get(S());
     for (let k = 0; k < 200; k++) v = bump(i, S(i.set(S(), v as number)), 1) as number;
-    assert.ok((v as number) <= d.max + 1e-9, `${i.label} 连点 + 越上限：${v}`);
+    assert.ok((v as number) <= d.max + 1e-9, `${i.labelKey} 连点 + 越上限：${v}`);
     for (let k = 0; k < 200; k++) v = bump(i, S(i.set(S(), v as number)), -1) as number;
-    assert.ok((v as number) >= d.min - 1e-9, `${i.label} 连点 − 越下限：${v}`);
+    assert.ok((v as number) >= d.min - 1e-9, `${i.labelKey} 连点 − 越下限：${v}`);
   }
 });
 
 test("分段行：get 一定落在自己的选项里，set 回读稳定", () => {
   for (const i of segs) {
     const opts = (i.control as { options: readonly (readonly [string, string])[] }).options.map(([v]) => v);
-    assert.ok(opts.includes(String(i.get(S()))), `${i.label} 当前值 ${i.get(S())} 不在选项 ${opts.join("/")}`);
-    for (const o of opts) assert.equal(i.get(S(i.set(S(), o))), o, `${i.label} 选项 ${o} 读写不一致`);
+    assert.ok(opts.includes(String(i.get(S()))), `${i.labelKey} 当前值 ${i.get(S())} 不在选项 ${opts.join("/")}`);
+    for (const o of opts) assert.equal(i.get(S(i.set(S(), o))), o, `${i.labelKey} 选项 ${o} 读写不一致`);
   }
 });
 
@@ -73,7 +73,7 @@ test("主题三卡：当前值在选项内，逐选项读写一致（含护眼�
 });
 
 test("强调色色板：get 落在 ACCENTS 内，逐色读写一致", async () => {
-  const { ACCENTS } = await import("../src/lib/accent.ts");
+  const { ACCENTS } = await import("../../src/lib/accent.ts");
   const accent = ITEMS.find((i) => i.control.kind === "swatch")!;
   const hexes = ACCENTS.map((a) => a.id.toLowerCase());
   assert.ok(hexes.includes(String(accent.get(S())).toLowerCase()), `默认强调色 ${accent.get(S())} 不在色板`);
@@ -100,13 +100,13 @@ test("spec 里的 key 都是真实 Settings 字段（fs 是衬线/无衬线合�
   const fields = new Set(Object.keys(DEFAULT_SETTINGS));
   for (const i of ITEMS) {
     if (i.key === "fs") continue;
-    assert.ok(fields.has(i.key), `${i.label} 的 key=${i.key} 不在 Settings 里`);
+    assert.ok(fields.has(i.key), `${i.labelKey} 的 key=${i.key} 不在 Settings 里`);
   }
 });
 
 test("侧栏宽度不再是设置行，改由分隔条管：layout.clampSide 兜上下限", async () => {
   assert.ok(!ITEMS.some((i) => i.key === "sideWidth"), "spec 里不该再有 sideWidth 行");
-  const { clampSide, SIDE_DEFAULT } = await import("../src/lib/layout.ts");
+  const { clampSide, SIDE_DEFAULT } = await import("../../src/lib/layout.ts");
   assert.equal(clampSide(999, 1280), 560, "硬上限 560");
   assert.equal(clampSide(100, 1280), 210, "硬下限 210");
   assert.equal(clampSide(null, 1280), SIDE_DEFAULT, "无记录用默认宽度");
@@ -114,7 +114,7 @@ test("侧栏宽度不再是设置行，改由分隔条管：layout.clampSide 兜
 });
 
 test("开关行与首启默认（需求方 2026-11-18：浅色主题 + 石青强调，双语言一致）", async () => {
-  const { ACCENTS } = await import("../src/lib/accent.ts");
+  const { ACCENTS } = await import("../../src/lib/accent.ts");
   const sw = ITEMS.find((i) => i.control.kind === "switch")!;
   assert.equal(sw.key, "restoreOnLaunch");
   assert.equal(sw.group, "appearance");
@@ -130,5 +130,5 @@ test("开关行与首启默认（需求方 2026-11-18：浅色主题 + 石青强
   assert.equal(sw.get(S(sw.set(S(), "true" as unknown as boolean))), false, "非 true 一律按关——只认布尔真");
   assert.equal(DEFAULT_SETTINGS.theme, "light", "首启默认主题=浅色");
   assert.equal(DEFAULT_SETTINGS.accent, "#1B6372", "首启默认强调色=石青浅档");
-  assert.ok(ACCENTS.some((a) => a.id === "#1B6372" && a.name === "石青"), "默认强调色必须是色板内的石青");
+  assert.ok(ACCENTS.some((a) => a.id === "#1B6372" && a.nameKey === "accent.azurite"), "默认强调色必须是色板内的石青");
 });

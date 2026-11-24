@@ -1,5 +1,5 @@
 /* 内嵌原始 HTML（需求 #3）：功能面（README 徽章块生效）+ 安全面（白名单净化逐条钉死）。
- * 运行：node --experimental-strip-types --test tests/html.test.ts */
+ * 运行：node --experimental-strip-types --test tests/unit/html.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 const js = new JSDOM("");
 (globalThis as unknown as { DOMParser: unknown }).DOMParser = js.window.DOMParser;
 
-const { mdToHtml } = await import("../src/lib/md.ts");
+const { mdToHtml } = await import("../../src/lib/md.ts");
 
 test("README 式徽章块原样生效：p/img/a/align 保留，块在空行处结束", () => {
   const h = mdToHtml('<p align="center">\n  <a href="https://getbootstrap.com/">\n    <img src="logo.svg" alt="B" width="200">\n  </a>\n</p>\n\n## 下一节');

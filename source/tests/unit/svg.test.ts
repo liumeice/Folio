@@ -1,5 +1,5 @@
 /* 内联 SVG 净化策略（2026-11-20 解禁）：几何/SMIL 保留，script/foreignObject/style 删除，
- * href 族走 URL 白名单。运行：node --experimental-strip-types --test tests/svg.test.ts */
+ * href 族走 URL 白名单。运行：node --experimental-strip-types --test tests/unit/svg.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 const js = new JSDOM("");
 (globalThis as unknown as { DOMParser: unknown }).DOMParser = js.window.DOMParser;
 
-const { mdToHtml } = await import("../src/lib/md.ts");
+const { mdToHtml } = await import("../../src/lib/md.ts");
 
 test("SMIL 动画 SVG 原样保留：animate 元素与 SMIL 属性不剥", () => {
   const h = mdToHtml(`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80" viewBox="0 0 160 80"><rect x="8" y="24" width="24" height="32" fill="#325A67"><animateTransform attributeName="transform" type="translate" values="0 0;120 0;0 0" dur="1.2s" repeatCount="indefinite"/></rect></svg>`);

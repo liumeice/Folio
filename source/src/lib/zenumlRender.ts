@@ -4,7 +4,7 @@
  * 图表字体走包内 data: URI（CSP font-src 'self' data: 已放行，无需放宽）。
  * CSP 仅新增 script-src 'wasm-unsafe-eval'（WebAssembly 编译的规范要求，见 tauri.conf.json）。
  * 首行 `zenuml` 关键字由 md.ts 打上 data-zuml 标记路由到这里；关键字行传给引擎前剥除。 */
-import { escapeHtml } from "./md.ts";
+import { escapeHtml, DEFAULT_RENDER_OPTIONS, type RenderOptions } from "./md.ts";
 import { compensateAnchor } from "./nav.ts";
 
 interface ZumlEngine {
@@ -18,9 +18,11 @@ function themeFor(themeName?: string): string {
   return t === "dark" ? "theme-dark" : t === "sepia" ? "theme-default" : "theme-clean-light";
 }
 
-function fallbackBox(el: HTMLElement, reason: string): void {
+/* 错误框文案（P4b，设计 §4.6.4）：外层标签用当前 UI 语言（opts），引擎原始错误（reason/msg）
+ * 是技术详情、原样保留并转义；缺省=zh-CN 目录中文。 */
+function fallbackBox(el: HTMLElement, reason: string, ro: RenderOptions): void {
   compensateAnchor(() => {   // 原地替换即布局推挤事件，经可见锚补偿（滚动同步方案 §4.2）
-    el.innerHTML = `<div class="fb-box"><div class="fb-label">⚠ zenuml 语法错误 · ${escapeHtml(reason)}</div>` +
+    el.innerHTML = `<div class="fb-box"><div class="fb-label">${escapeHtml(ro.zenumlError)} · ${escapeHtml(reason)}</div>` +
       `<pre class="formula-fallback">${escapeHtml(el.getAttribute("data-code") ?? "")}</pre></div>`;
     el.classList.add("f-error");
   });
@@ -31,23 +33,26 @@ let chain: Promise<void> = Promise.resolve();
 export function renderZenuml(
   scope: HTMLElement,
   themeName?: string,
+  opts?: Partial<RenderOptions>,
 ): Promise<void> {
-  const step = () => doRender(scope, themeName);
+  const ro = { ...DEFAULT_RENDER_OPTIONS, ...(opts ?? {}) };
+  const step = () => doRender(scope, themeName, ro);
   chain = chain.then(step, step);
   return chain;
 }
 
-async function doRender(scope: HTMLElement, themeName?: string): Promise<void> {
+async function doRender(scope: HTMLElement, themeName: string | undefined, ro: RenderOptions): Promise<void> {
   const els = [...scope.querySelectorAll<HTMLElement>("[data-mermaid][data-zuml]")];
   if (!els.length) return;
   let Z: new (el: HTMLElement | string, naked?: boolean, initial?: object) => ZumlEngine;
   try {
     const mod = await import("@zenuml/core") as Record<string, unknown>;
     const cand = (mod.ZenUml ?? (mod.default as Record<string, unknown> | undefined)?.ZenUml ?? mod.default) as unknown;
-    if (typeof cand !== "function") throw new Error("导出异常");
+    // 内部标记错误（catch 后全部走退化框，不上屏）：固定英文技术串，不进 i18n
+    if (typeof cand !== "function") throw new Error("Invalid ZenUML module export");
     Z = cand as typeof Z;
   } catch {
-    for (const el of els) if (el.isConnected) fallbackBox(el, "图表引擎加载失败");
+    for (const el of els) if (el.isConnected) fallbackBox(el, ro.zenumlLoadError, ro);
     return;
   }
   const theme = themeFor(themeName);
@@ -61,7 +66,7 @@ async function doRender(scope: HTMLElement, themeName?: string): Promise<void> {
       const pr = await z.parse(code);
       if (!pr.pass) {
         const d = pr.errorDetails?.[0];
-        fallbackBox(el, d ? `第 ${d.line} 行第 ${d.column} 列：${d.msg}` : "图表内容有误");
+        fallbackBox(el, d ? ro.zenumlLineColumn(d) : ro.zenumlParseError, ro);
         continue;
       }
       await z.render(code, { theme });
@@ -72,7 +77,7 @@ async function doRender(scope: HTMLElement, themeName?: string): Promise<void> {
       let markup = liveSvg ? liveSvg.outerHTML : host.innerHTML.trim();
       if (!markup.startsWith("<svg") && !markup.startsWith("<svg ")) {
         const uri = await z.getSvg();
-        markup = `<img src="${escapeHtml(uri)}" alt="zenuml 图" style="max-width:100%">`;
+        markup = `<img src="${escapeHtml(uri)}" alt="${escapeHtml(ro.zenumlAlt)}" style="max-width:100%">`;
       }
       if (!el.isConnected) return;
       compensateAnchor(() => {
@@ -81,7 +86,7 @@ async function doRender(scope: HTMLElement, themeName?: string): Promise<void> {
         el.classList.remove("f-error");
       });
     } catch (e) {
-      fallbackBox(el, "图表绘制失败");
+      fallbackBox(el, ro.zenumlRenderError, ro);
     }
   }
 }

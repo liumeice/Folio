@@ -25,6 +25,48 @@ fn errstr<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// P4a 结构化命令错误（设计 §4.7.2 / 附录 B）：`code` 是稳定错误码，前端用它判断与查文案；
+/// `reason` 承载子类型码（EMPTY / EXISTS / CONFLICT …）；`detail` 只进日志/开发模式（英文，
+/// 供排查，UI 不展示）；`path` 可选，前端只取 basename。UI 文案一律在 TS 目录呈现，Rust 不再产出中文串。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandError {
+    pub code: &'static str,
+    pub reason: Option<String>,
+    pub detail: String,
+    pub path: Option<String>,
+}
+
+impl CommandError {
+    pub fn new(code: &'static str, detail: impl Into<String>) -> Self {
+        Self { code, reason: None, detail: detail.into(), path: None }
+    }
+    /// CoreError → CommandError：code/reason 走 `error.rs` 的映射表；not_found 附带路径供前端取 basename
+    pub fn from_core(e: folio_core::CoreError) -> Self {
+        let path = match &e {
+            folio_core::CoreError::NotFound(p) => Some(p.clone()),
+            _ => None,
+        };
+        Self { code: e.code(), reason: e.reason().map(str::to_string), detail: e.to_string(), path }
+    }
+}
+
+impl From<folio_core::CoreError> for CommandError {
+    fn from(e: folio_core::CoreError) -> Self {
+        CommandError::from_core(e)
+    }
+}
+
+/// spawn_blocking 的 JoinError / 其它未知内部故障 → code "internal"
+fn join_err<E: std::fmt::Display>(e: E) -> CommandError {
+    CommandError::new("internal", e.to_string())
+}
+
+/// 裸 IO 故障（未过 CoreError 的 std::io::Error）→ code "io"
+fn io_err(e: std::io::Error) -> CommandError {
+    CommandError::new("io", e.to_string())
+}
+
 /// 启动几何钳制（2026-11-19 需求：窗口下沿不得撑到任务栏以下）。
 /// conf 的 1280×820 在高缩放下可能高于「监视器工作区」（监视器去掉任务栏），
 /// 且 config 的 center 是按整屏居中而不是按工作区，底边会被任务栏盖住。
@@ -121,17 +163,17 @@ fn now_ms() -> u64 {
 async fn spawn_db<T: Send + 'static>(
     state: &State<'_, AppState>,
     f: impl FnOnce(&Arc<Db>) -> folio_core::Result<T> + Send + 'static,
-) -> Result<T, String> {
+) -> Result<T, CommandError> {
     LAST_DB_USE_MS.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || f(&db))
         .await
-        .map_err(errstr)?
-        .map_err(errstr)
+        .map_err(join_err)?
+        .map_err(CommandError::from_core)
 }
 
 #[tauri::command]
-async fn list_docs(state: State<'_, AppState>) -> Result<Vec<DocMeta>, String> {
+async fn list_docs(state: State<'_, AppState>) -> Result<Vec<DocMeta>, CommandError> {
     spawn_db(&state, |db| db.list_docs()).await
 }
 
@@ -146,7 +188,7 @@ pub(crate) fn is_draft_path(app: &AppHandle, raw: &str) -> bool {
 }
 
 #[tauri::command]
-async fn open_doc(app: AppHandle, path: String, state: State<'_, AppState>) -> Result<DocFull, String> {
+async fn open_doc(app: AppHandle, path: String, state: State<'_, AppState>) -> Result<DocFull, CommandError> {
     reject_dotdot(&path)?; // SEC-02：词法越权门槛（详见 guarded_path 注释）
     // v3：打开单个文件不再入库。是否库成员按已登记库根判定；打开历史由 doc_full 统一记。
     // 草稿例外：未保存的新建文档不写打开历史（另存为走真实路径后正常记录）。
@@ -160,12 +202,12 @@ async fn open_doc(app: AppHandle, path: String, state: State<'_, AppState>) -> R
 }
 
 #[tauri::command]
-async fn open_by_slug(slug: String, state: State<'_, AppState>) -> Result<DocFull, String> {
+async fn open_by_slug(slug: String, state: State<'_, AppState>) -> Result<DocFull, CommandError> {
     spawn_db(&state, move |db| commands::open_by_slug(db, &slug)).await
 }
 
 #[tauri::command]
-async fn save_doc(path: String, content: String, force: Option<bool>, encoding: Option<String>, state: State<'_, AppState>) -> Result<DocFull, String> {
+async fn save_doc(path: String, content: String, force: Option<bool>, encoding: Option<String>, state: State<'_, AppState>) -> Result<DocFull, CommandError> {
     reject_dotdot(&path)?; // SEC-02
     let enc = encoding.unwrap_or_default();
     spawn_db(&state, move |db| commands::save(db, &path, &content, force.unwrap_or(false), &enc)).await
@@ -175,7 +217,7 @@ async fn save_doc(path: String, content: String, force: Option<bool>, encoding: 
 /// `new_name` 只是文件名（validate_file_name 禁一切分隔符），目标恒在原文档目录内；
 /// `path` 走 reject_dotdot 同 SEC-02 口径。失败=原名不动（见 commands::rename）。
 #[tauri::command]
-async fn rename_doc(path: String, new_name: String, state: State<'_, AppState>) -> Result<DocMeta, String> {
+async fn rename_doc(path: String, new_name: String, state: State<'_, AppState>) -> Result<DocMeta, CommandError> {
     reject_dotdot(&path)?; // SEC-02
     spawn_db(&state, move |db| commands::rename(db, &path, &new_name)).await
 }
@@ -183,7 +225,7 @@ async fn rename_doc(path: String, new_name: String, state: State<'_, AppState>) 
 /// 目录树文件夹「重命名」：磁盘改名 + 子树文档路径/库根登记单事务换前缀（增强 2026-11-20）。
 /// `new_name` 禁一切分隔符；目标恒在父目录内；`path` 走 reject_dotdot 同 SEC-02 口径。
 #[tauri::command]
-async fn rename_dir(path: String, new_name: String, state: State<'_, AppState>) -> Result<String, String> {
+async fn rename_dir(path: String, new_name: String, state: State<'_, AppState>) -> Result<String, CommandError> {
     reject_dotdot(&path)?; // SEC-02
     spawn_db(&state, move |db| commands::rename_dir(db, &path, &new_name)).await
 }
@@ -211,10 +253,11 @@ struct FormatReply {
 async fn format_markdown(
     src: String,
     options: Option<folio_core::format::FormatOptions>,
-) -> Result<FormatReply, String> {
+) -> Result<FormatReply, CommandError> {
     let opt = options.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let r = folio_core::format::format_markdown(&src, &opt);
+        // 纯计算，不产错误；仅 JoinError 走下方 internal 映射
         let (word_count, head_count, sec_count) = folio_core::markdown::stats(&r.text);
         // 标题口径与 folio-db 的登记逻辑一致：首个行首 "# " 行（不跳围栏，保持既有行为）
         let title = r
@@ -234,47 +277,47 @@ async fn format_markdown(
         }
     })
     .await
-    .map_err(errstr)
+    .map_err(join_err)
 }
 
 /// schema v2：置顶开关 / 从库移除（不动磁盘）/ 库根管理
 #[tauri::command]
-async fn set_pinned(id: i64, on: bool, state: State<'_, AppState>) -> Result<(), String> {
+async fn set_pinned(id: i64, on: bool, state: State<'_, AppState>) -> Result<(), CommandError> {
     spawn_db(&state, move |db| db.set_pinned(id, on)).await
 }
 
 /// schema v3：库成员开关（右键「从库移除」）。登记行保留，出库时取消置顶；磁盘文件不动。
 #[tauri::command]
-async fn set_in_library(id: i64, on: bool, state: State<'_, AppState>) -> Result<(), String> {
+async fn set_in_library(id: i64, on: bool, state: State<'_, AppState>) -> Result<(), CommandError> {
     spawn_db(&state, move |db| db.set_in_library(id, on)).await
 }
 
 /// schema v3：打开历史（时间倒序，不限量）。与库成员互不隶属。
 #[tauri::command]
-async fn list_recents(state: State<'_, AppState>) -> Result<Vec<RecentDoc>, String> {
+async fn list_recents(state: State<'_, AppState>) -> Result<Vec<RecentDoc>, CommandError> {
     spawn_db(&state, |db| db.list_recents()).await
 }
 
 /// 从历史移除一条。返回 true = 该文档既不在库也非内置，登记行已连带回收（进度/索引一并清）。
 #[tauri::command]
-async fn remove_recent(id: i64, state: State<'_, AppState>) -> Result<bool, String> {
+async fn remove_recent(id: i64, state: State<'_, AppState>) -> Result<bool, CommandError> {
     spawn_db(&state, move |db| db.remove_recent(id)).await
 }
 
 /// 清空打开历史：只删历史 + 失去归属的登记；库成员与内置文档的进度不受影响，磁盘不动。
 #[tauri::command]
-async fn clear_recents(state: State<'_, AppState>) -> Result<RecentReport, String> {
+async fn clear_recents(state: State<'_, AppState>) -> Result<RecentReport, CommandError> {
     spawn_db(&state, |db| db.clear_recents()).await
 }
 
 #[tauri::command]
-async fn list_roots(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+async fn list_roots(state: State<'_, AppState>) -> Result<Vec<String>, CommandError> {
     spawn_db(&state, |db| db.list_roots()).await
 }
 
 /// 移除库根：只被该根覆盖的库成员一并出库（不动磁盘与进度），返回出库条数
 #[tauri::command]
-async fn remove_root(path: String, state: State<'_, AppState>) -> Result<usize, String> {
+async fn remove_root(path: String, state: State<'_, AppState>) -> Result<usize, CommandError> {
     spawn_db(&state, move |db| db.remove_root(&path)).await
 }
 
@@ -289,17 +332,23 @@ const MAX_READ_BYTES: u64 = 16 * 1024 * 1024;
 /// 意图化改造（export_config/import_config 走原生对话框）留待后续；见修改报告 SEC-02 节。
 /// 只拒绝词法 `..` 分量（不做 canonicalize——登记键存的是用户可见路径，
 /// 规范化会改写出 `\\?\` 前缀导致同文件两个登记键，这里刻意保守）。
-pub(crate) fn reject_dotdot(raw: &str) -> std::result::Result<(), String> {
+pub(crate) fn reject_dotdot(raw: &str) -> std::result::Result<(), CommandError> {
     if std::path::Path::new(raw)
         .components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
-        return Err("路径包含 ..，已拒绝".into());
+        // P4a：文案不再走错误串——code 供前端查 `error.invalid_path`，detail 只进日志
+        return Err(CommandError {
+            code: "invalid_path",
+            reason: None,
+            detail: format!("SEC-02: path contains '..': {raw}"),
+            path: Some(raw.to_string()),
+        });
     }
     Ok(())
 }
 
-fn guarded_path(raw: &str) -> std::result::Result<std::path::PathBuf, String> {
+fn guarded_path(raw: &str) -> std::result::Result<std::path::PathBuf, CommandError> {
     reject_dotdot(raw)?;
     let p = std::path::PathBuf::from(raw);
     if let (Some(parent), Some(name)) = (p.parent(), p.file_name()) {
@@ -367,15 +416,16 @@ async fn export_pdf(
     state: State<'_, AppState>,
     path: String,
     bg_color: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     use base64::Engine as _;
     if state.exporting.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return Err("上一次导出尚未完成".into());
+        return Err(CommandError::new("pdf_busy", "previous PDF export still in flight"));
     }
-    let win = app.get_webview_window("main").ok_or_else(|| "找不到主窗口".to_string())?;
+    let win = app.get_webview_window("main")
+        .ok_or_else(|| CommandError::new("pdf_window_missing", "webview window \"main\" not found"))?;
     let params = pdf_print_params_json();
     let (pr, pg, pb) = bg_color.as_deref().and_then(parse_hex_color).unwrap_or((255, 255, 255));
-    let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
+    let (tx, rx) = std::sync::mpsc::channel::<Result<String, CommandError>>();
     // with_webview 把闭包投递到主线程执行（COM 必须在其创建线程），执行完即返回；
     // completed 回调稍后也在主线程触发，把 CDP 结果 JSON 经 tx 送回。
     let dispatch = win.with_webview(move |wv| {
@@ -385,7 +435,7 @@ async fn export_pdf(
         let controller = wv.controller();
         let core = match unsafe { controller.CoreWebView2() } {
             Ok(c) => c,
-            Err(e) => { let _ = tx.send(Err(errstr(e))); return; }
+            Err(e) => { let _ = tx.send(Err(CommandError::new("pdf_print_call", format!("CoreWebView2 unavailable: {e}")))); return; }
         };
         // 黑边框真凶（2026-11-17 二分实测坐实）：tauri.conf 的窗口底色 #080D18 被 wry 设为
         // WebView2 DefaultBackgroundColor；Chromium printToPDF(printBackground:true) 把这个
@@ -394,12 +444,12 @@ async fn export_pdf(
         // 屏幕侧零影响（应用自身始终铺满不露衬底）。
         let ctl2 = match controller.cast::<ICoreWebView2Controller2>() {
             Ok(c) => c,
-            Err(e) => { let _ = tx.send(Err(errstr(e))); return; }
+            Err(e) => { let _ = tx.send(Err(CommandError::new("pdf_print_call", format!("ICoreWebView2Controller2 cast failed: {e}")))); return; }
         };
         let mut orig = COREWEBVIEW2_COLOR { A: 255, R: 255, G: 255, B: 255 };
         let _ = unsafe { ctl2.DefaultBackgroundColor(&mut orig) };
         if unsafe { ctl2.SetDefaultBackgroundColor(COREWEBVIEW2_COLOR { A: 255, R: pr, G: pg, B: pb }) }.is_err() {
-            let _ = tx.send(Err("设置页面背景失败，请重试".to_string()));
+            let _ = tx.send(Err(CommandError::new("pdf_background", "SetDefaultBackgroundColor failed")));
             return;
         }
         let ctl_h = ctl2.clone();
@@ -410,7 +460,7 @@ async fn export_pdf(
                 let _ = unsafe { ctl_h.SetDefaultBackgroundColor(orig_h) }; // 打印结束——还原窗口底色
                 let _ = match status {
                     Ok(()) => tx_cb.send(Ok(result_json)),
-                    Err(e) => tx_cb.send(Err(errstr(e))),
+                    Err(e) => tx_cb.send(Err(CommandError::new("pdf_print_call", format!("CDP Page.printToPDF status error: {e}")))),
                 };
                 Ok(())
             },
@@ -422,40 +472,40 @@ async fn export_pdf(
         // 提交失败 = handler 永远不会触发 → 先还原衬底再就地送错，否则外层只能等到断链
         if unsafe { core.CallDevToolsProtocolMethod(name, args, &handler) }.is_err() {
             let _ = unsafe { ctl2.SetDefaultBackgroundColor(orig) };
-            let _ = tx.send(Err("调用打印功能失败，请重试".to_string()));
+            let _ = tx.send(Err(CommandError::new("pdf_print_call", "CallDevToolsProtocolMethod submit failed")));
         }
     });
     if dispatch.is_err() {
         state.exporting.store(false, std::sync::atomic::Ordering::SeqCst);
-        return Err("无法连接页面，请重试".to_string());
+        return Err(CommandError::new("pdf_connect", "with_webview dispatch failed (main thread unavailable)"));
     }
     // 等回调（阻塞在 spawn_blocking 线程，不占 async 执行器）
     let recv = tauri::async_runtime::spawn_blocking(move || rx.recv())
         .await
-        .map_err(errstr)?;
+        .map_err(join_err)?;
     state.exporting.store(false, std::sync::atomic::Ordering::SeqCst);
-    let json = recv.map_err(|_| "导出超时，请重试".to_string())??;
+    let json = recv.map_err(|_| CommandError::new("pdf_timeout", "CDP printToPDF callback channel dropped without result"))??;
     // CDP 结果 {"data":"<base64>"}；解析失败/无 data 字段一律当错误
     let val: serde_json::Value = serde_json::from_str(&json)
-        .map_err(|_| "生成的 PDF 数据有误，请重试".to_string())?;
+        .map_err(|e| CommandError::new("pdf_parse", format!("CDP result JSON invalid: {e}")))?;
     let b64 = val.get("data").and_then(|d| d.as_str())
-        .ok_or_else(|| "没有生成 PDF，请重试".to_string())?;
-    let bytes = base64::engine::general_purpose::STANDARD.decode(b64).map_err(errstr)?;
+        .ok_or_else(|| CommandError::new("pdf_no_data", "CDP result has no \"data\" field"))?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64)
+        .map_err(|e| CommandError::new("pdf_parse", format!("base64 decode failed: {e}")))?;
     let p = guarded_path(&path)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Some(dir) = p.parent() { std::fs::create_dir_all(dir).map_err(errstr)?; }
-        std::fs::write(&p, &bytes).map_err(errstr)
+    tauri::async_runtime::spawn_blocking(move || -> std::result::Result<(), CommandError> {
+        if let Some(dir) = p.parent() { std::fs::create_dir_all(dir).map_err(io_err)?; }
+        std::fs::write(&p, &bytes).map_err(io_err)
     })
     .await
-    .map_err(errstr)?
-    .map_err(errstr)
+    .map_err(join_err)?
 }
 
 /// 非 Windows 平台占位（本需求仅 Windows）；保持命令签名一致，运行时报错即可。
 #[cfg(not(windows))]
 #[tauri::command]
-async fn export_pdf(_app: AppHandle, _state: State<'_, AppState>, _path: String, _bg_color: Option<String>) -> Result<(), String> {
-    Err("导出 PDF 目前仅在 Windows 平台提供".into())
+async fn export_pdf(_app: AppHandle, _state: State<'_, AppState>, _path: String, _bg_color: Option<String>) -> Result<(), CommandError> {
+    Err(CommandError::new("pdf_unsupported", "PDF export is implemented for Windows only"))
 }
 
 
@@ -463,7 +513,7 @@ async fn export_pdf(_app: AppHandle, _state: State<'_, AppState>, _path: String,
 /// encoding=Some("gbk/gb18030") 时按 GB18030 字节回写（另存为 GBK 文档保码页）；
 /// 缺省 / utf-8 → 纯 UTF-8 无 BOM（HTML 导出等维持原样）。
 #[tauri::command]
-async fn write_file(path: String, content: String, encoding: Option<String>) -> Result<(), String> {
+async fn write_file(path: String, content: String, encoding: Option<String>) -> Result<(), CommandError> {
     let p = guarded_path(&path)?;
     let enc = encoding.unwrap_or_else(|| "utf-8".to_string());
     tauri::async_runtime::spawn_blocking(move || {
@@ -480,8 +530,8 @@ async fn write_file(path: String, content: String, encoding: Option<String>) -> 
         r
     })
     .await
-    .map_err(errstr)?
-    .map_err(errstr)
+    .map_err(join_err)?
+    .map_err(CommandError::from_core)
 }
 
 /// 导出 HTML 图片随行（FR-13.1，需求方 2026-11-17）：本地按路径复制、远程 Rust 侧下载
@@ -492,24 +542,29 @@ async fn write_file(path: String, content: String, encoding: Option<String>) -> 
 async fn export_images(
     html_path: String,
     items: Vec<commands::ImageRef>,
-) -> Result<Vec<commands::ImageOut>, String> {
+) -> Result<Vec<commands::ImageOut>, CommandError> {
     let p = guarded_path(&html_path)?;
     Ok(commands::run_export_images(&p, items).await)
 }
 
 /// 导入等通用读文本（不受扩展名白名单限制；路径由前端 open 对话框确定）
 #[tauri::command]
-async fn read_file(path: String) -> Result<String, String> {
+async fn read_file(path: String) -> Result<String, CommandError> {
     let p = guarded_path(&path)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || -> std::result::Result<String, CommandError> {
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(u64::MAX);
         if size > MAX_READ_BYTES {
-            return Err("文件过大（上限 16MB），拒绝读取".to_string());
+            return Err(CommandError {
+                code: "too_large",
+                reason: None,
+                detail: format!("file size {size} exceeds MAX_READ_BYTES ({MAX_READ_BYTES})"),
+                path: Some(p.display().to_string()),
+            });
         }
-        folio_fs::read_text(&p).map_err(errstr)
+        folio_fs::read_text(&p).map_err(CommandError::from_core)
     })
     .await
-    .map_err(errstr)?
+    .map_err(join_err)?
 }
 
 /// md 文档本地图片解析（FR-2.1）：返回磁盘绝对路径并动态放行 asset 协议
@@ -518,10 +573,10 @@ async fn resolve_image(
     app: AppHandle,
     doc_path: String,
     url: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, CommandError> {
     let found = tauri::async_runtime::spawn_blocking(move || commands::resolve_image(&doc_path, &url))
         .await
-        .map_err(errstr)?;
+        .map_err(join_err)?;
     if let Some(p) = &found {
         // 空 scope 起步：只把真实解析命中的文件加入 asset 白名单（不放通配）
         use tauri::Manager;
@@ -537,7 +592,7 @@ async fn resolve_images(
     app: AppHandle,
     doc_path: String,
     urls: Vec<String>,
-) -> Result<Vec<Option<(String, u32, u32)>>, String> {
+) -> Result<Vec<Option<(String, u32, u32)>>, CommandError> {
     let found = tauri::async_runtime::spawn_blocking(move || {
         urls.iter()
             .map(|u| {
@@ -549,7 +604,7 @@ async fn resolve_images(
             .collect::<Vec<_>>()
     })
     .await
-    .map_err(errstr)?;
+    .map_err(join_err)?;
     use tauri::Manager;
     for it in found.iter().flatten() {
         let _ = app.asset_protocol_scope().allow_file(std::path::Path::new(&it.0));
@@ -558,19 +613,19 @@ async fn resolve_images(
 }
 
 #[tauri::command]
-async fn toggle_task(path: String, nth: i64, state: State<'_, AppState>) -> Result<DocFull, String> {
+async fn toggle_task(path: String, nth: i64, state: State<'_, AppState>) -> Result<DocFull, CommandError> {
     reject_dotdot(&path)?; // SEC-02
     spawn_db(&state, move |db| commands::toggle_task(db, &path, nth)).await
 }
 
 #[tauri::command]
-async fn scan_folder(root: String, state: State<'_, AppState>) -> Result<ScanReport, String> {
+async fn scan_folder(root: String, state: State<'_, AppState>) -> Result<ScanReport, CommandError> {
     reject_dotdot(&root)?; // SEC-02
     spawn_db(&state, move |db| commands::scan(db, &root)).await
 }
 
 #[tauri::command]
-async fn search(query: SearchQuery, state: State<'_, AppState>) -> Result<Vec<SearchHit>, String> {
+async fn search(query: SearchQuery, state: State<'_, AppState>) -> Result<Vec<SearchHit>, CommandError> {
     spawn_db(&state, move |db| commands::search(db, &query)).await
 }
 
@@ -579,23 +634,33 @@ async fn save_position(
     doc_id: i64,
     position: Position,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     spawn_db(&state, move |db| commands::save_position(db, doc_id, &position)).await
 }
 
 #[tauri::command]
-async fn get_positions(state: State<'_, AppState>) -> Result<Vec<(i64, Position)>, String> {
+async fn get_positions(state: State<'_, AppState>) -> Result<Vec<(i64, Position)>, CommandError> {
     spawn_db(&state, |db| db.positions()).await
 }
 
 #[tauri::command]
-async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
+async fn get_settings(state: State<'_, AppState>) -> Result<Settings, CommandError> {
     spawn_db(&state, |db| db.settings()).await
 }
 
 #[tauri::command]
-async fn set_settings(settings: Settings, state: State<'_, AppState>) -> Result<(), String> {
+async fn set_settings(settings: Settings, state: State<'_, AppState>) -> Result<(), CommandError> {
     spawn_db(&state, move |db| db.set_settings(&settings)).await
+}
+
+/// i18n P5（设计 §4.10）：按前端解析后的 UI locale 同步内置文档（welcome/guide）语言模板。
+/// 幂等：未修改的副本才替换为当前语言模板，用户改过的永不覆盖；前端在设置加载后与语言切换时调用。
+/// 返回本轮实际重写落盘的文件数（0 = 无需改动）。
+#[tauri::command]
+async fn sync_builtin_docs(app: AppHandle, state: State<'_, AppState>, locale: String) -> Result<usize, CommandError> {
+    let data_dir = app.path().app_data_dir()
+        .map_err(|e| CommandError::new("internal", format!("app_data_dir unavailable: {e}")))?;
+    spawn_db(&state, move |db| Ok(commands::sync_builtin_docs(&data_dir, db, &locale))).await
 }
 
 /// 冷启动 pending（folio:// 或关联文件）由前端挂载后领取一次
@@ -635,11 +700,11 @@ struct DirListingJson {
 
 /// 目录列举（只读一层）；path 传 folio_fs::MY_PC（"::my-pc"）= 「此电脑」盘符节点
 #[tauri::command]
-async fn list_dir(path: String) -> Result<DirListingJson, String> {
+async fn list_dir(path: String) -> Result<DirListingJson, CommandError> {
     let l = tauri::async_runtime::spawn_blocking(move || folio_fs::list_dir(&path))
         .await
-        .map_err(errstr)?
-        .map_err(errstr)?;
+        .map_err(join_err)?
+        .map_err(CommandError::from_core)?;
     Ok(DirListingJson {
         parent: l.parent,
         dirs: l.dirs.into_iter().map(|folio_fs::FsEntry(n, p)| FsEntryJson { name: n, path: p }).collect(),
@@ -649,10 +714,10 @@ async fn list_dir(path: String) -> Result<DirListingJson, String> {
 
 /// 确认框「里面有 M 篇」的递归计数（只统计，不登记；上限 5 万防呆）
 #[tauri::command]
-async fn md_count(path: String) -> Result<usize, String> {
+async fn md_count(path: String) -> Result<usize, CommandError> {
     tauri::async_runtime::spawn_blocking(move || folio_fs::count_md(&path, 50_000))
         .await
-        .map_err(errstr)
+        .map_err(join_err)
 }
 
 /// （new_doc 命令已删除，2026-11-16 审查整改 STD-01：前端零调用——新建走 new_doc_draft 草稿线。
@@ -660,15 +725,19 @@ async fn md_count(path: String) -> Result<usize, String> {
 
 /// 新建文档草稿：落在应用数据目录 drafts/（不进库不进树），首次保存后由 delete_scratch 清理
 #[tauri::command]
-async fn new_doc_draft(app: AppHandle) -> Result<String, String> {
-    let dir = app.path().app_data_dir().map_err(errstr)?.join("drafts");
+async fn new_doc_draft(app: AppHandle, base: Option<String>) -> Result<String, CommandError> {
+    // base 由前端按当前 UI 语言传入（多语言设计 §4.6.7）；缺省回退英文 Untitled
+    let base = base.unwrap_or_else(|| "Untitled".into());
+    let dir = app.path().app_data_dir()
+        .map_err(|e| CommandError::new("internal", format!("app_data_dir unavailable: {e}")))?
+        .join("drafts");
     let dir = dir.to_string_lossy().into_owned();
-    tauri::async_runtime::spawn_blocking(move || {
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        folio_fs::new_doc(&dir).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || -> std::result::Result<String, CommandError> {
+        std::fs::create_dir_all(&dir).map_err(io_err)?;
+        folio_fs::new_doc(&dir, &base).map_err(CommandError::from_core)
     })
     .await
-    .map_err(errstr)?
+    .map_err(join_err)?
 }
 
 /// p 是否严格位于 root 之下（root 自身不算）。两侧都应已 canonicalize（无 `..`、真实大小写）。
@@ -681,11 +750,13 @@ fn within_dir(root: &std::path::Path, p: &std::path::Path) -> bool {
 /// `…\drafts` 前缀、再由 remove_file 沿 `..` 出界删除任意文件。现两侧 canonicalize 后比对。
 /// CON-04 修复：连带回收该路径的登记行（历史/进度/FTS），"最近打开"不再留指向死文件的条目。
 #[tauri::command]
-async fn delete_scratch(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
-    let root = app.path().app_data_dir().map_err(errstr)?.join("drafts");
+async fn delete_scratch(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<(), CommandError> {
+    let root = app.path().app_data_dir()
+        .map_err(|e| CommandError::new("internal", format!("app_data_dir unavailable: {e}")))?
+        .join("drafts");
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let canon_root = root.canonicalize().map_err(errstr)?;
+    tauri::async_runtime::spawn_blocking(move || -> std::result::Result<(), CommandError> {
+        let canon_root = root.canonicalize().map_err(io_err)?;
         let p = std::path::PathBuf::from(&path);
         // 文件可能已被手动删除：canonicalize 失败时规范化父目录再拼文件名（文件名部分不含 `..` 已由守门保证）
         let resolved = p.canonicalize().unwrap_or_else(|_| {
@@ -695,7 +766,12 @@ async fn delete_scratch(app: AppHandle, state: State<'_, AppState>, path: String
                 .unwrap_or_else(|| p.clone())
         });
         if !within_dir(&canon_root, &resolved) {
-            return Err("只能清理草稿临时文件".into());
+            return Err(CommandError {
+                code: "draft_only",
+                reason: None,
+                detail: "cleanup path is not under the app drafts directory".to_string(),
+                path: Some(path.clone()),
+            });
         }
         if resolved.is_file() {
             let _ = std::fs::remove_file(&resolved);
@@ -709,7 +785,7 @@ async fn delete_scratch(app: AppHandle, state: State<'_, AppState>, path: String
         Ok(())
     })
     .await
-    .map_err(errstr)?
+    .map_err(join_err)?
 }
 
 // ── run ─────────────────────────────────────────────────────
@@ -748,22 +824,13 @@ pub fn run() {
             // FR-4.5：内置文档（欢迎页 + 使用指南，后者挂在「帮助」菜单）。v3 起它们既不是库成员、
             // 也不被历史清理回收（builtin 标记），所以按「这一条登记在不在」判定，而不是「库是否为空」
             // ——后者会让重新安装后不再出现。
-            // 需求方 2026-11-19 定夺：内置文档随包更新——内容有变化就覆盖数据目录里的旧副本，
-            // 并同步登记行（正文与搜索索引跟着更新）；内容相同则不动，避免每次启动都写盘。
-            for (name, content) in [
-                ("welcome.md", include_str!("../../src/assets/welcome.md")),
-                ("guide.md", include_str!("../../src/assets/guide.md")),
-            ] {
-                let p = data_dir.join(name);
-                let changed = !matches!(std::fs::read_to_string(&p), Ok(old) if old == content);
-                if changed {
-                    let _ = std::fs::write(&p, content);
-                }
-                if changed || db.doc_by_path(&p.to_string_lossy()).is_err() {
-                    if let Ok(src) = folio_fs::read_md(&p) {
-                        let _ = db.upsert_builtin_document(&p, &src);
-                    }
-                }
+            // i18n P5（设计 §4.10 / 附录 C #4 #8）策略修正：不再「内容不同就覆盖」——
+            // 仅当磁盘内容 == 任一内置模板（用户未修改，含旧版中文单语模板）才替换，用户改过的副本永不覆盖；
+            // 模板语言按持久化 language 设置初选（auto 按系统语言近似），前端加载设置并解析 UI locale 后
+            // 再调 sync_builtin_docs 校正（幂等，且先于恢复打开文档，见 store.tsx 启动路径）。
+            {
+                let lang = db.settings().map(|s| s.language).unwrap_or_else(|_| "auto".into());
+                commands::sync_builtin_docs(&data_dir, &db, &commands::resolve_builtin_locale(&lang));
             }
             // P1-6：后台维护一轮库：FTS 段合并 → 膨胀 VACUUM（条件触发）→ WAL 收拢。
             // 2026-11-19 回归修复：旧实现固定启动 3s 后开工，大库上 optimize/VACUUM 会
@@ -895,6 +962,7 @@ pub fn run() {
             get_positions,
             get_settings,
             set_settings,
+            sync_builtin_docs,
             drain_pending,
             path_kind,
             list_dir,

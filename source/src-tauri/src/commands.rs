@@ -749,6 +749,91 @@ pub async fn run_export_images(html_path: &Path, items: Vec<ImageRef>) -> Vec<Im
     out
 }
 
+/* ── 内置文档双语同步（i18n P5，设计 §4.10 / 附录 C 决策 #4、#8）──
+ * 欢迎页与使用指南各备 zh-CN / en-US 两份模板（zh 版逐字复制旧单语模板——旧版磁盘副本因此
+ * 天然命中「未修改」）。更新策略：磁盘内容 == 任一内置模板（或文件不存在）才写盘并重新登记；
+ * 用户改过的副本永不覆盖。逻辑 slug 与 app data 路径保持 welcome.md / guide.md 不变，
+ * 避免「最近打开」出现四份重复内置文档。 */
+pub const BUILTIN_DOCS: [(&str, &str, &str); 2] = [
+    ("welcome.md", include_str!("../../src/assets/welcome.zh-CN.md"), include_str!("../../src/assets/welcome.en-US.md")),
+    ("guide.md", include_str!("../../src/assets/guide.zh-CN.md"), include_str!("../../src/assets/guide.en-US.md")),
+];
+
+/// UI locale → 模板语言：en 前缀（"en"/"en-US"）走英文，其余（"zh-CN"/"auto"/未知）走中文。
+/// 与前端 i18n::resolveLocale 同口径——调用方传入的应始终是解析后的 locale。
+pub fn builtin_template_lang(locale: &str) -> &'static str {
+    if locale.to_ascii_lowercase().starts_with("en") { "en-US" } else { "zh-CN" }
+}
+
+/// LCID → 语言（Windows MuiLanguage）：主语言 0x04=中文族→zh-CN；0x09=英文族及
+/// 其他已知语言→en-US（设计 §2.2：不支持的系统语言统一回退英文，与前端一致）。
+pub fn locale_from_lcid(lcid: u32) -> &'static str {
+    match lcid & 0x3FF {
+        0x04 => "zh-CN",
+        _ => "en-US",
+    }
+}
+
+/// 「跟随系统」在 Rust 侧的解析（仅启动阶段的近似兜底）：Windows 读
+/// HKCU\Control Panel\Desktop MuiLanguage（与 lib.rs 图标注册表补丁同路数，用 reg.exe，
+/// 不为此新增 windows crate 依赖）。输出行 `MuiLanguage REG_DWORD 0x804` 是纯 ASCII，
+/// GBK 控制台码页只影响周围提示文字，不影响解析。读不到 → None（前端按 navigator 解析后
+/// 会再调 sync_builtin_docs 校正，权威判定始终在前端）。
+pub fn os_locale() -> Option<&'static str> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let out = std::process::Command::new("reg")
+            .args(["query", r"HKCU\Control Panel\Desktop", "/v", "MuiLanguage"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output()
+            .ok()?;
+        if !out.status.success() { return None; }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let line = text.lines().find(|l| l.contains("MuiLanguage"))?;
+        let hex = line.split_whitespace().rev()
+            .find(|t| t.starts_with("0x") || t.starts_with("0X"))?;
+        let lcid = u32::from_str_radix(&hex[2..], 16).ok()?;
+        Some(locale_from_lcid(lcid))
+    }
+    #[cfg(not(windows))]
+    { None }
+}
+
+/// setup 阶段的内置文档语言：显式 "zh-CN"/"en-US" 直接用；"auto"/缺失按系统语言兜底，
+/// 判不了用 zh-CN（设计 §4.10）。前端启动后会以解析后的 UI locale 再调一次（幂等校正）。
+pub fn resolve_builtin_locale(language: &str) -> String {
+    if language != "auto" { return language.to_string(); }
+    os_locale().unwrap_or("zh-CN").to_string()
+}
+
+/// 按 locale 同步内置文档到 app data，返回本轮实际重写落盘的文件数。幂等：
+/// 磁盘内容已等于目标模板 → 零写盘、零登记（与旧「内容相同不动」的省盘口径一致）。
+pub fn sync_builtin_docs(data_dir: &Path, db: &Db, locale: &str) -> usize {
+    let target_lang = builtin_template_lang(locale);
+    let mut replaced = 0;
+    for (name, zh, en) in BUILTIN_DOCS {
+        let target = if target_lang == "en-US" { en } else { zh };
+        let p = data_dir.join(name);
+        let disk = std::fs::read_to_string(&p).ok();
+        // 「未修改」从严认定：文件不存在，或与任一内置模板逐字节相同（含旧版中文单语模板）。
+        // 存在但读不出（非 UTF-8 / 权限）→ 按「用户内容」对待不覆盖，登记交给 read_md 的编码兜底。
+        let pristine = if disk.is_some() { disk.as_deref() == Some(zh) || disk.as_deref() == Some(en) } else { !p.exists() };
+        let changed = pristine && disk.as_deref() != Some(target);
+        if changed && std::fs::write(&p, target).is_ok() {
+            replaced += 1;
+        }
+        // 内容变了（正文/搜索索引跟着更新）或登记行缺失（重装/清库）才登记；
+        // 用户改过但缺行的同样补登记，但磁盘内容不动（附录 C #8：用户版本优先）。
+        if changed || db.doc_by_path(&p.to_string_lossy()).is_err() {
+            if let Ok(src) = fs::read_md(&p) {
+                let _ = db.upsert_builtin_document(&p, &src);
+            }
+        }
+    }
+    replaced
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -985,5 +1070,93 @@ mod tests {
         assert_eq!(resolve_image(doc.to_str().unwrap(), "//evil.example/x.png"), None);
         assert_eq!(resolve_image(doc.to_str().unwrap(), "\\\\evil\\share\\x.png"), None);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /* ── 内置文档双语同步（i18n P5，设计 §4.10 / 附录 C #4 #8）── */
+    fn bsync_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("folio-bsync-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn builtin_template_lang_mapping() {
+        assert_eq!(builtin_template_lang("en-US"), "en-US");
+        assert_eq!(builtin_template_lang("EN"), "en-US");
+        assert_eq!(builtin_template_lang("zh-CN"), "zh-CN");
+        assert_eq!(builtin_template_lang("auto"), "zh-CN");
+        assert_eq!(builtin_template_lang(""), "zh-CN");
+    }
+
+    #[test]
+    fn builtin_lcid_locale_mapping() {
+        assert_eq!(locale_from_lcid(0x0804), "zh-CN"); // zh-CN
+        assert_eq!(locale_from_lcid(0x0404), "zh-CN"); // zh-TW
+        assert_eq!(locale_from_lcid(0x0C04), "zh-CN"); // zh-HK
+        assert_eq!(locale_from_lcid(0x0409), "en-US"); // en-US
+        assert_eq!(locale_from_lcid(0x0809), "en-US"); // en-GB
+        assert_eq!(locale_from_lcid(0x0407), "en-US"); // de-DE → 统一回退英文（设计 §2.2）
+    }
+
+    #[test]
+    fn builtin_sync_first_run_creates_locale_template() {
+        let dir = bsync_dir("create");
+        let db = Db::open(&dir.join("folio.db")).unwrap();
+        assert_eq!(sync_builtin_docs(&dir, &db, "en-US"), BUILTIN_DOCS.len());
+        for (name, _zh, en) in BUILTIN_DOCS {
+            assert_eq!(std::fs::read_to_string(dir.join(name)).unwrap(), *en, "{name} 应为英文模板");
+            assert!(db.doc_by_path(&dir.join(name).to_string_lossy()).is_ok(), "{name} 应已登记");
+        }
+        // 同 locale 再跑幂等：零写盘、零登记
+        assert_eq!(sync_builtin_docs(&dir, &db, "en-US"), 0);
+        // 语言切换（未修改副本）→ 替换为中文模板
+        assert_eq!(sync_builtin_docs(&dir, &db, "zh-CN"), BUILTIN_DOCS.len());
+        assert_eq!(std::fs::read_to_string(dir.join("welcome.md")).unwrap(), BUILTIN_DOCS[0].1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn builtin_sync_keeps_user_modified_copy() {
+        let dir = bsync_dir("user");
+        let db = Db::open(&dir.join("folio.db")).unwrap();
+        sync_builtin_docs(&dir, &db, "zh-CN");
+        // 用户改过欢迎页：切语言也不许覆盖（附录 C #8 铁律）
+        std::fs::write(dir.join("welcome.md"), "# 我的欢迎页（用户改写）\n").unwrap();
+        assert_eq!(sync_builtin_docs(&dir, &db, "en-US"), 1, "只有未修改的 guide 被替换");
+        assert_eq!(std::fs::read_to_string(dir.join("welcome.md")).unwrap(), "# 我的欢迎页（用户改写）\n");
+        assert_eq!(std::fs::read_to_string(dir.join("guide.md")).unwrap(), BUILTIN_DOCS[1].2);
+        let meta = db.doc_by_path(&dir.join("welcome.md").to_string_lossy()).unwrap();
+        assert!(meta.builtin, "用户改过的内置副本仍按 builtin 登记");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn builtin_sync_spares_non_utf8_copy() {
+        // 磁盘副本读不出文本（GBK 等非 UTF-8 编码）：不得当成「文件缺失」覆盖；
+        // 登记路径交给 folio-fs::read_md 的编码兜底（与打开普通文档同规则）。
+        let dir = bsync_dir("gbk");
+        let db = Db::open(&dir.join("folio.db")).unwrap();
+        // 「这不是」的 GBK 字节（无 BOM，read_to_string 必失败，read_md 可回退 GBK）
+        let gbk: Vec<u8> = vec![0xb2, 0xe2, 0xb2, 0xbb, 0xca, 0xc7];
+        std::fs::write(dir.join("welcome.md"), &gbk).unwrap();
+        let replaced = sync_builtin_docs(&dir, &db, "en-US");
+        assert_eq!(replaced, 1, "只应新建 guide，GBK 的 welcome 不许动");
+        assert_eq!(std::fs::read(&dir.join("welcome.md")).unwrap(), gbk);
+        assert!(db.doc_by_path(&dir.join("welcome.md").to_string_lossy()).is_ok(), "读得出的编码兜底仍要登记");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn builtin_sync_replaces_legacy_zh_copy() {
+        // 存量用户升级：磁盘是旧中文单语模板（= zh 模板逐字节）→ 视作未修改，随语言替换
+        let dir = bsync_dir("legacy");
+        let db = Db::open(&dir.join("folio.db")).unwrap();
+        for (name, zh, _en) in BUILTIN_DOCS {
+            std::fs::write(dir.join(name), zh).unwrap();
+        }
+        assert_eq!(sync_builtin_docs(&dir, &db, "en-US"), BUILTIN_DOCS.len());
+        assert_eq!(std::fs::read_to_string(dir.join("guide.md")).unwrap(), BUILTIN_DOCS[1].2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

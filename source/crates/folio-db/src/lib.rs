@@ -917,8 +917,12 @@ fn row_to_meta(r: &rusqlite::Row) -> rusqlite::Result<DocMeta> {
 mod tests {
     use super::*;
 
+    fn tmp_dir(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("folio-db-test-{name}-{}", std::process::id()))
+    }
+
     fn tmp_db(name: &str) -> (Db, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("folio-db-test-{name}"));
+        let dir = tmp_dir(name);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         (Db::open(&dir.join("f.db")).unwrap(), dir)
@@ -1024,7 +1028,7 @@ mod tests {
     #[test]
     fn migrate_v1_to_v2() {
         // 用 v1 DDL 建旧库、user_version=1，再经 Db::open 验证 v2 迁移幂等可用
-        let dir = std::env::temp_dir().join("folio-db-test-mig");
+        let dir = tmp_dir("mig");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let dbf = dir.join("f.db");
@@ -1169,7 +1173,7 @@ mod tests {
     #[test]
     fn migrate_v2_to_v4_net_effect_and_seed_history() {
         // 手工造 v2 旧库（旧规则「打开即入库」= in_library 全 1，唯一 in_library=0 的是内置 welcome）
-        let dir = std::env::temp_dir().join("folio-db-test-mig3");
+        let dir = tmp_dir("mig3");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let dbf = dir.join("f.db");
@@ -1252,7 +1256,7 @@ mod tests {
     fn migrate_real_user_copy() {
         let src = std::env::var("FOLIO_DB_COPY").expect("设 FOLIO_DB_COPY=<真实库路径>");
         let src = std::path::Path::new(&src);
-        let dir = std::env::temp_dir().join("folio-db-real-check");
+        let dir = std::env::temp_dir().join(format!("folio-db-real-check-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let dst = dir.join("folio.db");
@@ -1398,7 +1402,7 @@ mod tests {
     fn migrate_v3_to_v4_clears_both_legacy_roots() {
         // 用户决议：切到单库策略时不猜该留哪个库，两个旧根一起清掉。
         // 净效果：roots 空、非内置成员全降级、置顶归零；登记行、进度、历史、内置标记一项不少。
-        let dir = std::env::temp_dir().join("folio-db-test-v4");
+        let dir = tmp_dir("v4");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let dbf = hand_v3_db(&dir);
@@ -1500,7 +1504,7 @@ mod tests {
     #[test]
     fn v5_migration_repairs_drive_relative_and_demotes_orphans() {
         // 用 Z: 前缀做纯字符串样本（本机不存在该盘，metadata 一律失败，行为确定）
-        let dir = std::env::temp_dir().join("folio-db-test-v5fix");
+        let dir = tmp_dir("v5fix");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let dbf = dir.join("f.db");

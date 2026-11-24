@@ -3,7 +3,7 @@
  * 改一边必须同步另一边（跨语言契约）。 */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { countWords } from "../src/lib/wordcount.ts";
+import { countWords } from "../../src/lib/wordcount.ts";
 
 const FIXTURE = "# A\n\n正文四字。\n\n$$\n\\frac{1}{2}\n$$\n\n```mermaid\ngraph TD\nA-->B\n```\n\n```js\nlet x=1\n```\n\n## B\n";
 

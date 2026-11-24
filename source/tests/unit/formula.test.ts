@@ -2,13 +2,13 @@
  * 渲染层契约（md.ts）：行内 $…$ 命中/miss、块级 $$…$$ / ```math / ```mermaid、
  * 代码段优先、escapeHtml 往返、坐标不变量（$$ 吞掉的标题/任务仍记账）；
  * 排版层退化（mathjax.ts）：mock MathJax 成功/抛错/merror/库缺失四条路。
- * 运行：node --experimental-strip-types --test tests/formula.test.ts */
+ * 运行：node --experimental-strip-types --test tests/unit/formula.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
-import { mdToHtml, classifyCodeLang, escapeHtml } from "../src/lib/md.ts";
-import { typesetMathIn } from "../src/lib/mathjax.ts";
-import { isMermaidErrorSvg } from "../src/lib/mermaidRender.ts";
+import { mdToHtml, classifyCodeLang, escapeHtml } from "../../src/lib/md.ts";
+import { typesetMathIn } from "../../src/lib/mathjax.ts";
+import { isMermaidErrorSvg } from "../../src/lib/mermaidRender.ts";
 
 const dom = new JSDOM(`<!doctype html><body></body>`);
 

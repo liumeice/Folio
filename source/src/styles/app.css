@@ -588,12 +588,13 @@ svg{display:block}
 .st-group{margin-top:16px}
 .st-group-title{font-size:12.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:7px}
 .st-card{background:var(--bg-raise);border:1px solid var(--line);border-radius:var(--r-3);overflow:hidden}
-.st-row{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line)}
+.st-row{display:flex;align-items:center;flex-wrap:nowrap;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line)}
 .st-row:last-child{border-bottom:none}
-.st-info{flex:1 1 auto;min-width:0}
+/* 英文变长时先收缩信息列、让 hint 在列内换行；控件始终留在右侧，不折行到下一排（多语言设计 §4.12.3） */
+.st-info{flex:1 1 0;min-width:0}
 .st-label{font-size:14.5px;font-weight:550;color:var(--text)}
-.st-hint{margin-top:2px;font-size:13px;color:var(--text-3);line-height:1.5}
-.st-ctlbox{flex:0 0 auto;margin-left:auto}
+.st-hint{margin-top:2px;font-size:13px;color:var(--text-3);line-height:1.5;overflow-wrap:anywhere}
+.st-ctlbox{flex:none;margin-left:auto}
 .st-ctlrow{display:flex;align-items:center;gap:8px}
 .st-btn{width:26px;height:26px;border:1px solid var(--line);border-radius:6px;background:var(--bg-edit);
   color:var(--text-2);cursor:pointer;font-size:17px;line-height:1;display:grid;place-items:center}
@@ -615,7 +616,7 @@ svg{display:block}
 .stabs-hd .avatar{width:20px;height:20px;font-size:12px;border-radius:6px;background:var(--accent);
   color:var(--accent-ink);display:grid;place-items:center;font-weight:700}
 .stab{display:flex;align-items:center;gap:9px;height:32px;padding:0 9px;border-radius:var(--r-2);
-  font-size:14.5px;color:var(--text-2);cursor:pointer}
+  font-size:14.5px;color:var(--text-2);cursor:pointer;white-space:nowrap;overflow:hidden;min-width:0}
 .stab:hover{background:var(--bg-hover);color:var(--text)}
 .stab.on{background:var(--accent-bg);color:var(--accent);font-weight:550}
 .stab .ico{width:15px;height:15px}
@@ -638,6 +639,29 @@ svg{display:block}
 .swatch .dot{width:7px;height:7px;border-radius:50%;background:#fff;opacity:0}
 .swatch.on .dot{opacity:.9}
 .swatch:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ── 界面语言下拉（多语言设计 §2.1；菜单挂 body，fixed 定位由 LangSelect 计算并夹取/翻转） ── */
+.lang-select{display:flex;align-items:center;gap:7px;height:26px;padding:0 9px;border:1px solid var(--line);border-radius:7px;
+  background:var(--bg-edit);color:var(--text);font-family:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
+.lang-select:hover{border-color:var(--line-hi);background:var(--bg-hover)}
+.lang-select[aria-expanded="true"]{border-color:var(--accent)}
+.lang-flag{display:grid;place-items:center;width:20px;height:13.5px;border-radius:2.5px;overflow:hidden;flex:none;
+  box-shadow:0 0 0 1px rgba(0,0,0,.10) inset}
+.lang-flag svg{display:block;width:20px;height:13.5px}
+.lang-flag.globe{width:16px;height:16px;box-shadow:none;color:var(--text-3)}
+.lang-flag.globe svg{width:16px;height:16px}
+.lang-chev{color:var(--text-3);margin-left:1px}
+.lang-menu{position:fixed;z-index:600;min-width:196px;background:var(--bg-raise);border:1px solid var(--line);border-radius:10px;
+  padding:4px;box-shadow:0 14px 40px rgba(0,0,0,.3)}
+.lang-item{display:flex;align-items:center;gap:9px;width:100%;padding:6px 9px;border:none;border-radius:7px;background:transparent;
+  color:var(--text);font-family:inherit;font-size:12.5px;cursor:pointer;text-align:left;white-space:nowrap}
+.lang-item:hover{background:var(--bg-hover)}
+.lang-item .lang-check{margin-left:auto;color:var(--accent)}
+
+/* 英文更宽：UI 文案单行显示（与多语言设计 §4.12.2 的 :lang 规则一致；正文 .prose 不受影响） */
+.st-action,.st-radio,.seg button,.stab,.lang-select,.lang-item,.st-foot-hint{white-space:nowrap}
+html[lang="en-US"] .stabs{width:236px}
+html[lang="en-US"] .st-hint{line-height:1.5}
 /* 拖放遮罩：默认必须 display:none——漏了这条它会以普通文档流文本露在窗底（原型同款三行） */
 #dropveil{position:absolute;inset:0;z-index:180;display:none;place-items:center;text-align:center;
   border:2px dashed var(--accent);border-radius:var(--r-win);pointer-events:none;
