@@ -552,13 +552,22 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     if (line != null) setNavRequest({ kind: "line", line });
     recomputeDirty();                         // 脏标记 = 预览文本 vs 磁盘
   }
-  /** 从预览返回编辑：恢复同一编辑器（历史/选区/滚动由 CodeMirror 保留），清掉预览文档 */
+  /** 从预览返回编辑：恢复同一编辑器（历史/选区保留），滚动跟随阅读位置。
+   *  修复（2026-11-24）：此前沿用编辑器旧滚动——预览里滚到别处再切回编辑还停在旧位置
+   *  （复现：滚到文末→编辑→回阅读→滚到第 9 节→编辑，仍在文末）。 */
   function resumeEdit() {
     if (!editorSessionAlive()) { enterEdit(); return; }
+    // 先取阅读态顶行（bridge 在 mode==="edit" 时会返回 null，必须在 setMode 之前读）
+    const line = ui.getViewBridge()?.topLine() ?? null;
     setPreviewDoc(null);
     setMode("edit");
     recomputeDirty();
-    ui.getEditorBridge()?.focusEditor();
+    const b = ui.getEditorBridge();
+    b?.focusEditor();
+    if (line != null) {
+      // 编辑器从隐藏转可见要等一次布局/measure；双 rAF 后再跳，避免量到 0 高度导致落到顶/底
+      requestAnimationFrame(() => requestAnimationFrame(() => b?.jumpToLine(line)));
+    }
   }
   /** 仅退回阅读态：不保存、不丢弃、不动脏标记。
    *  与 endEdit 的区别是后者会清 dirty（那是保存/放弃链路的语义），

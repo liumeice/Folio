@@ -724,6 +724,15 @@ async fn md_count(path: String) -> Result<usize, CommandError> {
 ///  folio_fs::new_doc 仍被 new_doc_draft 复用。）
 
 /// 新建文档草稿：落在应用数据目录 drafts/（不进库不进树），首次保存后由 delete_scratch 清理
+/// 清空本地数据库（设置页入口）：文档索引 / 历史 / 进度 / 库根 / 设置与 FTS；不动磁盘文件。
+#[tauri::command]
+async fn reset_database(state: State<'_, AppState>) -> Result<usize, CommandError> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.wipe_all().map_err(CommandError::from_core))
+        .await
+        .map_err(join_err)?
+}
+
 #[tauri::command]
 async fn new_doc_draft(app: AppHandle, base: Option<String>) -> Result<String, CommandError> {
     // base 由前端按当前 UI 语言传入（多语言设计 §4.6.7）；缺省回退英文 Untitled
@@ -968,6 +977,7 @@ pub fn run() {
             list_dir,
             md_count,
             new_doc_draft,
+            reset_database,
             delete_scratch,
             set_pinned,
             set_in_library,

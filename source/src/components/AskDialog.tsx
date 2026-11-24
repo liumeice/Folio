@@ -12,7 +12,9 @@ export default function AskDialog() {
         onMouseDown={(e) => { if (e.target === e.currentTarget) ui.finishAsk(false); }}>
         <div class="modal" style={{ width: "480px", "max-width": "94vw" }}>
           <div class="modal-h">
-            <span class="mi2"><svg class="ico ico-18"><use href={"#" + (a.icon ?? "i-info")} /></svg></span>
+            <span class="mi2" classList={{ warn: a.icon === "i-warn-tri" }}>
+              <svg class="ico ico-18"><use href={"#" + (a.icon ?? "i-info")} /></svg>
+            </span>
             <div style={{ "min-width": "0" }}>
               <div class="mt">{a.title}</div>
               <Show when={a.sub}><div class="md2">{a.sub}</div></Show>

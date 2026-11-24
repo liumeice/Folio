@@ -719,7 +719,20 @@ export default function Reader() {
         const want = decodeSafe(href.slice(1));
         let byId: HTMLElement | null = null;
         try { byId = article.querySelector<HTMLElement>(`[id="${want.replace(/["\\]/g, "\\$&")}"]`); } catch { /* 非法 id 字符：回落标题路径 */ }
-        if (byId) { byId.scrollIntoView({ behavior: "smooth", block: "start" }); flash(byId); return; }
+        if (byId) {
+          // 脚注回跳（↩ → #fnref-N）：目标压在视口最顶部会像"顶到窗口顶部"；
+          // 下沉一行留出上下文（需求 2026-11-24）。其余锚点维持 block:start。
+          if (byId.id.startsWith("fnref-") || byId.classList.contains("fnref")) {
+            const lh = parseFloat(getComputedStyle(byId.closest("p") ?? byId).lineHeight) || 24;
+            const vr = view.getBoundingClientRect();
+            const y = byId.getBoundingClientRect().top - vr.top + view.scrollTop - lh;
+            programScroll(() => { view.scrollTo({ top: Math.max(0, y), behavior: "smooth" }); });
+          } else {
+            byId.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+          flash(byId);
+          return;
+        }
         const hs = [...article.querySelectorAll<HTMLElement>(HSEC)];
         const h = hs.find((x) => x.id === want) ?? hs.find((x) => (x.textContent ?? "").trim() === want);
         if (h) { h.scrollIntoView({ behavior: "smooth", block: "start" }); flash(h); }

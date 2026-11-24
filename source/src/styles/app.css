@@ -447,6 +447,9 @@ svg{display:block}
 .modal{width:520px;max-width:92vw;background:var(--bg-raise);border:1px solid var(--line-hi);border-radius:14px;box-shadow:var(--shadow-pop);overflow:hidden}
 .modal-h{display:flex;align-items:center;gap:10px;padding:16px 18px 14px;border-bottom:1px solid var(--line)}
 .modal-h .mi2{width:32px;height:32px;border-radius:9px;background:var(--accent-bg);color:var(--accent);display:grid;place-items:center;flex:none}
+/* 黄色警告三角：不套青色底板/圆角，图标本体直出（需求 2026-11-24） */
+.modal-h .mi2.warn{width:auto;height:auto;border-radius:0;background:transparent;color:inherit}
+.modal-h .mi2.warn .ico{width:26px;height:26px}
 .modal-h .mt{font-size:15px;font-weight:650;color:var(--text)}
 .modal-h .md2{font-size:11.5px;color:var(--text-3);margin-top:1px}
 .modal-h .sp{flex:1}
@@ -559,6 +562,8 @@ svg{display:block}
  * 920 会令设置行换行——实测反馈的定值）。主界面 rail/side/center/splitter 保持可见且挂载
  * （编辑器状态不丢；状态栏不再被藏）。关闭：Esc / 点遮罩空白 / 标题栏 ⚙ 再点 / 保存并关闭。
  * z-index=170：压过右键菜单(.ctxmenu 160)，让位于拖放遮罩(#dropveil 180)。 */
+/* 询问框可能从设置面板内部触发（清空本地数据库）：必须先于 .st-panel(170) 之上显示 */
+#ask-overlay{z-index:200}
 .st-panel{display:none;position:fixed;inset:0;z-index:170;align-items:center;justify-content:center;
   background:rgba(9,14,24,.42);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
 .body.settings-open .st-panel{display:flex}
@@ -582,6 +587,13 @@ svg{display:block}
   border-radius:var(--r-2);background:var(--bg-raise);color:var(--text-2);font-size:13.5px;cursor:pointer;flex:none}
 .st-action:hover{border-color:var(--line-hi);background:var(--bg-hover);color:var(--text)}
 .st-action.primary{background:var(--accent);border-color:transparent;color:var(--accent-ink)}
+/* 破坏性动作区：放在设置滚动区最末，需要主动滚到底才可见（需求 2026-11-24） */
+.st-danger-zone{display:flex;justify-content:flex-start;margin:24px 0 8px;padding-top:14px;border-top:1px dashed var(--line)}
+/* 破坏性动作（清空本地数据库）：红色系描边/文字，悬停加深 */
+.st-action.danger{color:#C7353C;border-color:rgba(199,53,60,.55)}
+.st-action.danger:hover{border-color:#C7353C;background:rgba(199,53,60,.08);color:#C7353C}
+html[data-theme="dark"] .st-action.danger{color:#FF7B81;border-color:rgba(255,123,129,.5)}
+html[data-theme="dark"] .st-action.danger:hover{border-color:#FF7B81;background:rgba(255,123,129,.12);color:#FF7B81}
 .st-action.primary:hover{background:var(--accent-dim);border-color:transparent;color:var(--accent-ink)}
 .st-action:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .st-body{flex:1 1 auto;min-height:0;overflow:auto;padding:6px 18px 18px}

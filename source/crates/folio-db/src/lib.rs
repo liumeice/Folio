@@ -698,6 +698,24 @@ impl Db {
 
     /// 清空打开历史：只删历史行；随后回收「既不在库也非内置」的登记行（连带进度与索引）。
     /// 库成员与内置文档的阅读进度不受影响；磁盘文件永不动。
+    /// 清空本地数据库（设置页「清空本地数据库」）：文档索引 / 最近打开 / 阅读进度 /
+    /// 文件夹登记 / 全部设置与 FTS 一并删除。只动 SQLite 内的数据，**不碰磁盘上的任何文件**。
+    /// 返回删除前的 documents 行数（供界面提示）。
+    pub fn wipe_all(&self) -> Result<usize> {
+        self.with_tx(|c| {
+            let docs: i64 = c.query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))?;
+            c.execute("DELETE FROM documents", [])?;
+            c.execute("DELETE FROM positions", [])?;
+            c.execute("DELETE FROM recents", [])?;
+            c.execute("DELETE FROM roots", [])?;
+            c.execute("DELETE FROM settings", [])?;
+            // FTS：有触发器时已随 documents 清空；独立表时补两刀（两种 schema 都安全）
+            let _ = c.execute("INSERT INTO docs_fts(docs_fts) VALUES('delete-all')", []);
+            let _ = c.execute("DELETE FROM docs_fts", []);
+            Ok(docs as usize)
+        })
+    }
+
     pub fn clear_recents(&self) -> Result<RecentReport> {
         self.with_tx(|c| {
             let cleared = c.execute("DELETE FROM recents", [])? as i64;

@@ -83,6 +83,8 @@ export default function Icons() {
       <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20.2 12a8.2 8.2 0 1 1-2.4-5.8"/><path d="M20.6 4.2v4.4h-4.4"/></symbol>
       {/* 界面语言「跟随系统」项（多语言设计 §2.1）：地球仪，与 ui-iconset-18 同族 */}
       <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><ellipse cx="12" cy="12" rx="3.9" ry="8.6"/><path d="M3.6 12h16.8M4.9 7.7h14.2M4.9 16.3h14.2"/></symbol>
+      {/* 破坏性操作确认框图标（2026-11-24 需求方定夺）：黄色实心感叹号三角，颜色自带不随主题 */}
+      <symbol id="i-warn-tri" viewBox="0 0 24 24"><path d="M12 3.1 22.3 20.7H1.7Z" fill="#F2B01E"/><path d="M12 9.1v4.7" stroke="#3A2A00" stroke-width="1.9" stroke-linecap="round"/><circle cx="12" cy="16.9" r="1.1" fill="#3A2A00"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
       <symbol id="i-trash" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></g></symbol>
       <symbol id="i-co-note" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2M12 7.8h.01"/></symbol>

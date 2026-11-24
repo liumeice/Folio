@@ -164,6 +164,24 @@ export default function SettingsPanel() {
     const path = await api.exportSettings(s.settings());
     s.toast(path ? t("settings.panel.exported", { path }) : t("settings.panel.exportCancelled"));
   }
+  /* 清空本地数据库：确认框 → 删 SQLite 数据 → 重新加载（浏览器 mock 清演示数据）。
+   * 只动本地库，不碰磁盘上的 Markdown 文件；设置的「取消」不参与（已删除的数据无法快照回滚）。 */
+  async function onClearDb() {
+    const ok = await ui.ask({
+      title: t("settings.panel.clearDbTitle"),
+      note: t("settings.panel.clearDbNote"),
+      icon: "i-warn-tri",
+      ok: t("settings.panel.clearDbConfirm"),
+    });
+    if (ok !== true) return;
+    try {
+      await api.resetDatabase();
+      location.reload();
+    } catch (e) {
+      s.toast(t("settings.panel.clearDbFailed") + ui.fmtErr(e));
+    }
+  }
+
   async function onImport() {
     const r = await api.importSettings();   // UI-12：取消/无效/成功 三态分开提示
     if (r.kind === "cancel") return;        // 取消保持零打扰（与其它对话框口径一致）
@@ -239,6 +257,14 @@ export default function SettingsPanel() {
           )}</For>
 
           {/* 预览样张已于 2026-11-16 移除（需求方点名）：正文本就实时吃这些设置，样张属重复 */}
+
+          {/* 破坏性动作放滚动区最末（需求 2026-11-24）：需要主动滚到底才可见，不占抬头/页脚显眼位 */}
+          <div class="st-danger-zone">
+            <button type="button" class="st-action danger" title={t("settings.panel.clearDbTitle")} onClick={() => void onClearDb()}>
+              <svg class="ico ico-14" aria-hidden="true"><use href="#i-co-warning" /></svg>
+              {t("settings.panel.clearDb")}
+            </button>
+          </div>
         </div>
 
         <footer class="st-foot">

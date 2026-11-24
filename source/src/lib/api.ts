@@ -407,6 +407,21 @@ async function apiPickFolder(): Promise<string | null> {
 }
 
 /** 新建文档草稿：写入应用数据目录 drafts/（不进库、不进树），返回可打开路径 */
+/** 清空本地数据库（设置页入口，设计无先例、需求 2026-11-24）：
+ *  Tauri 侧删 SQLite 内的索引/历史/进度/库根/设置与 FTS，不动磁盘文件；浏览器 mock 清演示数据。 */
+async function apiResetDatabase(): Promise<number> {
+  if (isTauri) return invoke<number>("reset_database");
+  let n = 0;
+  try {
+    const docs = JSON.parse(localStorage.getItem(LS_KEY) || "[]") as unknown[];
+    n = docs.length;
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith(LS_KEY) || k === "folio:localePref" || k === "folio:localeResolved") localStorage.removeItem(k);
+    }
+  } catch { /* 隐私模式：忽略 */ }
+  return n;
+}
+
 async function apiNewDocDraft(): Promise<string> {
   // 默认名与正文标题按当前 UI 语言生成（设计 §4.6.7；写入后不回改）
   const base = t("file.untitled");
@@ -971,6 +986,7 @@ export const api = {
   listDir: apiListDir,
   mdCount: apiMdCount,
   newDocDraft: apiNewDocDraft,
+  resetDatabase: apiResetDatabase,
   deleteScratch: apiDeleteScratch,
   writeFile: apiWriteFile,
   onOpenRequest,
