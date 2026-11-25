@@ -8,8 +8,10 @@ import { For, Show, createEffect, createSignal, on, untrack } from "solid-js";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
 import { api } from "../lib/api";
+import { revealInFolder } from "../lib/actions";
 import { ACCENTS } from "../lib/accent";
-import { t } from "../lib/i18n";
+import { t, tp } from "../lib/i18n";
+import { formatNumber } from "../lib/i18n/format";
 import LangSelect from "./LangSelect";
 import {
   activeDomain, bump, GROUPS, ITEMS, resetPatch,
@@ -17,6 +19,13 @@ import {
 } from "../lib/settings-spec";
 
 /** 三张主题卡的迷你预览配色（纹路第 1/4 条走 var(--accent)，随所选强调色实时变；其余为各主题中性色） */
+/** 确认框里的数据库文件大小：按 B/KB/MB 取一档，保留 1 位小数 */
+function fmtSize(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
 const THEME_PREVIEW: Record<string, { bg: string; side: string; bar: string }> = {
   dark: { bg: "#101A2C", side: "#0E1728", bar: "#2A3B58" },
   light: { bg: "#FFFFFF", side: "#E9ECF3", bar: "#DBE0E9" },
@@ -167,11 +176,29 @@ export default function SettingsPanel() {
   /* 清空本地数据库：确认框 → 删 SQLite 数据 → 重新加载（浏览器 mock 清演示数据）。
    * 只动本地库，不碰磁盘上的 Markdown 文件；设置的「取消」不参与（已删除的数据无法快照回滚）。 */
   async function onClearDb() {
+    // 确认框展示数据库文件完整路径与占用大小（2026-11-25）；点路径在资源管理器中定位。
+    // 取不到信息时不阻断清空，退回纯说明文案。
+    let rows: [string, string | { text: string; onClick?: () => void }[], (() => void)?][] | undefined;
+    try {
+      const info = await api.dbInfo();
+      // 只显示文件名（2026-11-25）；点击仍在资源管理器中定位完整路径
+      const name = info.path.split(/[\\/]/).pop() || info.path;
+      rows = [[
+        t("settings.panel.clearDbPath"),
+        [
+          { text: name, onClick: () => { void revealInFolder(info.path, s); } },
+          { text: fmtSize(info.size) },
+          { text: tp("settings.panel.clearDbDocsInline", info.docs, { count: formatNumber(info.docs) }) },
+        ],
+      ]];
+    } catch { /* 数据库信息不可用：只显示原有说明 */ }
     const ok = await ui.ask({
       title: t("settings.panel.clearDbTitle"),
       note: t("settings.panel.clearDbNote"),
       icon: "i-warn-tri",
       ok: t("settings.panel.clearDbConfirm"),
+      rows,
+      plainBox: true,
     });
     if (ok !== true) return;
     try {

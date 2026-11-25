@@ -407,6 +407,27 @@ async function apiPickFolder(): Promise<string | null> {
 }
 
 /** 新建文档草稿：写入应用数据目录 drafts/（不进库、不进树），返回可打开路径 */
+export interface DbInfo {
+  path: string;
+  size: number;
+  docs: number;
+}
+
+/** 本地数据库文件信息（设置页清空确认框，2026-11-25 需求）：完整路径 + 占用字节数 */
+async function apiDbInfo(): Promise<DbInfo> {
+  if (isTauri) return invoke<DbInfo>("db_info");
+  let n = 0;
+  let docs = 0;
+  try {
+    const keys = ["folio:localePref", "folio:localeResolved"];
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith(LS_KEY) || keys.includes(k)) n += (localStorage.getItem(k)?.length ?? 0) * 2;
+    }
+    docs = (JSON.parse(localStorage.getItem(LS_KEY) || "[]") as unknown[]).length;
+  } catch { /* 隐私模式：按 0 计 */ }
+  return { path: "localStorage://folio-browser-mock", size: n, docs };
+}
+
 /** 清空本地数据库（设置页入口，设计无先例、需求 2026-11-24）：
  *  Tauri 侧删 SQLite 内的索引/历史/进度/库根/设置与 FTS，不动磁盘文件；浏览器 mock 清演示数据。 */
 async function apiResetDatabase(): Promise<number> {
@@ -986,6 +1007,7 @@ export const api = {
   listDir: apiListDir,
   mdCount: apiMdCount,
   newDocDraft: apiNewDocDraft,
+  dbInfo: apiDbInfo,
   resetDatabase: apiResetDatabase,
   deleteScratch: apiDeleteScratch,
   writeFile: apiWriteFile,

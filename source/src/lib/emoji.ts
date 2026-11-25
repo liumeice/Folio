@@ -1,4 +1,7 @@
 /* GFM emoji 短代码：:rocket: → 🚀。未知短代码原样保留（GitHub 行为）。
+ *   字形缺失兜底（2026-11-25）：短代码查到了、但本机 emoji 字体没有该码位的字形时
+ *   （Windows 10 的 Segoe UI Emoji 停在 1.29，U+1FAE0 🫠 等 Emoji 13+ 共 112 条没有），
+ *   阅读窗显示源码短代码 :melting_face:，不显示豆腐块（见 applyEmojis）。
  * 应用位置：内联引擎的"纯文本叶子"——代码段、URL、属性值不经过这里，天然免疫。
  *
  * 命名口径（2026-11-25）：覆盖 GitHub gemoji 全集 1913 个键 = 规范名 + gemoji 别名，
@@ -331,7 +334,95 @@ export const EMOJI: Record<string, string> = {
 
 const EMOJI_RE = /:([a-z0-9_+\-]{1,32}):/g;
 
-/** 对"已转义的纯文本叶子"做短代码替换；未知保持原样 */
+/* ---- 字形可用性探测（2026-11-25） ----
+ * 短代码是"写对了但本机画不出来"：Windows 10 的 Segoe UI Emoji 1.29 只到 Emoji 12，
+ * Melting Face 这类 Emoji 13/14/15 码位没有字形，WebView 直接渲染成方框（豆腐块）。
+ * 这里用 canvas 像素比对判断字形是否存在：把字符画进 40×40 画布，和"必定缺失"的
+ * 非字符码位（U+FFFF/U+10FFFE）的 .notdef 位图比对，完全相同（或整张空白）即缺字形。
+ * 每个码位只探测一次并缓存；Node 单测没有 document，未探测一律按可渲染处理。
+ * 探测失败（CSP、无 2D 上下文等）也按可渲染处理——宁可维持现状，不误杀正常 emoji。 */
+const PROBE_SIZE = 40;
+const PROBE_FONT = '30px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+const MISSING_REFS = ["\uFFFF", "\u{10FFFE}"];
+const glyphCache = new Map<string, boolean>();
+const emojiCache = new Map<string, boolean>();
+let probeCtx: CanvasRenderingContext2D | null | undefined;
+let missingSigs: string[] | null = null;
+
+function getProbeCtx(): CanvasRenderingContext2D | null {
+  if (probeCtx !== undefined) return probeCtx;
+  probeCtx = null;
+  if (typeof document === "undefined") return null;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = PROBE_SIZE;
+    canvas.height = PROBE_SIZE;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.font = PROBE_FONT;
+      ctx.textBaseline = "top";
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#000";
+      probeCtx = ctx;
+    }
+  } catch { /* 探测不可用：按可渲染处理 */ }
+  return probeCtx;
+}
+
+/** 画一个字符并返回位图指纹（着色像素数 + FNV-1a 哈希） */
+function glyphSignature(ctx: CanvasRenderingContext2D, ch: string): string {
+  ctx.clearRect(0, 0, PROBE_SIZE, PROBE_SIZE);
+  ctx.fillText(ch, 0, 0);
+  const data = ctx.getImageData(0, 0, PROBE_SIZE, PROBE_SIZE).data;
+  let h = 2166136261;
+  let ink = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] !== 0) ink++;
+    for (let k = 0; k < 4; k++) h = Math.imul(h ^ data[i + k], 16777619);
+  }
+  return ink + ":" + (h >>> 0).toString(36);
+}
+
+function isGlyphRenderable(ch: string): boolean {
+  const hit = glyphCache.get(ch);
+  if (hit !== undefined) return hit;
+  const ctx = getProbeCtx();
+  if (!ctx) return true;
+  try {
+    missingSigs ??= MISSING_REFS.map((r) => glyphSignature(ctx, r));
+    // 画布一个像素都没画出来（隐私模式/后端异常）：探测不可信，按可渲染处理
+    const refs = missingSigs.filter((s) => !s.startsWith("0:"));
+    if (refs.length === 0) return true;
+    const sig = glyphSignature(ctx, ch);
+    const ok = !sig.startsWith("0:") && !refs.includes(sig);
+    glyphCache.set(ch, ok);
+    return ok;
+  } catch {
+    return true;
+  }
+}
+
+/** 整串 emoji（含 ZWJ 序列/变体选择符/旗帜 tag）是否都能在本机字形里画出来 */
+function canRenderEmoji(emoji: string): boolean {
+  const hit = emojiCache.get(emoji);
+  if (hit !== undefined) return hit;
+  let ok = true;
+  for (const ch of emoji) {
+    const cp = ch.codePointAt(0) as number;
+    if (cp === 0x200d || cp === 0xfe0e || cp === 0xfe0f) continue; // ZWJ / 变体选择符：不可见
+    if (cp >= 0xe0020 && cp <= 0xe007f) continue;                  // 旗帜 tag 序列：不可见
+    if (!isGlyphRenderable(ch)) { ok = false; break; }
+  }
+  emojiCache.set(emoji, ok);
+  return ok;
+}
+
+/** 对"已转义的纯文本叶子"做短代码替换；未知短代码与本机缺字形的字符都保持原样 */
 export function applyEmojis(escapedText: string): string {
-  return escapedText.replace(EMOJI_RE, (whole, name: string) => EMOJI[name] ?? whole);
+  return escapedText.replace(EMOJI_RE, (whole, name: string) => {
+    const emoji = EMOJI[name];
+    if (emoji === undefined) return whole;          // 未知短代码：GitHub 行为是原样显示
+    if (!canRenderEmoji(emoji)) return whole;       // 本机无字形：显示源码短代码，不出方框
+    return emoji;
+  });
 }

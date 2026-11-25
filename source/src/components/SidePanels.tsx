@@ -634,9 +634,11 @@ export function CrumbBar() {
     <div class="crumb-bar">
       <span class="path ellip">
         <svg class="ico"><use href="#i-folder" /></svg>
-        <span>{crumb().dir}</span>
-        <i>{crumb().sep}</i>
-        <b>{crumb().name}</b>
+        {/* 目录、分隔符、文件名必须是同一段连续文本：旧写法三个 flex 子项被 gap 拉开，
+            窄窗下还会把最后的 \ 挤到单独一行（2026-11-25 需求方指正） */}
+        <span class="path-text" title={crumb().dir + crumb().sep + crumb().name}>
+          <span>{crumb().dir}</span><i>{crumb().sep}</i><b>{crumb().name}</b>
+        </span>
       </span>
     </div>
   );

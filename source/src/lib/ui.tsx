@@ -37,7 +37,9 @@ export interface AskSpec {
   title: string;
   sub?: string;
   icon?: string;
-  rows?: [string, string][];
+  /** 键值行；第二项给字符串=纯值，给分段数组=行内多段（段可带 onClick 变成链接）；
+   * 第三项给回调时整段值可点击（旧用法）。 */
+  rows?: [string, string | { text: string; onClick?: () => void }[], (() => void)?][];
   note: string;
   /** 两钮形态的主按钮文案（默认「确定」）；给 buttons 时忽略 */
   ok?: string;
@@ -45,6 +47,8 @@ export interface AskSpec {
   buttons?: readonly { label: string; value: string; primary?: boolean }[];
   /** note 走 plain 样式：无圆角边框盒、字号加大 2 号（11.5→13.5）——退出警告专用 */
   notePlain?: boolean;
+  /** 行间无分隔线、note 无边框盒（清空数据库确认框，2026-11-25） */
+  plainBox?: boolean;
 }
 export const [pickReq, setPickReq] = createSignal<{ mode: PickMode; name?: string; dir?: string | null } | null>(null);
 export const [askReq, setAskReq] = createSignal<AskSpec | null>(null);

@@ -360,78 +360,132 @@ const CALLOUTS: { kind: CalloutKind; label: MessageKey }[] = [
   { kind: "CAUTION", label: "editor.callout.caution" },
 ];
 
-/* Emoji 插入面板（原型 2026-11-19 新增）：五种文档高频场景分组，展示顺序即此顺序
- * （原型 EMOJI_GROUP_ORDER：状态与标记优先）；alt 为短代码别名，仅进悬浮提示。
- * P3 迁移：Emoji 字符与 :shortcode: 不翻译；场景提示按短代码派生 key
- * （editor.emoji.scene.<shortcode>，对照表 #92–#153），组名走 editor.emoji.group.*。 */
+/* Emoji 插入面板（原型 editor-ctxmenu.html 2026-11-25 目录：8 组 105 项）。
+ * 单击默认插入 Unicode 字符（面板内可切「短代码」）；alt 为短代码别名，仅进悬浮提示。
+ * 短代码一律取 GitHub gemoji 正名；场景提示 key 由短代码派生（editor.emoji.scene.<shortcode>），
+ * 组名走 editor.emoji.group.*；Emoji 字符与 :shortcode: 不翻译。 */
 interface EmojiItem { char: string; code: string; scene: MessageKey; alt?: string }
 const EMOJI_GROUPS: { group: MessageKey; items: EmojiItem[] }[] = [
   { group: "editor.emoji.group.status", items: [
     { char: "✅", code: ":white_check_mark:", scene: "editor.emoji.scene.white_check_mark" },
-    { char: "☑️", code: ":ballot_box_with_check:", scene: "editor.emoji.scene.ballot_box_with_check" },
     { char: "❌", code: ":x:", scene: "editor.emoji.scene.x" },
     { char: "⚠️", code: ":warning:", scene: "editor.emoji.scene.warning" },
     { char: "❗", code: ":exclamation:", scene: "editor.emoji.scene.exclamation" },
     { char: "❓", code: ":question:", scene: "editor.emoji.scene.question" },
-    { char: "🚧", code: ":construction:", scene: "editor.emoji.scene.construction" },
+    { char: "🚫", code: ":no_entry_sign:", scene: "editor.emoji.scene.no_entry_sign" },
+    { char: "⛔", code: ":no_entry:", scene: "editor.emoji.scene.no_entry" },
+    { char: "🔴", code: ":red_circle:", scene: "editor.emoji.scene.red_circle" },
+    { char: "🟡", code: ":yellow_circle:", scene: "editor.emoji.scene.yellow_circle" },
+    { char: "🟢", code: ":green_circle:", scene: "editor.emoji.scene.green_circle" },
+    { char: "🔵", code: ":large_blue_circle:", scene: "editor.emoji.scene.large_blue_circle" },
+    { char: "⭕", code: ":o:", scene: "editor.emoji.scene.o" },
+    { char: "✔️", code: ":heavy_check_mark:", scene: "editor.emoji.scene.heavy_check_mark" },
+    { char: "❎", code: ":negative_squared_cross_mark:", scene: "editor.emoji.scene.negative_squared_cross_mark" },
+    { char: "🏁", code: ":checkered_flag:", scene: "editor.emoji.scene.checkered_flag" },
     { char: "🔒", code: ":lock:", scene: "editor.emoji.scene.lock" },
-    { char: "🔥", code: ":fire:", scene: "editor.emoji.scene.fire" },
-    { char: "⭐", code: ":star:", scene: "editor.emoji.scene.star" },
-    { char: "🆕", code: ":new:", scene: "editor.emoji.scene.new" },
-    { char: "🆗", code: ":ok:", scene: "editor.emoji.scene.ok" },
   ] },
-  { group: "editor.emoji.group.emotion", items: [
-    { char: "🙂", code: ":slightly_smiling_face:", scene: "editor.emoji.scene.slightly_smiling_face" },
-    { char: "😄", code: ":smile:", scene: "editor.emoji.scene.smile" },
-    { char: "😂", code: ":joy:", scene: "editor.emoji.scene.joy" },
-    { char: "😊", code: ":blush:", scene: "editor.emoji.scene.blush" },
-    { char: "😉", code: ":wink:", scene: "editor.emoji.scene.wink" },
-    { char: "🤔", code: ":thinking:", scene: "editor.emoji.scene.thinking" },
-    { char: "😅", code: ":sweat_smile:", scene: "editor.emoji.scene.sweat_smile" },
-    { char: "😢", code: ":cry:", scene: "editor.emoji.scene.cry" },
-    { char: "😮", code: ":open_mouth:", scene: "editor.emoji.scene.open_mouth" },
-    { char: "😡", code: ":rage:", scene: "editor.emoji.scene.rage" },
-    { char: "❤️", code: ":heart:", scene: "editor.emoji.scene.heart" },
-    { char: "🎉", code: ":tada:", scene: "editor.emoji.scene.tada" },
-  ] },
-  { group: "editor.emoji.group.gesture", items: [
-    { char: "👍", code: ":+1:", scene: "editor.emoji.scene.+1", alt: ":thumbsup:" },
-    { char: "👎", code: ":-1:", scene: "editor.emoji.scene.-1", alt: ":thumbsdown:" },
-    { char: "👏", code: ":clap:", scene: "editor.emoji.scene.clap" },
-    { char: "🙏", code: ":pray:", scene: "editor.emoji.scene.pray" },
-    { char: "💪", code: ":muscle:", scene: "editor.emoji.scene.muscle" },
-    { char: "👀", code: ":eyes:", scene: "editor.emoji.scene.eyes" },
-    { char: "🤝", code: ":handshake:", scene: "editor.emoji.scene.handshake" },
-    { char: "✌️", code: ":v:", scene: "editor.emoji.scene.v" },
-  ] },
-  { group: "editor.emoji.group.dev", items: [
-    { char: "🐛", code: ":bug:", scene: "editor.emoji.scene.bug" },
-    { char: "🔧", code: ":wrench:", scene: "editor.emoji.scene.wrench" },
-    { char: "✨", code: ":sparkles:", scene: "editor.emoji.scene.sparkles" },
+  { group: "editor.emoji.group.tips", items: [
+    { char: "💡", code: ":bulb:", scene: "editor.emoji.scene.bulb" },
     { char: "📝", code: ":memo:", scene: "editor.emoji.scene.memo" },
     { char: "📌", code: ":pushpin:", scene: "editor.emoji.scene.pushpin" },
-    { char: "📎", code: ":paperclip:", scene: "editor.emoji.scene.paperclip" },
-    { char: "🔗", code: ":link:", scene: "editor.emoji.scene.link" },
-    { char: "💡", code: ":bulb:", scene: "editor.emoji.scene.bulb" },
-    { char: "📊", code: ":bar_chart:", scene: "editor.emoji.scene.bar_chart" },
-    { char: "🚀", code: ":rocket:", scene: "editor.emoji.scene.rocket" },
+    { char: "📍", code: ":round_pushpin:", scene: "editor.emoji.scene.round_pushpin" },
+    { char: "ℹ️", code: ":information_source:", scene: "editor.emoji.scene.information_source" },
+    { char: "📢", code: ":loudspeaker:", scene: "editor.emoji.scene.loudspeaker" },
+    { char: "📣", code: ":mega:", scene: "editor.emoji.scene.mega" },
+    { char: "🔔", code: ":bell:", scene: "editor.emoji.scene.bell" },
+    { char: "🧠", code: ":brain:", scene: "editor.emoji.scene.brain" },
     { char: "🎯", code: ":dart:", scene: "editor.emoji.scene.dart" },
-    { char: "🕐", code: ":clock1:", scene: "editor.emoji.scene.clock1" },
-    { char: "💬", code: ":speech_balloon:", scene: "editor.emoji.scene.speech_balloon" },
-    { char: "👉", code: ":point_right:", scene: "editor.emoji.scene.point_right" },
+    { char: "🧩", code: ":jigsaw:", scene: "editor.emoji.scene.jigsaw" },
     { char: "🔍", code: ":mag:", scene: "editor.emoji.scene.mag" },
-    { char: "📦", code: ":package:", scene: "editor.emoji.scene.package" },
-    { char: "🧪", code: ":test_tube:", scene: "editor.emoji.scene.test_tube" },
-    { char: "🗑️", code: ":wastebasket:", scene: "editor.emoji.scene.wastebasket" },
+    { char: "🔎", code: ":mag_right:", scene: "editor.emoji.scene.mag_right" },
+    { char: "📖", code: ":book:", scene: "editor.emoji.scene.book" },
+    { char: "📚", code: ":books:", scene: "editor.emoji.scene.books" },
+    { char: "🗂️", code: ":card_index_dividers:", scene: "editor.emoji.scene.card_index_dividers" },
   ] },
-  { group: "editor.emoji.group.arrow", items: [
-    { char: "➡️", code: ":arrow_right:", scene: "editor.emoji.scene.arrow_right" },
-    { char: "⬅️", code: ":arrow_left:", scene: "editor.emoji.scene.arrow_left" },
-    { char: "⬆️", code: ":arrow_up:", scene: "editor.emoji.scene.arrow_up" },
-    { char: "⬇️", code: ":arrow_down:", scene: "editor.emoji.scene.arrow_down" },
-    { char: "🔁", code: ":repeat:", scene: "editor.emoji.scene.repeat" },
-    { char: "➕", code: ":heavy_plus_sign:", scene: "editor.emoji.scene.heavy_plus_sign" },
-    { char: "➖", code: ":heavy_minus_sign:", scene: "editor.emoji.scene.heavy_minus_sign" },
+  { group: "editor.emoji.group.structure", items: [
+    { char: "📋", code: ":clipboard:", scene: "editor.emoji.scene.clipboard" },
+    { char: "📄", code: ":page_facing_up:", scene: "editor.emoji.scene.page_facing_up" },
+    { char: "📑", code: ":bookmark_tabs:", scene: "editor.emoji.scene.bookmark_tabs" },
+    { char: "🗒️", code: ":spiral_notepad:", scene: "editor.emoji.scene.spiral_notepad" },
+    { char: "📊", code: ":bar_chart:", scene: "editor.emoji.scene.bar_chart" },
+    { char: "📈", code: ":chart_with_upwards_trend:", scene: "editor.emoji.scene.chart_with_upwards_trend" },
+    { char: "📉", code: ":chart_with_downwards_trend:", scene: "editor.emoji.scene.chart_with_downwards_trend" },
+    { char: "🧾", code: ":receipt:", scene: "editor.emoji.scene.receipt" },
+    { char: "🗓️", code: ":spiral_calendar:", scene: "editor.emoji.scene.spiral_calendar" },
+    { char: "⏱️", code: ":stopwatch:", scene: "editor.emoji.scene.stopwatch" },
+    { char: "⏳", code: ":hourglass_flowing_sand:", scene: "editor.emoji.scene.hourglass_flowing_sand" },
+    { char: "🔖", code: ":bookmark:", scene: "editor.emoji.scene.bookmark" },
+    { char: "🔗", code: ":link:", scene: "editor.emoji.scene.link" },
+    { char: "📎", code: ":paperclip:", scene: "editor.emoji.scene.paperclip" },
+    { char: "🖇️", code: ":paperclips:", scene: "editor.emoji.scene.paperclips" },
+    { char: "🗃️", code: ":card_file_box:", scene: "editor.emoji.scene.card_file_box" },
+  ] },
+  { group: "editor.emoji.group.dev", items: [
+    { char: "💻", code: ":computer:", scene: "editor.emoji.scene.computer" },
+    { char: "⌨️", code: ":keyboard:", scene: "editor.emoji.scene.keyboard" },
+    { char: "🖥️", code: ":desktop_computer:", scene: "editor.emoji.scene.desktop_computer" },
+    { char: "🐛", code: ":bug:", scene: "editor.emoji.scene.bug" },
+    { char: "🔧", code: ":wrench:", scene: "editor.emoji.scene.wrench" },
+    { char: "🔨", code: ":hammer:", scene: "editor.emoji.scene.hammer" },
+    { char: "⚙️", code: ":gear:", scene: "editor.emoji.scene.gear" },
+    { char: "🛠️", code: ":hammer_and_wrench:", scene: "editor.emoji.scene.hammer_and_wrench" },
+    { char: "🚀", code: ":rocket:", scene: "editor.emoji.scene.rocket" },
+    { char: "📦", code: ":package:", scene: "editor.emoji.scene.package" },
+    { char: "🏗️", code: ":building_construction:", scene: "editor.emoji.scene.building_construction" },
+    { char: "🧪", code: ":test_tube:", scene: "editor.emoji.scene.test_tube" },
+    { char: "🧫", code: ":petri_dish:", scene: "editor.emoji.scene.petri_dish" },
+    { char: "🔐", code: ":closed_lock_with_key:", scene: "editor.emoji.scene.closed_lock_with_key" },
+    { char: "🌐", code: ":globe_with_meridians:", scene: "editor.emoji.scene.globe_with_meridians" },
+    { char: "☁️", code: ":cloud:", scene: "editor.emoji.scene.cloud" },
+    { char: "🗄️", code: ":file_cabinet:", scene: "editor.emoji.scene.file_cabinet" },
+    { char: "🔄", code: ":arrows_counterclockwise:", scene: "editor.emoji.scene.arrows_counterclockwise" },
+    { char: "♻️", code: ":recycle:", scene: "editor.emoji.scene.recycle" },
+    { char: "🧹", code: ":broom:", scene: "editor.emoji.scene.broom" },
+  ] },
+  { group: "editor.emoji.group.version", items: [
+    { char: "🏷️", code: ":label:", scene: "editor.emoji.scene.label" },
+    { char: "📅", code: ":date:", scene: "editor.emoji.scene.date" },
+    { char: "🆕", code: ":new:", scene: "editor.emoji.scene.new" },
+    { char: "🆙", code: ":up:", scene: "editor.emoji.scene.up" },
+    { char: "🐣", code: ":hatching_chick:", scene: "editor.emoji.scene.hatching_chick" },
+    { char: "🎉", code: ":tada:", scene: "editor.emoji.scene.tada" },
+    { char: "🏆", code: ":trophy:", scene: "editor.emoji.scene.trophy" },
+    { char: "🥇", code: ":1st_place_medal:", scene: "editor.emoji.scene.1st_place_medal" },
+    { char: "🥈", code: ":2nd_place_medal:", scene: "editor.emoji.scene.2nd_place_medal" },
+    { char: "🚧", code: ":construction:", scene: "editor.emoji.scene.construction" },
+    { char: "⏸️", code: ":pause_button:", scene: "editor.emoji.scene.pause_button" },
+    { char: "▶️", code: ":arrow_forward:", scene: "editor.emoji.scene.arrow_forward" },
+  ] },
+  { group: "editor.emoji.group.collab", items: [
+    { char: "👤", code: ":bust_in_silhouette:", scene: "editor.emoji.scene.bust_in_silhouette" },
+    { char: "👥", code: ":busts_in_silhouette:", scene: "editor.emoji.scene.busts_in_silhouette" },
+    { char: "🙋", code: ":raising_hand:", scene: "editor.emoji.scene.raising_hand" },
+    { char: "✍️", code: ":writing_hand:", scene: "editor.emoji.scene.writing_hand" },
+    { char: "👀", code: ":eyes:", scene: "editor.emoji.scene.eyes" },
+    { char: "👍", code: ":+1:", scene: "editor.emoji.scene.+1", alt: ":thumbsup:" },
+    { char: "👎", code: ":-1:", scene: "editor.emoji.scene.-1", alt: ":thumbsdown:" },
+    { char: "💬", code: ":speech_balloon:", scene: "editor.emoji.scene.speech_balloon" },
+    { char: "🤝", code: ":handshake:", scene: "editor.emoji.scene.handshake" },
+    { char: "📮", code: ":postbox:", scene: "editor.emoji.scene.postbox" },
+    { char: "🧑‍💻", code: ":technologist:", scene: "editor.emoji.scene.technologist" },
+    { char: "🙌", code: ":raised_hands:", scene: "editor.emoji.scene.raised_hands" },
+  ] },
+  { group: "editor.emoji.group.emphasis", items: [
+    { char: "⭐", code: ":star:", scene: "editor.emoji.scene.star" },
+    { char: "🌟", code: ":star2:", scene: "editor.emoji.scene.star2" },
+    { char: "🔥", code: ":fire:", scene: "editor.emoji.scene.fire" },
+    { char: "💯", code: ":100:", scene: "editor.emoji.scene.100" },
+    { char: "✨", code: ":sparkles:", scene: "editor.emoji.scene.sparkles" },
+    { char: "🎨", code: ":art:", scene: "editor.emoji.scene.art" },
+    { char: "🖼️", code: ":framed_picture:", scene: "editor.emoji.scene.framed_picture" },
+    { char: "🎬", code: ":clapper:", scene: "editor.emoji.scene.clapper" },
+  ] },
+  { group: "editor.emoji.group.extra", items: [
+    { char: "📱", code: ":iphone:", scene: "editor.emoji.scene.iphone" },
+    { char: "📧", code: ":email:", scene: "editor.emoji.scene.email" },
+    { char: "💰", code: ":moneybag:", scene: "editor.emoji.scene.moneybag" },
+    { char: "💸", code: ":money_with_wings:", scene: "editor.emoji.scene.money_with_wings" },
+    { char: "⏰", code: ":alarm_clock:", scene: "editor.emoji.scene.alarm_clock" },
   ] },
 ];
 type EmojiMode = "code" | "unicode";
@@ -446,8 +500,8 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
   const [hasSel, setHasSel] = createSignal(props.tt.hasSelection);
   const [openSub, setOpenSub] = createSignal<string | null>(null);
   const [hover, setHover] = createSignal({ c: 3, r: 3 });
-  /* Emoji 插入制式：短代码（:smile:）或 Unicode 字符，面板内切换、不关菜单（原型口径） */
-  const [emojiMode, setEmojiMode] = createSignal<EmojiMode>("code");
+  /* Emoji 插入制式：默认 Unicode 字符；面板内可切短代码（:smile:），切换不关菜单（2026-11-25 需求） */
+  const [emojiMode, setEmojiMode] = createSignal<EmojiMode>("unicode");
   let el!: HTMLDivElement;
 
   const bridge = () => ui.getEditorBridge();
@@ -723,7 +777,7 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
       {menuItem("i-heading", "editor.block.heading", () => setOpenSub("heading"), { sub: "heading" })}
       {menuItem("i-code", "editor.block.code", () => void run({ kind: "code", lang: "" }), { sub: "code", default: true, subClass: "langpick" })}
       {menuItem("ix-callout", "editor.block.callout", () => setOpenSub("callout"), { sub: "callout" })}
-      {menuItem("", "editor.emoji.title", () => setOpenSub("emoji"), { sub: "emoji", glyph: "🙂" })}
+      {menuItem("", "editor.emoji.title", () => setOpenSub("emoji"), { sub: "emoji", glyph: "🙂", subClass: "emojipick" })}
       {menuItem("i-image", "editor.block.image", () => void run({ kind: "image", labels: insertLabels() }))}
       {menuItem("i-link", "editor.block.link", () => void run({ kind: "link", labels: insertLabels() }))}
       {menuItem("i-divider", "editor.block.divider", () => void run({ kind: "hr" }))}

@@ -24,10 +24,21 @@ export default function AskDialog() {
               <svg class="ico ico-14"><use href="#i-x" /></svg>
             </span>
           </div>
-          <div class="modal-b">
-            <For each={a.rows ?? []}>{([k, v]) => (
+          <div class="modal-b" classList={{ "plain-box": !!a.plainBox }}>
+            <For each={a.rows ?? []}>{([k, v, on]) => (
               <div class="krow"><span style={{ color: "var(--text-3)" }}>{k}</span><span class="sp" />
-                <span class="ask-val">{v}</span></div>
+                <Show when={typeof v !== "string" || on}
+                  fallback={<span class="ask-val">{v as string}</span>}>
+                  {typeof v === "string"
+                    ? <button type="button" class="ask-val link" title={v}
+                        onClick={(e) => { e.stopPropagation(); on!(); }}>{v}</button>
+                    : <span class="ask-val ask-parts">
+                        <For each={v}>{(p) => p.onClick
+                          ? <button type="button" class="ask-part link" title={p.text}
+                              onClick={(e) => { e.stopPropagation(); p.onClick!(); }}>{p.text}</button>
+                          : <span>{p.text}</span>}</For>
+                      </span>}
+                </Show></div>
             )}</For>
             <div class="ask-note" classList={{ plain: !!a.notePlain }}>{a.note}</div>
           </div>

@@ -724,6 +724,37 @@ async fn md_count(path: String) -> Result<usize, CommandError> {
 ///  folio_fs::new_doc 仍被 new_doc_draft 复用。）
 
 /// 新建文档草稿：落在应用数据目录 drafts/（不进库不进树），首次保存后由 delete_scratch 清理
+/// 设置页「清空本地数据库」确认框所需信息：数据库文件完整路径与占用大小。
+/// 大小取 folio.db + folio.db-wal + folio.db-shm 之和（WAL 未 checkpoint 时数据在 -wal 里）。
+#[derive(Serialize)]
+struct DbInfo {
+    path: String,
+    size: u64,
+    /// documents 登记数（确认框「已收录 N 篇文档」）
+    docs: usize,
+}
+
+#[tauri::command]
+async fn db_info(app: AppHandle, state: State<'_, AppState>) -> Result<DbInfo, CommandError> {
+    let dir = app.path().app_data_dir()
+        .map_err(|e| CommandError::new("internal", format!("app_data_dir unavailable: {e}")))?;
+    let path = dir.join("folio.db");
+    let mut size = 0u64;
+    for suffix in ["", "-wal", "-shm"] {
+        let p = std::path::PathBuf::from(format!("{}{}", path.display(), suffix));
+        if let Ok(m) = std::fs::metadata(&p) {
+            size += m.len();
+        }
+    }
+    let db = state.db.clone();
+    let docs = tauri::async_runtime::spawn_blocking(move || {
+        db.doc_count().map_err(CommandError::from_core)
+    })
+    .await
+    .map_err(join_err)??;
+    Ok(DbInfo { path: path.display().to_string(), size, docs })
+}
+
 /// 清空本地数据库（设置页入口）：文档索引 / 历史 / 进度 / 库根 / 设置与 FTS；不动磁盘文件。
 #[tauri::command]
 async fn reset_database(state: State<'_, AppState>) -> Result<usize, CommandError> {
@@ -977,6 +1008,7 @@ pub fn run() {
             list_dir,
             md_count,
             new_doc_draft,
+            db_info,
             reset_database,
             delete_scratch,
             set_pinned,

@@ -698,6 +698,14 @@ impl Db {
 
     /// 清空打开历史：只删历史行；随后回收「既不在库也非内置」的登记行（连带进度与索引）。
     /// 库成员与内置文档的阅读进度不受影响；磁盘文件永不动。
+    /// 当前 documents 登记数（设置页清空确认框「已收录 N 篇文档」；2026-11-25）。
+    pub fn doc_count(&self) -> Result<usize> {
+        self.with_read(|c| {
+            let n: i64 = c.query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))?;
+            Ok(n as usize)
+        })
+    }
+
     /// 清空本地数据库（设置页「清空本地数据库」）：文档索引 / 最近打开 / 阅读进度 /
     /// 文件夹登记 / 全部设置与 FTS 一并删除。只动 SQLite 内的数据，**不碰磁盘上的任何文件**。
     /// 返回删除前的 documents 行数（供界面提示）。
