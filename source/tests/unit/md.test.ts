@@ -374,6 +374,15 @@ test("emoji：未知短代码原样保留（GitHub 行为）", () => {
   assert.ok(h.includes(":not_a_real_one:") && h.includes("🚀"), h);
 });
 
+test("emoji：编辑窗面板短代码在段落/标题/列表/引用/表格中都渲染（2026-11-25）", () => {
+  assert.ok(mdToHtml(":slightly_smiling_face:").includes("🙂"), "段落");
+  assert.ok(mdToHtml("## 标题 :joy:").includes("😂"), "标题");
+  assert.ok(mdToHtml("- 列表 :new:").includes("🆕"), "列表");
+  assert.ok(mdToHtml("> 引用 :ok:").includes("🆗"), "引用");
+  const t = mdToHtml("| A | B |\n|---|---|\n| :rocket: | :v: |");
+  assert.ok(t.includes("🚀") && t.includes("✌️"), "表格");
+});
+
 test("Callout：嵌套列表/代码正常渲染，普通 blockquote 不回归", () => {
   const h = mdToHtml("> [!TIP]\n> - 要点一\n> - 要点二");
   assert.ok(/<ul[ >]/.test(h) && h.includes("要点一"), h);
