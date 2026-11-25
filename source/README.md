@@ -260,3 +260,9 @@ $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9223"
 - 新增设置项只展示真实落地的字段。
 - 新增 Tauri 命令时，同步后端、注册表和前端 API。
 - 修改前端后，最终用 `npx tauri build` 验证正式产物。
+
+## 11. 第三方许可
+
+- **Inter**（英文界面 UI 字体，可变字重 100–900）：SIL Open Font License 1.1，Copyright (c) 2016–2020 The Inter Project Authors。
+  字体文件在 `src/assets/fonts/inter-latin-wght-normal.woff2`，由 `src/styles/app.css` 的 `@font-face` 本地引用（Vite 打包，无外联）。
+  许可全文见 `src/assets/fonts/OFL.txt`；发行包内副本为 `public/fonts/OFL-Inter.txt`（构建后位于 `dist/fonts/`，随安装包分发）。

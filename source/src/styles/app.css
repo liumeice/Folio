@@ -1,6 +1,16 @@
 /* Folio 正式版样式 —— 自 v0.1 原型收敛版移植：token 体系、双主题、组件类名保持一致。
  * 差异：无 CDN 字体（NFR-7 零外联）；窗口全幅（自绘标题栏）；编辑器为 CodeMirror 6。 */
 
+/* 英文界面 UI 字体：Inter 可变字体（本地打包，零外联；SIL OFL 1.1，许可见 assets/fonts/OFL.txt）。
+ * Vite 会把 url() 指向的 woff2 复制进构建产物并加 hash。 */
+@font-face{
+  font-family:"Inter";
+  src:url("../assets/fonts/inter-latin-wght-normal.woff2") format("woff2");
+  font-weight:100 900;
+  font-style:normal;
+  font-display:swap;
+}
+
 :root{
   --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;
   --font-prose:Georgia,"Noto Serif SC","Source Han Serif SC","Microsoft YaHei UI",serif;
@@ -9,6 +19,8 @@
   --h-title:40px; --h-status:30px; --w-rail:48px; --w-side:266px;
   --amber:#F59E0B;
 }
+/* 仅英文界面换用 Inter；中文界面沿用 :root 原栈，Inter 缺失的字形（中文/日文等）按后续回退链显示 */
+html[lang="en-US"]{--font-ui:"Inter","Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif}
 [data-theme="dark"]{
   --bg-frame:#080D18; --bg-chrome:#0B1222; --bg-side:#0E1728;
   --bg-edit:#101A2C; --bg-view:#0C1424; --bg-raise:#16223A;
