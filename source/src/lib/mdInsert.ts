@@ -5,6 +5,7 @@
  *  （只读静态目录，不依赖 locale/t()，纯函数与现有测试不受影响）。
  * 生成时跟随当前 UI 语言（Overlays 编辑菜单传入），写入文档后不回改（2026-11-24 定夺）。 */
 import { zhCN } from "./i18n/catalog/zh-CN.ts";
+import { frontMatterEnd, splitSrcLines } from "./md.ts";
 
 export type ListKind = "ul" | "ol" | "task";
 export type WrapKind = "bold" | "italic" | "code" | "strike" | "link";
@@ -46,6 +47,7 @@ export type EditorCmd =
   | { kind: "image"; labels?: InsertLabels }
   | { kind: "link"; labels?: InsertLabels }
   | { kind: "hr" }
+  | { kind: "yaml" }
   | { kind: "wrap"; style: WrapKind }
   | { kind: "list"; list: ListKind | "quote" }
   | { kind: "clip"; action: "cut" | "copy" | "paste" | "delete" | "selectAll" };
@@ -174,6 +176,18 @@ export function linkOp(src: string, from: number, to: number, labels: InsertLabe
 
 export function hrOp(src: string, from: number, to: number): EditOp {
   return insertBlock(src, from, to, "---", 3);
+}
+
+/* YAML 头（front matter）只认文档首行，所以固定插到最前而不是光标处；
+ * src 只需传文档开头片段（判定看首个 front matter 区）。开头已有 YAML 头 → null，
+ * 由调用方提示、不重复插入。非空文档与正文之间留一个空行（原有前导换行不吞）。 */
+export const YAML_HEADER = "---\nname: \ndescription: \n---";
+export const YAML_CARET = "---\nname: ".length;
+
+export function yamlOp(src: string): EditOp | null {
+  if (frontMatterEnd(splitSrcLines(src)) >= 0) return null;
+  const sep = src ? (src.startsWith("\n") ? "\n" : "\n\n") : "";
+  return { from: 0, to: 0, insert: YAML_HEADER + sep, selFrom: YAML_CARET, selTo: YAML_CARET };
 }
 
 /** 行前缀：标题替换原有级别前缀；引用去掉已有 > 后重加。选区逐行处理。 */

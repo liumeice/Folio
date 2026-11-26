@@ -386,7 +386,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     ]);
   }
 
-  async function switchTo(doc: DocFull, opts?: { secText?: string | null; record?: boolean; quiet?: boolean }) {
+  async function switchTo(doc: DocFull, opts?: { secText?: string | null; record?: boolean; quiet?: boolean; boot?: boolean }) {
     // 落盘「离开处」的位置（N4）。审查 v3.0 P0-3：不 await——flushPosition 的同步前缀
     // （读 current()/posSource、更新 positionsMap/history）在 await 之前就已完成，后面只剩
     // 一次 savePosition IPC；写锁忙时（扫描/optimize/VACUUM）它会把切页签整个卡住。
@@ -428,17 +428,20 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     // 打开/切页签不再触发 list_docs + list_recents + list_roots 三次全量查询。
     // 历史导航（record:false）在 Rust 侧同样会刷新 opened_at，这里一并跟随。
     touchRecent(doc.meta);
-    // 草稿找回（FR-7.7）：存在"晚于文件 mtime"的未保存草稿 → 询问恢复
-    const dr = getDraft(doc.meta.path);
-    if (dr && dr.at > doc.meta.mtime * 1000 + 1500 && dr.text !== doc.src) {
-      const yes = (await ui.ask({
-        icon: "i-info", title: t("store.draftFound.title"),
-        sub: t("store.draftFound.sub", { name: doc.meta.fileName }),
-        note: t("store.draftFound.note"),
-        ok: t("store.draftFound.ok"),
-      })) === true;
-      if (yes) { setDraftSrc(dr.text); setDirty(true); toast(t("store.draftRestored")); }
-      else clearDraft(doc.meta.path);
+    // 草稿找回（FR-7.7）：存在"晚于文件 mtime"的未保存草稿 → 询问恢复。
+    // 启动恢复（boot）不弹「发现未保存的修改」：静默保留草稿，等用户之后主动打开该文档再问。
+    if (!opts?.boot) {
+      const dr = getDraft(doc.meta.path);
+      if (dr && dr.at > doc.meta.mtime * 1000 + 1500 && dr.text !== doc.src) {
+        const yes = (await ui.ask({
+          icon: "i-info", title: t("store.draftFound.title"),
+          sub: t("store.draftFound.sub", { name: doc.meta.fileName }),
+          note: t("store.draftFound.note"),
+          ok: t("store.draftFound.ok"),
+        })) === true;
+        if (yes) { setDraftSrc(dr.text); setDirty(true); toast(t("store.draftRestored")); }
+        else clearDraft(doc.meta.path);
+      }
     }
   }
 
@@ -1043,10 +1046,10 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     const allowRestore = !tabsEmptyAtQuit() && shouldRestoreOnBoot(settings().restoreOnLaunch, bootNavType());
     if (allowRestore && sess && sess.paths.length) {
       for (const p of sess.paths) {
-        try { await switchTo(await api.openDoc(p), { quiet: true }); } catch { /* 缺失/不可读：跳过 */ }
+        try { await switchTo(await api.openDoc(p), { quiet: true, boot: true }); } catch { /* 缺失/不可读：跳过 */ }
       }
       if (sess.active && tabs().some((tab) => tab.path === sess.active)) {
-        try { await switchTo(await api.openDoc(sess.active)); } catch { /* ignore */ }
+        try { await switchTo(await api.openDoc(sess.active), { boot: true }); } catch { /* ignore */ }
       }
       setBooted(true);
     } else if (allowRestore && restore) {

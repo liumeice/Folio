@@ -9,9 +9,10 @@
  * 都标成 processingInstruction，所以行内/围栏、子弹/普通标记在 tag 层面分不开——
  * 这里按语法树补行装饰与标记装饰，颜色全部留在 CSS，深浅主题自动跟随。 */
 import { syntaxTree } from "@codemirror/language";
-import type { Range } from "@codemirror/state";
+import type { Range, Text } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
+import { frontMatterEnd } from "./md.ts";
 
 const LINE_NODES = new Map<string, string>([
   ["FencedCode", "cm-fence-line"],
@@ -22,6 +23,23 @@ const LINE_NODES = new Map<string, string>([
 const MARK_NODES = new Set(["ListMark"]);
 
 type Item = { from: number; to: number; deco: Range<Decoration> };
+
+/** 文档开头 YAML front matter 的收口行号（无 → 0）。逐行读取，不复制整篇；
+ *  判据与阅读区一致（md.ts frontMatterEnd：首行 --- + body 像 YAML + ---/... 收口）。 */
+export function frontMatterLastLine(doc: Text): number {
+  if (doc.lines < 2 || doc.line(1).text.trimEnd() !== "---") return 0;
+  const lines: string[] = [];
+  const cap = Math.min(doc.lines, 2000);   // 防御异常长文头部；正常 front matter 只有几行
+  for (let n = 1; n <= cap; n++) {
+    const text = doc.line(n).text;
+    lines.push(text);
+    if (n === 1) continue;
+    const t = text.trimEnd();
+    if (t !== "---" && t !== "...") continue;
+    return frontMatterEnd(lines) >= 0 ? n : 0;
+  }
+  return 0;
+}
 
 function build(view: EditorView): DecorationSet {
   const items: Item[] = [];
@@ -39,6 +57,15 @@ function build(view: EditorView): DecorationSet {
       pos = line.to + 1;
     }
   };
+
+  /* YAML front matter（2026-11-26）：lezer-markdown 不认头部区，收口 --- 会把上面几行
+   * 当 Setext 标题（首行 --- 是 hr、其余是粗体标题，视觉不一致）。整块打 cm-frontmatter，
+   * CSS 把标题样式降回正文，与阅读区的元数据卡对齐。 */
+  const fmEnd = frontMatterLastLine(doc);
+  for (let n = 1; n <= fmEnd; n++) {
+    const line = doc.line(n);
+    addLines(line.from, line.to, "cm-frontmatter");
+  }
 
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(view.state).iterate({

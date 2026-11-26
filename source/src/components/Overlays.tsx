@@ -125,7 +125,8 @@ export function AboutModal() {
           </div>
         </div>
         <div class="modal-f"><span style={{ "font-size": "11.5px", color: "var(--text-3)" }}>{t("about.footer")}</span><span class="sp" />
-          <button class="btn primary" onClick={() => ui.setAboutOpen(false)}>{t("about.ok")}</button></div>
+          <button class="btn primary" style={{ "min-width": "88px", "justify-content": "center" }}
+            onClick={() => ui.setAboutOpen(false)}>{t("about.ok")}</button></div>
       </div>
     </OverlayShell>
   );
@@ -279,6 +280,7 @@ export function HitNav() {
 interface CTool { act: string; label: MessageKey; kbd: string; needSel: boolean; icon?: string; glyph?: string; glyphCls?: string }
 interface WTool { style: WrapKind; label: MessageKey; kbd: string; icon?: string; glyph?: string; glyphCls?: string }
 interface LTool { list: ListKind | "quote"; label: MessageKey; icon?: string; glyph?: string; glyphCls?: string }
+interface BTool { cmd: "image" | "link" | "hr" | "yaml"; label: MessageKey; icon?: string; icoCls?: string }
 
 const EDIT_ACTIONS: CTool[] = [
   { act: "cut", label: "editor.action.cut", kbd: "Ctrl+X", needSel: true, icon: "i-scissors" },
@@ -301,6 +303,15 @@ const LIST_ACTIONS: LTool[] = [
   { list: "ol", label: "editor.list.ol", icon: "i-list-number" },
   { list: "task", label: "editor.list.task", icon: "i-task-list" },
   { list: "quote", label: "editor.list.quote", icon: "i-quote" },
+];
+
+/* 块级工具行（2026-11-26）：图片 / 链接 / 分割线 / YAML 头图标化，紧贴列表四工具下方。
+ * 分割线（三段短划）与 YAML 字标在 16px 框里偏小，按原型口径单独放大。 */
+const BLOCK_ACTIONS: BTool[] = [
+  { cmd: "image", label: "editor.block.image", icon: "i-image" },
+  { cmd: "link", label: "editor.block.link", icon: "i-link" },
+  { cmd: "hr", label: "editor.block.divider", icon: "i-divider", icoCls: "ico-20" },
+  { cmd: "yaml", label: "editor.block.yaml", icon: "i-yaml", icoCls: "ico-28" },
 ];
 
 /* 代码块语言面板（原型口径）：分组 + 芯片；lang 即写进围栏的值，""=不带语言标识。
@@ -330,7 +341,6 @@ const LANG_GROUPS: { group: MessageKey; items: LangItem[] }[] = [
   ] },
   { group: "editor.lang.group.data", items: [
     { lang: "json", label: "JSON", tip: "json" },
-    { lang: "yaml", label: "YAML", tip: "yaml / yml" },
     { lang: "toml", label: "TOML", tip: "toml" },
     { lang: "xml", label: "XML", tip: "xml" },
     { lang: "sql", label: "SQL", tip: "sql" },
@@ -491,9 +501,9 @@ const EMOJI_GROUPS: { group: MessageKey; items: EmojiItem[] }[] = [
 type EmojiMode = "code" | "unicode";
 const emojiCodes = (it: EmojiItem) => (it.alt ? `${it.code} / ${it.alt}` : it.code);
 
-const toolIcon = (t: { icon?: string; glyph?: string; glyphCls?: string }) =>
+const toolIcon = (t: { icon?: string; glyph?: string; glyphCls?: string; icoCls?: string }) =>
   t.icon
-    ? <svg class="ico"><use href={"#" + t.icon} /></svg>
+    ? <svg class={"ico" + (t.icoCls ? " " + t.icoCls : "")}><use href={"#" + t.icon} /></svg>
     : <span class={t.glyphCls}>{t.glyph}</span>;
 
 function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
@@ -515,6 +525,13 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
       ui.setCtxMenu(null);
       b.focusEditor();
     }
+  }
+
+  function runBlock(a: BTool) {
+    if (a.cmd === "image") void run({ kind: "image", labels: insertLabels() });
+    else if (a.cmd === "link") void run({ kind: "link", labels: insertLabels() });
+    else if (a.cmd === "hr") void run({ kind: "hr" });
+    else void run({ kind: "yaml" });
   }
 
   function clamp() {
@@ -773,14 +790,20 @@ function EditorCtxMenu(props: { tt: CtxTarget & { kind: "editor" } }) {
           </button>
         )}</For>
       </div>
+      <div class="ctx-tools block-tools">
+        <For each={BLOCK_ACTIONS}>{(a) => (
+          <button type="button" class="ctool" title={t(a.label)} aria-label={t(a.label)} role="menuitem"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => runBlock(a)}>
+            {toolIcon(a)}
+          </button>
+        )}</For>
+      </div>
       {menuItem("i-table", "editor.block.table", () => void run({ kind: "table", cols: 3, rows: 3, labels: insertLabels() }), { sub: "table", default: true })}
       {menuItem("i-heading", "editor.block.heading", () => setOpenSub("heading"), { sub: "heading" })}
       {menuItem("i-code", "editor.block.code", () => void run({ kind: "code", lang: "" }), { sub: "code", default: true, subClass: "langpick" })}
       {menuItem("ix-callout", "editor.block.callout", () => setOpenSub("callout"), { sub: "callout" })}
       {menuItem("", "editor.emoji.title", () => setOpenSub("emoji"), { sub: "emoji", glyph: "🙂", subClass: "emojipick" })}
-      {menuItem("i-image", "editor.block.image", () => void run({ kind: "image", labels: insertLabels() }))}
-      {menuItem("i-link", "editor.block.link", () => void run({ kind: "link", labels: insertLabels() }))}
-      {menuItem("i-divider", "editor.block.divider", () => void run({ kind: "hr" }))}
     </div>
   );
 }

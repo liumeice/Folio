@@ -402,6 +402,9 @@ svg{display:block}
 .cmx-url{color:var(--text-3);text-decoration:underline;
   text-decoration-color:color-mix(in srgb,var(--accent) 35%,transparent)}     /* hl-url */
 .cmx-rule{color:var(--text-3)}                                               /* hl-hr */
+/* YAML front matter：lezer 把收口 --- 当 Setext 下划线，name/description 会染成标题粗体，
+ * 而首行 --- 只是 hr——整块打 cm-frontmatter 后标题样式降回正文，三行观感一致 */
+.cm-line.cm-frontmatter .cmx-head{color:var(--text-2);font-weight:400;text-decoration:none}
 .cmx-task{color:var(--accent);font-weight:700}                               /* hl-task */
 .cmx-title{color:var(--text-3)}                                              /* 链接 title */
 .cmx-esc{color:var(--accent-dim)}                                            /* 转义/实体/注释 */
@@ -744,6 +747,9 @@ html[lang="en-US"] .st-hint{line-height:1.5}
 .ctool{height:28px;border:none;border-radius:6px;background:none;color:var(--text-2);
   display:flex;align-items:center;justify-content:center;cursor:pointer}
 .ctool .ico{width:16px;height:16px;color:var(--text-3)}
+/* 块级工具行：分割线三段短划、YAML 字标在 16px 框里偏小，按原型口径单独放大 */
+.ctool .ico-20{width:20px;height:20px}
+.ctool .ico-28{width:28px;height:28px}
 .ctool:hover{background:var(--bg-hover);color:var(--text)}
 .ctool:hover .ico{color:var(--text)}
 .ctool:disabled{opacity:.42;cursor:default;background:none;color:var(--text-3)}

@@ -18,7 +18,7 @@ import { t } from "../lib/i18n";
 import { SYNC_EPSILON } from "../lib/nav";
 import { commonEditRange } from "../lib/textedit";
 import {
-  calloutOp, codeBlockOp, emojiOp, hrOp, imageOp, linkOp, listOp, prefixLinesOp, tableOp, wrapOp,
+  calloutOp, codeBlockOp, emojiOp, hrOp, imageOp, linkOp, listOp, prefixLinesOp, tableOp, wrapOp, yamlOp,
   type EditOp, type EditorCmd,
 } from "../lib/mdInsert";
 
@@ -181,6 +181,15 @@ export default function EditorPane() {
       case "hr": {
         const w = localWindow("block", from, to);
         applyOp(hrOp(w.src, w.from, w.to), w.base);
+        break;
+      }
+      case "yaml": {
+        // 只读文档开头片段：front matter 判定与插入定坐标都在首区，不复制全文（P1-3）
+        const doc = v.state.doc;
+        const head = doc.sliceString(0, Math.min(doc.length, 64 * 1024));
+        const op = yamlOp(head);
+        if (!op) { s.toast(t("editorpane.yamlExists")); return false; }
+        applyOp(op, 0);
         break;
       }
       case "wrap": {

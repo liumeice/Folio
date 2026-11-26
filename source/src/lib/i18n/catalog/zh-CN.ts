@@ -349,7 +349,7 @@ export const zhCN = {
   "about.docCount.other": "本地运行 · 已收录 {count} 篇文档",
   "about.browserPreview": "浏览器预览模式（数据保存在浏览器里，不写磁盘）",
   "about.footer": "数据只存在这台电脑上 · 网络图片按需加载",
-  "about.ok": "好",
+  "about.ok": "确定",
   "about.openLinkFailed": "打开外链失败",
 
   /* ── 文档信息弹层 ── */
@@ -423,6 +423,7 @@ export const zhCN = {
   "editor.block.image": "图片",
   "editor.block.link": "链接（新建）",
   "editor.block.divider": "分隔线",
+  "editor.block.yaml": "YAML 头",
 
   "editor.lang.group.general": "通用",
   "editor.lang.group.frontend": "前端",
@@ -579,6 +580,7 @@ export const zhCN = {
   "editorpane.pasted": "已粘贴",
   "editorpane.clipboard.readFailed": "无法读取剪贴板，请按 Ctrl+V",
   "editorpane.clipboard.empty": "剪贴板为空",
+  "editorpane.yamlExists": "文档开头已有 YAML 头，未重复插入",
   /* 底栏按 v2.0 片段合并口径：整句 + {x} 占位，渲染时按占位切段保留 <b> 加粗 */
   "editorpane.bar.hint": "编辑模式已开启行号和高亮；滚动、大纲与阅读视图保持同步",
   "editorpane.bar.status": "编辑模式 — {x}已开启",

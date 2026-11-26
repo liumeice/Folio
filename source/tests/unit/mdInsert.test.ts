@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  calloutOp, codeBlockOp, emojiOp, hrOp, imageOp, insertBlock, linkOp, listOp, prefixLinesOp, tableOp, wrapOp,
+  calloutOp, codeBlockOp, emojiOp, hrOp, imageOp, insertBlock, linkOp, listOp, prefixLinesOp, tableOp, wrapOp, yamlOp,
   type EditOp,
 } from "../../src/lib/mdInsert.ts";
 
@@ -122,6 +122,24 @@ test("分隔线：独占一行，光标在行尾", () => {
   const op = hrOp("", 0, 0);
   assert.equal(apply("", op), "---");
   assert.equal(op.selFrom, 3);
+});
+
+/* ── YAML 头（2026-11-26 原型口径）──────────────────────────── */
+
+test("YAML 头：插到文档最前，光标进 name 字段，与正文隔一个空行", () => {
+  const src = "# 标题\n\n正文";
+  const op = yamlOp(src);
+  assert.ok(op);
+  assert.equal(apply(src, op), "---\nname: \ndescription: \n---\n\n# 标题\n\n正文");
+  assert.deepEqual([op.selFrom, op.selTo], [10, 10]);
+});
+
+test("YAML 头：空文档不加尾随空行；开头已有 front matter 则拒绝", () => {
+  const empty = yamlOp("");
+  assert.ok(empty);
+  assert.equal(apply("", empty), "---\nname: \ndescription: \n---");
+  assert.equal(yamlOp("---\ntitle: x\n---\n正文"), null);
+  assert.equal(yamlOp("---\nname: \ndescription: \n---\n\n正文"), null);
 });
 
 /* ── 标注块（2026-11-19 原型口径）────────────────────────────── */

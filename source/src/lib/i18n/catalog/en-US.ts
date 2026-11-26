@@ -415,6 +415,7 @@ export const enUS: Record<MessageKey, string> = {
   "editor.block.image": "Image",
   "editor.block.link": "Link (new)",
   "editor.block.divider": "Divider",
+  "editor.block.yaml": "YAML header",
 
   "editor.lang.group.general": "General",
   "editor.lang.group.frontend": "Frontend",
@@ -570,6 +571,7 @@ export const enUS: Record<MessageKey, string> = {
   "editorpane.pasted": "Pasted",
   "editorpane.clipboard.readFailed": "Could not read the clipboard. Press Ctrl+V.",
   "editorpane.clipboard.empty": "Clipboard is empty.",
+  "editorpane.yamlExists": "The document already starts with a YAML header.",
   "editorpane.bar.hint": "Edit mode shows line numbers and highlighting; scrolling, outline and reading view stay in sync.",
   "editorpane.bar.status": "Edit mode — {x} enabled",
   "editorpane.bar.features": "Line numbers / highlighting",
