@@ -3,8 +3,12 @@
  *  - 只把「命令 + 历史深度」包成可单测的纯适配层（EditorState + 假 dispatch 即可测）；
  *  - 菜单层不接触 EditorView，经 EditorBridge 调用；历史深度由编辑器事务回写给 ui 信号。
  * 历史是「编辑会话内」能力：保存/放弃/切换页签会卸载编辑器，历史随之清空（产品口径）。 */
-import type { EditorState, Transaction } from "@codemirror/state";
+import { Annotation, type EditorState, type Transaction } from "@codemirror/state";
 import { redo, redoDepth, undo, undoDepth } from "@codemirror/commands";
+
+/** 命令事务的显示名（Word 式撤销列表用）。命令事务另带 userEvent，
+ *  避免相邻命令/命令与输入被 CodeMirror 合并成一步。 */
+export const editLabel = Annotation.define<string>();
 
 /** 命令目标：EditorView 天然满足（state 取值 + dispatch(tr)） */
 export interface HistoryTarget {

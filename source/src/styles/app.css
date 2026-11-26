@@ -378,6 +378,23 @@ svg{display:block}
 .editor-bar{flex:none;display:flex;align-items:center;gap:12px;padding:0 12px;height:36px;border-bottom:1px solid var(--line);background:var(--bg-chrome);font-size:11.5px;color:var(--text-3)}
 .editor-bar .sp{flex:1}
 .editor-bar .hint b{color:var(--text-2);font-weight:550}
+/* Word 式撤销/重做：按钮 + 下拉箭头 + 操作列表（原型 editor-history.html 口径） */
+.hgroup{display:flex;align-items:center;gap:2px;flex:none}
+.hwrap{position:relative;display:flex;align-items:center}
+.hbtn,.harrow{height:24px;border:1px solid transparent;border-radius:5px;color:var(--text-2);
+  display:flex;align-items:center;justify-content:center;padding:0;background:none;cursor:pointer}
+.hbtn{width:27px}
+.harrow{width:16px;font-size:9px;color:var(--text-3)}
+.hbtn .ico{width:15px;height:15px}
+.hbtn:hover:not(:disabled),.harrow:hover:not(:disabled){background:var(--bg-hover);color:var(--text)}
+.hbtn:disabled,.harrow:disabled{opacity:.32;cursor:default}
+.hmenu{position:absolute;top:27px;left:0;width:300px;max-height:360px;overflow:auto;z-index:80;
+  background:var(--bg-raise);border:1px solid var(--line-hi);border-radius:8px;box-shadow:var(--shadow-pop);padding:4px}
+.hitem{display:block;width:100%;padding:7px 9px;border:none;border-radius:5px;background:none;
+  color:var(--text-2);font-size:12px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.hitem:hover,.hitem.hot{background:var(--bg-hover);color:var(--text)}
+.hfoot{position:sticky;bottom:-4px;margin-top:4px;padding:7px 9px;border-top:1px solid var(--line);
+  background:var(--bg-raise);font-size:10.5px;color:var(--text-3)}
 .btn{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 12px;border-radius:var(--r-2);font-size:12px;font-weight:550;cursor:pointer;border:1px solid var(--line);background:var(--bg-raise);color:var(--text)}
 .btn:hover{border-color:var(--line-hi);background:var(--bg-hover)}
 .btn.primary{background:var(--accent);border-color:transparent;color:var(--accent-ink)}

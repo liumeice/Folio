@@ -3,18 +3,19 @@
  * （v1.2 一把尺：小数源码行号 lineFloat，方案 §4.1(c)(d)）：
  *  topLine() —— 视口顶 → 小数行号（软换行按可视块折算，非整行吸附）；
  *  jumpToLine(lineFloat) —— scrollIntoView 贴整行 + 下一帧 coordsAtPos 精确对齐视口顶。 */
-import { Show, createEffect, createMemo, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { basicSetup } from "codemirror";
 import { EditorView, keymap } from "@codemirror/view";
 import { indentLess, insertTab } from "@codemirror/commands";
-import { historyDepths, undoOnce, redoOnce } from "../lib/editorHistory";
+import { editLabel, historyDepths, undoOnce, redoOnce } from "../lib/editorHistory";
+import { emptyJournal, historySnippet, reduceJournal, txTexts, type JournalState, type JournalStep } from "../lib/editorJournal";
 import { md } from "../lib/mdEditor";
 import { indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { mdHighlight } from "../lib/mdstyle";
 import { mdStructural } from "../lib/mdStructural";
 import { useStore } from "../lib/store";
 import * as ui from "../lib/ui";
-import { t } from "../lib/i18n";
+import { t, tp } from "../lib/i18n";
 import { SYNC_EPSILON } from "../lib/nav";
 import { commonEditRange } from "../lib/textedit";
 import {
@@ -27,6 +28,44 @@ export default function EditorPane() {
   let host!: HTMLDivElement;
   let view: EditorView | undefined;
   let raf = 0;
+  /* Word 式撤销/重做下拉：步骤日志随每次事务更新；
+   * 菜单开关与悬停计数是纯视图状态，不进入 store/ui 全局信号。 */
+  const [journal, setJournal] = createSignal<JournalState>(emptyJournal());
+  const [openHist, setOpenHist] = createSignal<"undo" | "redo" | null>(null);
+  const [hoverN, setHoverN] = createSignal(1);
+
+  const stepLabel = (step: JournalStep): string => {
+    if (step.kind === "cmd") return step.added;
+    const text = historySnippet(step.kind === "type" ? step.added : step.removed);
+    if (step.kind === "type") return text ? t("editorpane.history.typed", { text }) : t("editorpane.history.typing");
+    if (step.kind === "delete") return text ? t("editorpane.history.deleted", { text }) : t("editorpane.history.deleting");
+    return t("editorpane.history.replaced", { text });
+  };
+  const undoItems = () => journal().steps.slice(0, journal().depth).slice().reverse();
+  const redoItems = () => journal().steps.slice(journal().depth);
+  function toggleHist(which: "undo" | "redo") {
+    setHoverN(1);
+    setOpenHist(openHist() === which ? null : which);
+  }
+  /** 跳到指定 undoDepth：按步数循环 undo/redo（每次恰好消费一个 CM 历史事件） */
+  function jumpHistory(target: number) {
+    const v = view;
+    if (!v) return;
+    const from = historyDepths(v.state).undo;
+    const to = Math.max(0, Math.min(target, journal().steps.length));
+    if (to === from) { setOpenHist(null); return; }
+    let guard = 240;
+    while (guard-- > 0) {
+      const d = historyDepths(v.state).undo;
+      if (d === to) break;
+      if (d > to) { if (!undoOnce(v)) break; }
+      else if (!redoOnce(v)) break;
+    }
+    v.focus();
+    setOpenHist(null);
+    const n = Math.abs(from - to);
+    if (n > 0) s.toast(tp(to < from ? "editorpane.history.undone" : "editorpane.history.redone", n, { n }));
+  }
 
   /** 视口顶 → 小数源码行号（二轮评审 2.4：必须小数，整行吸附会让交接精度归零、往返在边界抖）。
    *  几何全走 CM 文档坐标（documentTop 系）：lineBlockAtHeight 找视口顶所在可视块 →
@@ -74,7 +113,11 @@ export default function EditorPane() {
     if (!v) return;
     const r = commonEditRange(v.state.doc.toString(), text);
     if (!r) return;
-    v.dispatch({ changes: { from: r.from, to: r.to, insert: r.insert } });
+    v.dispatch({
+      changes: { from: r.from, to: r.to, insert: r.insert },
+      userEvent: "insert.command",
+      annotations: editLabel.of(t("app.menu.document.format")),
+    });
   }
 
   /* ── 编辑窗右键插入（方案 N-CTX-01）────────────────────────────
@@ -111,13 +154,16 @@ export default function EditorPane() {
     return { src: doc.sliceString(base, b.to), base, from: from - base, to: to - base };
   }
 
-  function applyOp(op: EditOp, base: number, focus = true) {
+  function applyOp(op: EditOp, base: number, focus = true, label?: string) {
     const v = view;
     if (!v) return;
     v.dispatch({
       changes: { from: base + op.from, to: base + op.to, insert: op.insert },
       selection: { anchor: base + op.selFrom, head: base + op.selTo },
       effects: EditorView.scrollIntoView(base + op.selFrom),
+      // 命令各自成步：insert.command 不匹配 CM 的可合并 userEvent
+      userEvent: "insert.command",
+      annotations: label ? editLabel.of(label) : undefined,
     });
     if (focus) v.focus();
   }
@@ -130,57 +176,58 @@ export default function EditorPane() {
     switch (cmd.kind) {
       case "table": {
         const w = localWindow("block", from, to);
-        applyOp(tableOp(w.src, w.from, w.to, cmd.cols, cmd.rows, cmd.labels), w.base);
+        applyOp(tableOp(w.src, w.from, w.to, cmd.cols, cmd.rows, cmd.labels), w.base, true, t("editor.block.table"));
         break;
       }
       case "code": {
         if (from !== to) {
           const w = localWindow("selection", from, to);
-          applyOp(codeBlockOp(w.src, 0, w.to, cmd.lang), w.base);
+          applyOp(codeBlockOp(w.src, 0, w.to, cmd.lang), w.base, true, t("editor.block.code"));
         } else {
           const w = localWindow("block", from, to);
-          applyOp(codeBlockOp(w.src, w.from, w.to, cmd.lang), w.base);
+          applyOp(codeBlockOp(w.src, w.from, w.to, cmd.lang), w.base, true, t("editor.block.code"));
         }
         break;
       }
       case "heading": {
         const w = localWindow("lines", from, to);
-        applyOp(prefixLinesOp(w.src, w.from, w.to, "heading", cmd.level), w.base);
+        applyOp(prefixLinesOp(w.src, w.from, w.to, "heading", cmd.level), w.base, true,
+          t("editor.panel.headingLevel", { lv: cmd.level }));
         break;
       }
       case "callout": {
         if (from !== to) {
           const w = localWindow("lines", from, to);
-          applyOp(calloutOp(w.src, w.from, w.to, cmd.callout), w.base);
+          applyOp(calloutOp(w.src, w.from, w.to, cmd.callout), w.base, true, t("editor.block.callout"));
         } else {
           const w = localWindow("block", from, to);
-          applyOp(calloutOp(w.src, w.from, w.to, cmd.callout), w.base);
+          applyOp(calloutOp(w.src, w.from, w.to, cmd.callout), w.base, true, t("editor.block.callout"));
         }
         break;
       }
       case "emoji": {
         // 行内纯替换，不需要上下文窗口（P1-3：不复制周边文本）
-        applyOp(emojiOp("", from, to, cmd.text), 0);
+        applyOp(emojiOp("", from, to, cmd.text), 0, true, t("editor.emoji.title"));
         break;
       }
       case "image": {
         const w = localWindow("block", from, to);
-        applyOp(imageOp(w.src, w.from, w.to, cmd.labels), w.base);
+        applyOp(imageOp(w.src, w.from, w.to, cmd.labels), w.base, true, t("editor.block.image"));
         break;
       }
       case "link": {
         if (from !== to) {
           const w = localWindow("selection", from, to);
-          applyOp(linkOp(w.src, 0, w.to, cmd.labels), w.base);
+          applyOp(linkOp(w.src, 0, w.to, cmd.labels), w.base, true, t("editor.block.link"));
         } else {
           const w = localWindow("block", from, to);
-          applyOp(linkOp(w.src, w.from, w.to, cmd.labels), w.base);
+          applyOp(linkOp(w.src, w.from, w.to, cmd.labels), w.base, true, t("editor.block.link"));
         }
         break;
       }
       case "hr": {
         const w = localWindow("block", from, to);
-        applyOp(hrOp(w.src, w.from, w.to), w.base);
+        applyOp(hrOp(w.src, w.from, w.to), w.base, true, t("editor.block.divider"));
         break;
       }
       case "yaml": {
@@ -189,24 +236,31 @@ export default function EditorPane() {
         const head = doc.sliceString(0, Math.min(doc.length, 64 * 1024));
         const op = yamlOp(head);
         if (!op) { s.toast(t("editorpane.yamlExists")); return false; }
-        applyOp(op, 0);
+        applyOp(op, 0, true, t("editor.block.yaml"));
         break;
       }
       case "wrap": {
         if (from !== to) {
           const w = localWindow("selection", from, to);
-          applyOp(wrapOp(w.src, 0, w.to, cmd.style), w.base);
+          const label = cmd.style === "bold" ? t("editor.wrap.bold")
+            : cmd.style === "italic" ? t("editor.wrap.italic")
+            : cmd.style === "code" ? t("editor.wrap.code")
+            : cmd.style === "strike" ? t("editor.wrap.strike") : t("editor.wrap.link");
+          applyOp(wrapOp(w.src, 0, w.to, cmd.style), w.base, true, label);
         }
         break;
       }
       case "list": {
+        const label = cmd.list === "quote" ? t("editor.list.quote")
+          : cmd.list === "task" ? t("editor.list.task")
+          : cmd.list === "ol" ? t("editor.list.ol") : t("editor.list.ul");
         if (cmd.list === "quote") {
           const w = localWindow("lines", from, to);
-          applyOp(prefixLinesOp(w.src, w.from, w.to, "quote"), w.base);
+          applyOp(prefixLinesOp(w.src, w.from, w.to, "quote"), w.base, true, label);
         } else {
           const w = localWindow("lines", from, to);
           // 列表连点：菜单保持展开，不抢焦点
-          applyOp(listOp(w.src, w.from, w.to, cmd.list), w.base, false);
+          applyOp(listOp(w.src, w.from, w.to, cmd.list), w.base, false, label);
         }
         break;
       }
@@ -230,13 +284,13 @@ export default function EditorPane() {
           try { await navigator.clipboard.writeText(text); }
           catch { s.toast(t("side.status.clipboardFail")); return false; }
           if (v.state.doc !== doc) return false;   // 等待期间文档已变：不作废用户输入
-          applyOp({ from, to, insert: "", selFrom: from, selTo: from }, 0);
+          applyOp({ from, to, insert: "", selFrom: from, selTo: from }, 0, true, t("editor.action.cut"));
           s.toast(t("editorpane.cut"));
           return false;
         }
         if (cmd.action === "delete") {
           if (!text) return false;
-          applyOp({ from, to, insert: "", selFrom: from, selTo: from }, 0);
+          applyOp({ from, to, insert: "", selFrom: from, selTo: from }, 0, true, t("editor.action.delete"));
           return false;
         }
         // paste
@@ -245,7 +299,7 @@ export default function EditorPane() {
         if (clip == null) { s.toast(t("editorpane.clipboard.readFailed")); return false; }
         if (!clip) { s.toast(t("editorpane.clipboard.empty")); return false; }
         if (v.state.doc !== doc) return false;
-        applyOp({ from, to, insert: clip, selFrom: from + clip.length, selTo: from + clip.length }, 0);
+        applyOp({ from, to, insert: clip, selFrom: from + clip.length, selTo: from + clip.length }, 0, true, t("editor.action.paste"));
         s.toast(t("editorpane.pasted"));
         return false;
       }
@@ -306,6 +360,9 @@ export default function EditorPane() {
 
   onMount(() => {
     ui.setEditorTouched(false);   // 用户真的滚动过才算（滚轮/指针按下/翻页键）
+    // 新编辑会话：历史随编辑器清空，下拉列表也从空开始
+    setJournal(emptyJournal());
+    setOpenHist(null);
     view = new EditorView({
       doc: s.draftSrc(),
       parent: host,
@@ -339,6 +396,16 @@ export default function EditorPane() {
             // 撤销/重做方案 v1.0：历史深度回写 ui 信号，驱动「文档」菜单可用性
             const h = historyDepths(u.state);
             ui.setEditorHistoryDepth(h.undo, h.redo);
+            // Word 式下拉：用 undoDepth 当锚同步步骤日志（命令事务带 editLabel / userEvent）
+            const nav = u.transactions.some((tr) => tr.isUserEvent("undo") || tr.isUserEvent("redo"));
+            const editTr = nav ? undefined : u.transactions.find((tr) => tr.docChanged);
+            const texts = editTr ? txTexts(editTr) : { added: "", removed: "" };
+            setJournal((j) => reduceJournal(j, {
+              undoDepth: h.undo, redoDepth: h.redo, navigation: nav,
+              added: texts.added, removed: texts.removed,
+              label: editTr?.annotation(editLabel),
+            }));
+            if (!nav) setOpenHist(null);
           }
           if (u.viewportChanged || u.selectionSet) syncOutline();
         }),
@@ -375,6 +442,15 @@ export default function EditorPane() {
       const h0 = historyDepths(view.state);
       ui.setEditorHistoryDepth(h0.undo, h0.redo);
     }
+    // 撤销/重做下拉：点外面关闭；Esc 优先关下拉，不触发“放弃修改”
+    const onHistDown = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement | null)?.closest?.(".hgroup")) setOpenHist(null);
+    };
+    const onHistKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && openHist()) { e.preventDefault(); e.stopPropagation(); setOpenHist(null); }
+    };
+    document.addEventListener("mousedown", onHistDown);
+    document.addEventListener("keydown", onHistKey, true);
     view.contentDOM.addEventListener("mousedown", onMouseDown, true);
     view.contentDOM.addEventListener("contextmenu", onContextMenu);
     const pj = ui.takePendingEditorJump();
@@ -401,6 +477,8 @@ export default function EditorPane() {
     });
     onCleanup(() => {
       ui.registerEditorBridge(null);
+      document.removeEventListener("mousedown", onHistDown);
+      document.removeEventListener("keydown", onHistKey, true);
       view?.contentDOM.removeEventListener("mousedown", onMouseDown, true);
       view?.contentDOM.removeEventListener("contextmenu", onContextMenu);
       if (raf) cancelAnimationFrame(raf);
@@ -408,20 +486,54 @@ export default function EditorPane() {
     });
   });
 
-  /* 底栏状态句（对照表 编辑器 #9–#11 按 v2.0 片段合并口径）：整句 + {x} 占位建模，
-   * 渲染期按占位切前后段、中段保留 <b> 加粗。中文拼出与旧版逐字一致
-   * （"编辑模式 — 行号 / 高亮已开启"），英文拼出
-   * "Edit mode — Line numbers / highlighting enabled"，语言切换随 locale() 重渲染。 */
-  const barStatus = createMemo(() => {
-    const full = t("editorpane.bar.status");
-    const at = full.indexOf("{x}");
-    return at < 0 ? { pre: full, post: "" } : { pre: full.slice(0, at), post: full.slice(at + 3) };
-  });
-
   return (
     <div class="editor-wrap" classList={{ "is-hidden": s.mode() !== "edit" }}>
       <div class="editor-bar">
-        <span class="hint" title={t("editorpane.bar.hint")}>{barStatus().pre}<b>{t("editorpane.bar.features")}</b>{barStatus().post}</span>
+        {/* Word 式撤销/重做：按钮单击走一步，箭头展开操作列表（最新在上） */}
+        <div class="hgroup">
+          <div class="hwrap">
+            <button type="button" class="hbtn" title={t("editorpane.history.undoTitle")} aria-label={t("editorpane.history.undo")}
+              disabled={!ui.editorCanUndo()} onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { setOpenHist(null); ui.getEditorBridge()?.runUndo(); }}>
+              <svg class="ico"><use href="#i-undo" /></svg>
+            </button>
+            <button type="button" class="harrow" title={t("editorpane.history.undoHistory")} aria-label={t("editorpane.history.undoHistory")}
+              disabled={!ui.editorCanUndo()} onMouseDown={(e) => e.preventDefault()}
+              onClick={() => toggleHist("undo")}>▾</button>
+            <Show when={openHist() === "undo"}>
+              <div class="hmenu" role="menu">
+                <For each={undoItems()}>{(step, i) => (
+                  <button type="button" class="hitem" classList={{ hot: i() === 0 }} role="menuitem"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => setHoverN(i() + 1)}
+                    onClick={() => jumpHistory(step.depth - 1)}>{stepLabel(step)}</button>
+                )}</For>
+                <div class="hfoot">{tp("editorpane.history.undoCount", hoverN(), { n: hoverN() })}</div>
+              </div>
+            </Show>
+          </div>
+          <div class="hwrap">
+            <button type="button" class="hbtn" title={t("editorpane.history.redoTitle")} aria-label={t("editorpane.history.redo")}
+              disabled={!ui.editorCanRedo()} onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { setOpenHist(null); ui.getEditorBridge()?.runRedo(); }}>
+              <svg class="ico"><use href="#i-redo" /></svg>
+            </button>
+            <button type="button" class="harrow" title={t("editorpane.history.redoHistory")} aria-label={t("editorpane.history.redoHistory")}
+              disabled={!ui.editorCanRedo()} onMouseDown={(e) => e.preventDefault()}
+              onClick={() => toggleHist("redo")}>▾</button>
+            <Show when={openHist() === "redo"}>
+              <div class="hmenu" role="menu">
+                <For each={redoItems()}>{(step, i) => (
+                  <button type="button" class="hitem" classList={{ hot: i() === 0 }} role="menuitem"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => setHoverN(i() + 1)}
+                    onClick={() => jumpHistory(step.depth)}>{stepLabel(step)}</button>
+                )}</For>
+                <div class="hfoot">{tp("editorpane.history.redoCount", hoverN(), { n: hoverN() })}</div>
+              </div>
+            </Show>
+          </div>
+        </div>
         <span class="sp" />
         <Show when={s.dirty()}>
           <span class="hint" style={{ color: "var(--amber)" }}>{t("editorpane.dirty")}</span>
