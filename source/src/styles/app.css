@@ -255,6 +255,9 @@ svg{display:block}
 /* 高亮 ==文字==：随主题的浅色底，正文颜色不变（暗色下不刺眼） */
 .prose mark{background:var(--mark-bg);color:inherit;padding:0 2px;border-radius:2px}
 .prose{max-width:var(--prose-w,900px);margin:0 auto;padding:34px 44px 100px;font-family:var(--font-prose);
+  /* Georgia 默认旧式数字（3/4/5/7/9 下伸、6/8 上伸、0/1/2 齐 x 高），同段数字高低不一；
+     统一成齐线数字（Georgia 自带 lnum 特性；无此特性的回退字体忽略即可） */
+  font-variant-numeric:lining-nums;
   font-size:var(--prose-fs,15.5px);line-height:var(--prose-lh,1.85);color:var(--text);
   /* 排版抽屉的两个新旋钮：字距与对齐（变量出口在 lib/typography.ts） */
   letter-spacing:var(--prose-ls,0em);text-align:var(--prose-align,left)}
@@ -270,6 +273,13 @@ svg{display:block}
 .prose ul,.prose ol{margin:0 0 var(--prose-para,15px);padding-left:26px}
 .prose li{margin:0 0 6px}
 .prose ul > li::marker{color:var(--s-bullet)}
+/* 有序列表序号：Chromium 的 ::marker 不应用 OpenType 数字特性（font-variant-numeric /
+   font-feature-settings 在标记上都不生效），Georgia 的旧式数字仍会 3/4/5/7/9 下伸、
+   6/8 上伸。标记字体改用默认齐线的 Times New Roman；无衬线模式跟随 UI 字体（雅黑本身齐线）。 */
+.prose ol > li::marker,
+.prose li[style*="--mnr"]::marker{font-family:"Times New Roman",Georgia,serif}
+.prose.sans ol > li::marker,
+.prose.sans li[style*="--mnr"]::marker{font-family:var(--font-ui)}
 .prose li:has(>.cbx){list-style:none;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;padding:3px 0;margin-left:-26px}
 /* 嵌套有序列表层级编号（需求 2026-11-22）：md.ts 给带有序祖先的子项拼 --mnr:'2.1. '，
    标记按该串显示；顶层有序列表与脚注等无 --mnr 的走原生十进制，零回归。 */
