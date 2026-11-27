@@ -6,7 +6,7 @@
 import {
   createContext, useContext, createSignal, createEffect, onMount, type JSX, type ParentProps,
 } from "solid-js";
-import { api } from "./api";
+import { api, type FileChangedEvent } from "./api";
 import { swapPathPrefix } from "./filename";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { t, resolveLocale } from "./i18n/index.ts";
@@ -104,6 +104,16 @@ export interface Store {
   /** 另存为…（Ctrl+Shift+S）：写副本并把当前页签原位切到新文件，原文件不动 */
   saveAs(): Promise<boolean>;
   discard(): void;
+  /** 外部修改事件（notify）：只对当前文档生效，顶部弹提示 */
+  noteExternalChange(ev: FileChangedEvent): void;
+  /** 顶部提示「重新加载」：有未保存改动先弹冲突框 */
+  reloadExternal(): Promise<void>;
+  /** 冲突框确认/手动刷新：实际重读磁盘并应用（保位置、清编辑历史） */
+  applyExternalReload(pre?: DocFull): Promise<void>;
+  keepExternal(): void;
+  dismissExternal(ack?: boolean): void;
+  /** 菜单「重新加载文档」：磁盘无变化时提示「已是最新」 */
+  manualReload(): Promise<void>;
   applySaved(next: DocFull): void;
   /** 源码格式化后的内存更新（不写盘）：正文、大纲、统计与脏标记一次对齐。
    *  与 applySaved 的区别：大纲/统计按格式化后文本重算，且不触发阅读位置导航。 */
@@ -167,6 +177,9 @@ export function StoreProvider(props: ParentProps): JSX.Element {
   const [positionsMap, setPositionsMap] = createSignal<Record<number, Position>>({});
   const [mode, setMode] = createSignal<"read" | "edit">("read");
   const [dirty, setDirty] = createSignal(false);
+  /** 已点过「稍后/保留」的外部变化 stamp：同一变化不再重复弹提示 */
+  let extAck: { path: string; mtime: number; size: number } | null = null;
+  const samePath = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
   /* 预览阅读（《撤销/重做方案》v1.1，2026-11-23）：编辑返回阅读默认走「预览」——
    * 不写盘、editorSession 保留（编辑器隐藏不卸载，历史/选区/滚动保留），
    * 阅读窗显示 previewDoc（由草稿派生）而非磁盘旧文；仅「保存并返回阅读」才落盘并结束会话。 */
@@ -428,6 +441,10 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     // 打开/切页签不再触发 list_docs + list_recents + list_roots 三次全量查询。
     // 历史导航（record:false）在 Rust 侧同样会刷新 opened_at，这里一并跟随。
     touchRecent(doc.meta);
+    // 切文档：上一文档的外部修改提示/ack 作废，监听目标由 App 的 createEffect 重设
+    extAck = null;
+    ui.setFileChange(null);
+    ui.setFileConflict(false);
     // 草稿找回（FR-7.7）：存在"晚于文件 mtime"的未保存草稿 → 询问恢复。
     // 启动恢复（boot）不弹「发现未保存的修改」：静默保留草稿，等用户之后主动打开该文档再问。
     if (!opts?.boot) {
@@ -746,6 +763,10 @@ export function StoreProvider(props: ParentProps): JSX.Element {
         applySaved(next);                // 阅读态（打勾待存被「保存」）：原位重渲染不跳顶
       }
       clearDraft(cur.meta.path);
+      // 保存即覆盖磁盘：尚未处理的外部修改提示作废，watcher 回声按新 stamp 过滤
+      extAck = { path: next.meta.path, mtime: next.meta.mtime, size: next.meta.size };
+      ui.setFileChange(null);
+      ui.setFileConflict(false);
       toast(customMsg ?? t("store.saved"));
       return true;
     } catch (e) {
@@ -779,6 +800,98 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     recomputeDirty();  // Esc 只弃编辑缓冲；阅读态挂账的打勾不属于"编辑修改"，保留待存
     toast(dirty() ? t("store.discardedTasks") : t("store.discarded"));
   }
+  /* ── 外部修改刷新（2026-11-27 方案）────────────────────────
+   * notify 事件只负责提示；真正刷盘由用户点「重新加载」触发。
+   * 有未保存改动 → 冲突框；没有 → 直接重读。阅读保位置，编辑保光标行并清历史。 */
+  function noteExternalChange(ev: FileChangedEvent) {
+    const cur = current();
+    if (!cur || !samePath(ev.path, cur.meta.path)) return;
+    // 自己的保存/无变化：mtime+size 与登记值一致 → 不是外部修改
+    if (ev.exists && ev.mtime === cur.meta.mtime && ev.size === cur.meta.size) return;
+    if (extAck && samePath(extAck.path, ev.path) && extAck.mtime === ev.mtime && extAck.size === ev.size) return;
+    ui.setFileConflict(false);
+    ui.setFileChange({ path: ev.path, name: cur.meta.fileName, exists: ev.exists, mtime: ev.mtime, size: ev.size });
+  }
+
+  /** 关提示/冲突（ack=true 记住本次 stamp，不重复弹） */
+  function dismissExternal(ack = true) {
+    const fc = ui.fileChange();
+    if (ack && fc) extAck = { path: fc.path, mtime: fc.mtime, size: fc.size };
+    ui.setFileChange(null);
+    ui.setFileConflict(false);
+  }
+
+  /** 提示卡「重新加载」：有未保存改动先弹冲突框 */
+  async function reloadExternal(): Promise<void> {
+    const cur = current();
+    if (!cur) return;
+    const fc = ui.fileChange();
+    if (fc && !fc.exists) { toast(t("external.deleted.reloadHint")); return; }
+    if (dirty()) { ui.setFileConflict(true); return; }
+    await applyExternalReload();
+  }
+
+  /** 冲突框「重新加载（丢弃修改）」/提示卡确认后的实际刷新 */
+  async function applyExternalReload(pre?: DocFull): Promise<void> {
+    const cur = current();
+    if (!cur) return;
+    const bridge = ui.getEditorBridge();
+    const line = bridge ? bridge.cursorLine() : 1;
+    const sec = activeSec();
+    const secText = sec != null ? displayDoc()?.outline[sec - 1]?.text ?? null : null;
+    const ratio = ui.readPct() / 100;
+    let doc = pre;
+    if (!doc) {
+      try {
+        doc = await api.openDoc(cur.meta.path);
+      } catch (e) {
+        toast(t("external.reloadFailed") + ui.fmtErr(e));
+        return;
+      }
+    }
+    cancelDraftTimers();
+    setDisk(doc.meta.id, doc.src);
+    setDoc(doc);
+    setDraftSrc(doc.src);
+    setPreviewDoc(null);
+    clearDraft(doc.meta.path);
+    recomputeDirty();
+    if (bridge) bridge.reloadText(doc.src, line, mode() === "edit");
+    if (mode() !== "edit") {
+      setNavRequest({ kind: "restore", sec, secText, ratio, secOff: 0 });
+    }
+    extAck = { path: doc.meta.path, mtime: doc.meta.mtime, size: doc.meta.size };
+    ui.setFileChange(null);
+    ui.setFileConflict(false);
+    toast(t("external.reloaded"));
+  }
+
+  function keepExternal() {
+    dismissExternal(true);
+    toast(t("external.kept"));
+  }
+
+  /** 菜单「重新加载文档」：磁盘没变就如实提示；变了按有脏/无脏分流 */
+  async function manualReload(): Promise<void> {
+    const cur = current();
+    if (!cur) return;
+    if (ui.fileChange()) { await reloadExternal(); return; }
+    let doc: DocFull;
+    try {
+      doc = await api.openDoc(cur.meta.path);
+    } catch (e) {
+      toast(t("external.reloadFailed") + ui.fmtErr(e));
+      return;
+    }
+    if (doc.meta.mtime === cur.meta.mtime && doc.meta.size === cur.meta.size) {
+      toast(t("external.upToDate"));
+      return;
+    }
+    ui.setFileChange({ path: doc.meta.path, name: doc.meta.fileName, exists: true, mtime: doc.meta.mtime, size: doc.meta.size });
+    if (dirty()) { ui.setFileConflict(true); return; }
+    await applyExternalReload(doc);
+  }
+
   /** Ctrl+S / 菜单「保存」统一入口（§6.4）：编辑态=保存并返回阅读；
    *  阅读态有待存改动（打勾）→ 写盘；干净 → 如实告知无事可存。 */
   async function saveSmart(): Promise<boolean> {
@@ -1121,6 +1234,7 @@ export function StoreProvider(props: ParentProps): JSX.Element {
     tabs, activeTabId, closeTab,
     refreshDocs, openMeta, openPath, openSlug, requestAnchor, revealOutline,
     enterEdit, toggleEdit, cancelEdit, pushHist, setDraft, markDraftChanged, save, saveSmart, saveAs, discard, applySaved, applyFormatted, applyRenamed, applyRenamedFolder,
+    noteExternalChange, reloadExternal, applyExternalReload, keepExternal, dismissExternal, manualReload,
     saveSettings, flushSettings, setSide, toggleFocus, toast, setActiveSec,
     schedulePosition, flushPosition, providePositionSource,
     back, forward, clearNav,

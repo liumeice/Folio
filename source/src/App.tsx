@@ -11,7 +11,7 @@ import Splitter from "./components/Splitter";
 /* 编辑器拆包懒加载（性能 P0-2）：CodeMirror 不再进入入口 bundle，首次进入编辑模式才拉取 */
 const EditorPane = lazy(() => import("./components/EditorPane"));
 import SearchPalette from "./components/SearchPalette";
-import { AboutModal, ContextMenu, CopyPop, DropVeil, ExportBusy, HitNav, ImgBox, KeysModal, PropsModal, ScanBusy } from "./components/Overlays";
+import { AboutModal, ContextMenu, CopyPop, DropVeil, ExportBusy, ExternalChangeUI, HitNav, ImgBox, KeysModal, PropsModal, ScanBusy } from "./components/Overlays";
 import SettingsPanel from "./components/SettingsPanel";
 import AskDialog from "./components/AskDialog";
 import { clampNum, STEP, typeVars } from "./lib/typography";
@@ -34,6 +34,18 @@ export default function App() {
   // 强调色覆盖写进 body 内联（压在 [data-theme] 令牌块之上）；空值则清掉内联交回主题内置色。
   // theme 一并追踪：日夜双档色（朱砂等六枚）随主题切档,单档旧色解析结果恒等不受影响。
   createEffect(() => applyAccent(s.settings().accent, s.settings().theme));
+  /* 外部修改监听（2026-11-27 方案）：notify 只盯当前活动文档；切页签/关文档时重设目标并清掉旧提示。
+   * 只在路径变化时重设 watcher——保存也会更新 current（meta.mtime），不必反复换监听目标。 */
+  let watchedPath: string | null | undefined;
+  createEffect(() => {
+    const path = s.current()?.meta.path ?? null;
+    if (path !== watchedPath) {
+      watchedPath = path;
+      void api.watchDocument(path);
+    }
+    ui.setFileChange(null);
+    ui.setFileConflict(false);
+  });
   // 段落内换行显示策略（设置项 softBreakBr，需求 2026-11-23）：渲染器读模块级开关；
   // 阅读区的重渲染由 Reader 依赖同一设置触发，导出/预览路径读到的也是本开关。
   createEffect(() => setSoftBreakBr(s.settings().softBreakBr === true));
@@ -286,6 +298,8 @@ export default function App() {
   }
 
   onMount(() => {
+    // 外部修改事件：只处理当前文档（store 内比对路径与 stamp，过滤自身保存回声）
+    const unFileChange = api.onFileChanged((ev) => s.noteExternalChange(ev));
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("click", onDocClick);
     document.addEventListener("contextmenu", onContextMenu);
@@ -321,6 +335,7 @@ export default function App() {
       };
     }
     onCleanup(() => {
+      unFileChange();
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("wheel", onWheel);
@@ -382,6 +397,7 @@ export default function App() {
         <ContextMenu />
         {/* 2026-11-17：文件/目录/另存为已改回 Windows 原生系统对话框，不再挂 PickDialog；询问框仍在 */}
         <AskDialog />
+        <ExternalChangeUI />
         <CopyPop />
         <ExportBusy />
         <ScanBusy />

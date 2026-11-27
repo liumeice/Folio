@@ -8,7 +8,7 @@ import { api, isTauri } from "../lib/api";
 import { revealInFolder, confirmBox, pickFolderAndScan } from "../lib/actions";
 import { encLabel } from "../lib/encoding";
 import { APP_VERSION, IS_DEV } from "../lib/version";
-import { t, tp, type MessageKey } from "../lib/i18n";
+import { t, type MessageKey } from "../lib/i18n";
 import { formatNumber, formatDateTime, formatFileSize, formatPercent } from "../lib/i18n/format";
 import type { CtxTarget } from "../lib/ui";
 import type { CalloutKind, EditorCmd, InsertLabels, ListKind, WrapKind } from "../lib/mdInsert";
@@ -85,19 +85,20 @@ export function AboutModal() {
     ["Tauri 2.11", false], ["Rust workspace", true], ["SolidJS 1.9", true],
     ["TypeScript 5.8", true], ["CodeMirror 6", true], ["SQLite + FTS5", true], ["Vite 6", true],
   ];
-  /* 打开仓库主页：Tauri 下走 opener 插件交系统默认浏览器（同 Reader.openExternal 范式，
-   * WebView2 里 target=_blank 不会自己出去，必须 preventDefault + openUrl） */
+  /* 外链统一走 opener 插件交系统默认浏览器（同 Reader.openExternal 范式，
+   * WebView2 里 target=_blank 不会自己出去）。关于弹层只给动作，不摆裸链接（2026-11-27）。 */
   const REPO_URL = "https://github.com/liumeice/Folio";
-  async function openRepo() {
+  const NETDISK_URL = "https://pan.baidu.com/s/1YxTexOQbqbYWQn2SmmCL-Q?pwd=1234";
+  async function openExternal(url: string) {
     if (isTauri) {
       try {
         const { openUrl } = await import("@tauri-apps/plugin-opener");
-        await openUrl(REPO_URL);
+        await openUrl(url);
       } catch {
         s.toast(t("about.openLinkFailed"));
       }
     } else {
-      window.open(REPO_URL, "_blank", "noopener");
+      window.open(url, "_blank", "noopener");
     }
   }
   return (
@@ -117,18 +118,135 @@ export function AboutModal() {
           <div class="about-stack">
             <For each={tags}>{([tag, plain]) => <span class={plain ? "tag plain" : "tag"}>{tag}</span>}</For>
           </div>
-          <div style={{ "margin-top": "16px", padding: "10px 12px", border: "1px solid var(--line)", "border-radius": "var(--r-2)", "font-family": "var(--font-mono)", "font-size": "11px", color: "var(--text-3)" }}>
-            {t("about.githubLabel")}<a class="about-repo" href={REPO_URL} target="_blank" rel="noopener"
-              onClick={(e) => { e.preventDefault(); openRepo(); }}>github.com/liumeice/Folio</a><br />
-            {t("about.docLinkLabel")}<span style={{ color: "var(--accent)" }}>folio://open?doc=&lt;slug&gt;&amp;sec=…</span><br />
-            {isTauri ? tp("about.docCount", s.docs().length) : t("about.browserPreview")}
+          {/* 支持与下载：整行卡片动作，不显示裸链接/域名（2026-11-27 需求） */}
+          <div class="about-links">
+            <button class="about-link primary" onClick={() => openExternal(REPO_URL)}>
+              <span class="li-ic"><svg class="ico ico-18"><use href="#i-star" /></svg></span>
+              <span class="li-tx">
+                <span class="li-t">{t("about.star.title")}</span>
+                <span class="li-d">{t("about.star.desc")}</span>
+              </span>
+              <svg class="ico ico-14 li-go"><use href="#i-external" /></svg>
+            </button>
+            <button class="about-link" onClick={() => openExternal(NETDISK_URL)}>
+              <span class="li-ic"><svg class="ico ico-18"><use href="#i-download" /></svg></span>
+              <span class="li-tx">
+                <span class="li-t">{t("about.netdisk.title")}</span>
+                <span class="li-d">{t("about.netdisk.desc")}</span>
+              </span>
+              <svg class="ico ico-14 li-go"><use href="#i-external" /></svg>
+            </button>
           </div>
+          <Show when={!isTauri}>
+            <div class="about-note">{t("about.browserPreview")}</div>
+          </Show>
         </div>
         <div class="modal-f"><span style={{ "font-size": "11.5px", color: "var(--text-3)" }}>{t("about.footer")}</span><span class="sp" />
           <button class="btn primary" style={{ "min-width": "88px", "justify-content": "center" }}
             onClick={() => ui.setAboutOpen(false)}>{t("about.ok")}</button></div>
       </div>
     </OverlayShell>
+  );
+}
+
+/* 外部修改提示 + 未保存冲突（2026-11-27 方案 / prototype/external-change.html）。
+ * notify 事件由 store 过滤后写 ui.fileChange；这里只负责呈现与按钮。
+ * 提示卡可交互并常驻到用户处理；冲突弹窗打开时提示卡淡出（behind），避免两层浮层叠着。 */
+export function ExternalChangeUI() {
+  const s = useStore();
+  const fc = () => ui.fileChange();
+  const conflict = () => ui.fileConflict();
+  let noticeEl: HTMLDivElement | undefined;
+  let conflictEl: HTMLDivElement | undefined;
+
+  /* toast 让位：提示卡出现时把顶部 toast 队列下移到卡片下方 */
+  createEffect(on(fc, () => {
+    if (!fc()) {
+      document.documentElement.style.setProperty("--ext-toast-offset", "0px");
+      return;
+    }
+    requestAnimationFrame(() => {
+      const h = noticeEl?.offsetHeight ?? 0;
+      document.documentElement.style.setProperty("--ext-toast-offset", (h + 8) + "px");
+    });
+  }));
+  onCleanup(() => document.documentElement.style.setProperty("--ext-toast-offset", "0px"));
+
+  // 冲突弹窗：默认焦点给「保留我的修改」（安全侧）；Esc 只关弹窗、不关提示卡
+  createEffect(() => {
+    if (!conflict()) return;
+    queueMicrotask(() => conflictEl?.querySelector<HTMLElement>(".ext-keep")?.focus());
+  });
+  const onEsc = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    if (conflict()) { e.preventDefault(); e.stopPropagation(); ui.setFileConflict(false); return; }
+    if (ui.fileChange()) { e.preventDefault(); e.stopPropagation(); s.dismissExternal(true); }
+  };
+  document.addEventListener("keydown", onEsc, true);
+  onCleanup(() => document.removeEventListener("keydown", onEsc, true));
+
+  const deleted = () => !!fc() && !fc()!.exists;
+
+  return (
+    <>
+      <Show when={fc()}>
+        {(c) => (
+          <div class="filenotice" ref={(el) => { noticeEl = el; }}
+            classList={{ behind: conflict(), edit: s.mode() === "edit" }}>
+            <svg class="ico fn-ico" aria-hidden="true"><use href="#i-warn" /></svg>
+            <div class="fn-main" role="status" aria-live="polite">
+              <div class="fn-head">
+                <span class="fn-title">{t(deleted() ? "external.deleted.title" : "external.changed.title")}</span>
+                <span class="fn-file" title={c().name}><svg class="ico" aria-hidden="true"><use href="#i-md" /></svg><span>{c().name}</span></span>
+                <Show when={s.dirty()}><span class="fn-dirty">{t("external.dirty")}</span></Show>
+              </div>
+              <div class="fn-note">
+                {deleted()
+                  ? t("external.deleted.note")
+                  : t(s.dirty() ? "external.changed.noteDirty" : "external.changed.noteClean")}
+              </div>
+            </div>
+            <div class="fn-actions">
+              <button class="btn" onClick={() => s.dismissExternal(true)}>{t(deleted() ? "external.close" : "external.later")}</button>
+              <button class="btn primary" onClick={() => { if (deleted()) { s.dismissExternal(false); void s.saveAs(); } else { void s.reloadExternal(); } }}>
+                <svg class="ico ico-14" aria-hidden="true"><use href={deleted() ? "#i-save" : "#i-reload"} /></svg>
+                {t(deleted() ? "external.saveAs" : "external.reload")}
+              </button>
+            </div>
+          </div>
+        )}
+      </Show>
+
+      <Show when={conflict() && fc()}>
+        <div class="overlay open mid ext-overlay" ref={(el) => { conflictEl = el; }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) ui.setFileConflict(false); }}>
+          <div class="modal ext-modal" role="dialog" aria-modal="true">
+            <div class="modal-h">
+              <span class="mi2 warn"><svg class="ico ico-18" aria-hidden="true"><use href="#i-warn" /></svg></span>
+              <div class="mh-main">
+                <div class="mt">{t("external.conflict.title")}</div>
+                <div class="md2"><svg class="ico" aria-hidden="true"><use href="#i-md" /></svg><span>{fc()!.name} · {t("external.conflict.sub")}</span></div>
+              </div>
+              <button class="x" onClick={() => ui.setFileConflict(false)} aria-label={t("external.close")}>
+                <svg class="ico ico-14" aria-hidden="true"><use href="#i-x" /></svg>
+              </button>
+            </div>
+            <div class="modal-b">
+              <div class="dn-box">
+                <div class="dn-row"><span class="dn-k">{t("external.conflict.reloadTitle")}</span><span class="dn-v">{t("external.conflict.reloadDesc")}</span></div>
+                <div class="dn-row"><span class="dn-k">{t("external.conflict.keepTitle")}</span><span class="dn-v">{t("external.conflict.keepDesc")}</span></div>
+              </div>
+            </div>
+            <div class="modal-f two">
+              <button class="btn danger" onClick={() => void s.applyExternalReload()}>
+                <svg class="ico ico-14" aria-hidden="true"><use href="#i-reload" /></svg>{t("external.conflict.reload")}
+              </button>
+              <button class="btn primary ext-keep" onClick={() => s.keepExternal()}>{t("external.conflict.keep")}</button>
+            </div>
+          </div>
+        </div>
+      </Show>
+    </>
   );
 }
 

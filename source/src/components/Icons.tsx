@@ -87,7 +87,13 @@ export default function Icons() {
       <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><ellipse cx="12" cy="12" rx="3.9" ry="8.6"/><path d="M3.6 12h16.8M4.9 7.7h14.2M4.9 16.3h14.2"/></symbol>
       {/* 破坏性操作确认框图标（2026-11-24 需求方定夺）：黄色实心感叹号三角，颜色自带不随主题 */}
       <symbol id="i-warn-tri" viewBox="0 0 24 24"><path d="M12 3.1 22.3 20.7H1.7Z" fill="#F2B01E"/><path d="M12 9.1v4.7" stroke="#3A2A00" stroke-width="1.9" stroke-linecap="round"/><circle cx="12" cy="16.9" r="1.1" fill="#3A2A00"/></symbol>
+      {/* 外部修改刷新（2026-11-27）：线性警告三角，随主题色 */}
+      <symbol id="i-warn" viewBox="0 0 24 24"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3"/><path d="M12 9v4M12 17h.01"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+      {/* 外部修改刷新（2026-11-27）：重新加载 / 从磁盘重读 */}
+      <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 1 1-2.5-6"/><path d="M20.5 3.5v6h-6"/></symbol>
+      {/* 关于对话框「去 GitHub 点 Star」（2026-11-27）：线性五角星，与 ui-iconset 同族 */}
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 4.2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 9.9l5.4-.8z"/></symbol>
       <symbol id="i-trash" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></g></symbol>
       <symbol id="i-co-note" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2M12 7.8h.01"/></symbol>
       <symbol id="i-co-tip" viewBox="0 0 24 24"><path d="M12 20s-7-4.3-8.7-8.6C2 8.2 4 5.2 7 5c1.9-.1 3.7 1 4.2 2.2h1.6C13.3 6 15.1 4.9 17 5c3 .2 5 3.2 3.7 6.4C19 15.7 12 20 12 20z"/></symbol>

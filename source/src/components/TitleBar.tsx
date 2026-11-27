@@ -52,6 +52,7 @@ export default function TitleBar() {
       // 撤销/重做（方案 v1.0，2026-11-23）：编辑动作放最上方一组；阅读态/空历史/编辑器未挂载置灰
       { act: "undo", label: t("app.menu.document.undo"), kbd: "Ctrl Z", icon: "i-undo", enabled: () => ui.editorCanUndo() },
       { act: "redo", label: t("app.menu.document.redo"), kbd: "Ctrl Y", icon: "i-redo", enabled: () => ui.editorCanRedo() },
+      { act: "reload-doc", label: t("app.menu.document.reload"), icon: "i-reload", enabled: () => !!s.current() },
       { sep: true },
       { act: "prev-sec", label: t("app.menu.document.prevSection"), kbd: "Alt ↑", icon: "i-arrow-up" },
       { act: "next-sec", label: t("app.menu.document.nextSection"), kbd: "Alt ↓", icon: "i-arrow-down" },
@@ -97,6 +98,7 @@ export default function TitleBar() {
       case "edit": s.toggleEdit(); break;
       case "undo": undoDocument(s); break;
       case "redo": redoDocument(s); break;
+      case "reload-doc": void s.manualReload(); break;
       case "format": void formatDocument(s); break;
       case "save": void s.saveSmart(); break;
       case "save-as": void s.saveAs(); break;

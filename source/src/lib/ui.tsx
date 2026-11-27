@@ -401,6 +401,10 @@ export interface EditorBridge {
   runUndo(): boolean;
   /** 执行一次重做；返回是否真的有历史可重做 */
   runRedo(): boolean;
+  /** 当前光标所在行（1-based）：外部刷新后按行恢复 */
+  cursorLine(): number;
+  /** 外部刷新：整篇换内容并清空撤销历史；focus=false 用于阅读预览态 */
+  reloadText(text: string, line: number, focus?: boolean): void;
 }
 let viewBridge: ViewBridge | null = null;
 let editorBridge: EditorBridge | null = null;
@@ -426,6 +430,18 @@ export function setEditorHistoryDepth(undo: number, redo: number) {
 }
 export function editorCanUndo() { return editorHistoryEditable() && editorHistoryReady() && editorUndoDepth() > 0; }
 export function editorCanRedo() { return editorHistoryEditable() && editorHistoryReady() && editorRedoDepth() > 0; }
+
+/* 外部修改提示（2026-11-27 方案）：notify 事件 → 顶部操作卡；冲突弹窗由 store 决定。
+ * 只放瞬时视图状态：文件名/stamp 来自事件与当前文档，脏标记由 store 现算。 */
+export interface FileChangeNotice {
+  path: string;
+  name: string;
+  exists: boolean;
+  mtime: number;
+  size: number;
+}
+export const [fileChange, setFileChange] = createSignal<FileChangeNotice | null>(null);
+export const [fileConflict, setFileConflict] = createSignal(false);
 /** 进入编辑时暂存的"从阅读侧带来的行号"，EditorPane 挂载后消费 */
 let pendingEditorJump: number | null = null;
 export function setPendingEditorJump(line: number | null) { pendingEditorJump = line; }

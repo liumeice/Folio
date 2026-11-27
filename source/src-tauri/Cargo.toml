@@ -32,6 +32,8 @@ base64 = "0.23"
 # system-proxy 顺带开启，与「图片能刷出来」的浏览器代理环境同口径。tokio::fs/spawn 复用 tauri 运行时。
 reqwest = { version = "0.13", default-features = false, features = ["native-tls-no-alpn", "system-proxy"] }
 tokio = { version = "1", features = ["rt", "fs"] }
+# 外部修改刷新（2026-11-27 方案）：监听活动文档所在目录
+notify = "7"
 folio-core.workspace = true
 folio-db.workspace = true
 folio-fs.workspace = true

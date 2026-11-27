@@ -2,6 +2,7 @@
 //! 约定：所有阻塞 IO 进 spawn_blocking；错误统一压成 String 交给前端 toast。
 
 pub mod commands;
+pub mod watcher;
 
 use folio_core::{
     DocFull, DocMeta, Position, RecentDoc, RecentReport, ScanReport, SearchHit, SearchQuery, Settings,
@@ -19,6 +20,8 @@ pub struct AppState {
     pending: Mutex<Vec<String>>,
     /// FR-13.2：导出 PDF 互斥（CDP printToPDF 无取消接口，同一时刻只允许一趟打印）
     exporting: std::sync::atomic::AtomicBool,
+    /// 外部修改监听：同一时刻只盯当前活动文档，切页签/关文档时替换或清空
+    watcher: Mutex<Option<watcher::DocWatcher>>,
 }
 
 fn errstr<E: std::fmt::Display>(e: E) -> String {
@@ -211,6 +214,18 @@ async fn save_doc(path: String, content: String, force: Option<bool>, encoding: 
     reject_dotdot(&path)?; // SEC-02
     let enc = encoding.unwrap_or_default();
     spawn_db(&state, move |db| commands::save(db, &path, &content, force.unwrap_or(false), &enc)).await
+}
+
+/// 外部修改监听（2026-11-27 方案）：path=None 取消；重复调用替换旧监听。
+/// 监听失败只返回错误串，前端静默降级；手动「重新加载文档」始终可用。
+#[tauri::command]
+fn watch_document(app: AppHandle, path: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let mut slot = state.watcher.lock().map_err(|e| e.to_string())?;
+    *slot = None;
+    if let Some(p) = path.filter(|p| !p.trim().is_empty()) {
+        *slot = Some(watcher::start(app, &p)?);
+    }
+    Ok(())
 }
 
 /// 目录树「重命名」：磁盘改名 + 登记行 path/slug 更新（doc_id 不动）。
@@ -904,7 +919,12 @@ pub fn run() {
                     let _ = db_maint.checkpoint();
                 })
                 .ok();
-            app.manage(AppState { db, pending: Mutex::new(initial.clone()), exporting: std::sync::atomic::AtomicBool::new(false) });
+            app.manage(AppState {
+                db,
+                pending: Mutex::new(initial.clone()),
+                exporting: std::sync::atomic::AtomicBool::new(false),
+                watcher: Mutex::new(None),
+            });
 
             use tauri_plugin_deep_link::DeepLinkExt;
             let handle = app.handle().clone();
@@ -992,6 +1012,7 @@ pub fn run() {
             open_doc,
             open_by_slug,
             save_doc,
+            watch_document,
             rename_doc,
             rename_dir,
             format_markdown,

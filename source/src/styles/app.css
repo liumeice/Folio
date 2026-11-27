@@ -515,13 +515,79 @@ svg{display:block}
 .about-stack .tag{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;
   border-radius:11px;font-size:11.5px;background:var(--accent-bg);color:var(--accent);font-weight:550}
 .about-stack .tag.plain{background:var(--bg-side);color:var(--text-2);border:1px solid var(--line)}
-/* 关于对话框 GitHub 仓库链接（与原型 .about-repo 同步） */
-.about-repo{color:var(--accent);cursor:pointer;text-decoration:none}
-.about-repo:hover{text-decoration:underline}
+/* ── 关于对话框「支持与下载」整行卡片（2026-11-27）：只给动作，不显示裸链接 ── */
+.about-links{display:flex;flex-direction:column;gap:8px;margin-top:16px}
+.about-link{display:flex;align-items:center;gap:11px;width:100%;padding:10px 12px;text-align:left;
+  border:1px solid var(--line);border-radius:var(--r-2);background:var(--bg-raise);color:var(--text);cursor:pointer}
+.about-link:hover{border-color:var(--line-hi);background:var(--bg-hover)}
+.about-link .li-ic{width:30px;height:30px;border-radius:8px;flex:none;display:grid;place-items:center;
+  background:var(--bg-side);color:var(--text-2);border:1px solid var(--line)}
+.about-link .li-tx{display:flex;flex-direction:column;gap:1px;min-width:0}
+.about-link .li-t{font-size:12.5px;font-weight:600;color:var(--text)}
+.about-link .li-d{font-size:11.5px;color:var(--text-3)}
+.about-link .li-go{margin-left:auto;color:var(--text-3);flex:none}
+.about-link:hover .li-go{color:var(--accent)}
+/* 主行动（GitHub Star）用强调色描边和淡底，与次要行区分 */
+.about-link.primary{border-color:color-mix(in srgb,var(--accent) 38%,var(--line));
+  background:color-mix(in srgb,var(--accent) 7%,var(--bg-raise))}
+.about-link.primary .li-ic{background:var(--accent-bg);color:var(--accent);border-color:transparent}
+.about-link.primary .li-go{color:var(--accent)}
+.about-note{margin-top:12px;padding:8px 10px;border:1px dashed var(--line);border-radius:var(--r-2);
+  font-size:11px;color:var(--text-3)}
+
+/* ── 外部修改提示（2026-11-27 方案 / prototype/external-change.html）──
+ * 顶部悬浮操作卡：图标 | 标题+文件 chip+脏标记 | 右侧按钮；阅读态压在顶部工具条上，
+ * 编辑态让到编辑栏下方，避免遮住「放弃修改 / 保存并返回阅读」。 */
+.filenotice{position:fixed;left:50%;top:calc(var(--h-title) + 10px);transform:translateX(-50%);z-index:200;
+  display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:start;gap:0 11px;
+  width:min(620px,calc(100vw - 48px));padding:13px 14px;
+  background:var(--bg-raise);border:1px solid var(--line-hi);border-radius:10px;
+  box-shadow:var(--shadow-pop);animation:fn-in .18s ease-out;transition:opacity .15s ease}
+.filenotice.edit{top:calc(var(--h-title) + 106px)}
+.filenotice.behind{opacity:0;pointer-events:none}
+@keyframes fn-in{from{opacity:0;transform:translate(-50%,-6px)}to{opacity:1;transform:translate(-50%,0)}}
+.filenotice .fn-ico{width:20px;height:20px;color:var(--warn);margin-top:1px}
+.filenotice .fn-main{min-width:0}
+.filenotice .fn-head{display:flex;align-items:center;flex-wrap:wrap;gap:4px 7px;min-width:0}
+.filenotice .fn-title{font-size:13px;font-weight:600;line-height:20px;color:var(--text);white-space:nowrap}
+.filenotice .fn-file{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;
+  background:var(--bg-side);border:1px solid var(--line);color:var(--text-2);
+  font-size:10.5px;font-family:var(--font-mono);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.filenotice .fn-file .ico{width:12px;height:12px;color:var(--text-3)}
+.filenotice .fn-dirty{display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 7px;border-radius:9px;
+  background:color-mix(in srgb,var(--amber) 12%,transparent);color:var(--warn);font-size:10.5px;font-weight:600;white-space:nowrap}
+.filenotice .fn-dirty::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}
+.filenotice .fn-note{font-size:11.5px;line-height:1.55;color:var(--text-3);margin-top:3px}
+.filenotice .fn-actions{display:flex;align-items:center;gap:6px;align-self:center;padding-left:4px}
+.filenotice .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:26px;padding:0 11px;
+  border-radius:var(--r-2);border:1px solid var(--line);background:var(--bg-raise);color:var(--text);
+  font-size:12px;font-weight:550;white-space:nowrap}
+.filenotice .btn:hover{border-color:var(--line-hi);background:var(--bg-hover)}
+@media (max-width:720px){
+  .filenotice{grid-template-columns:20px minmax(0,1fr);gap:10px 11px}
+  .filenotice .fn-actions{grid-column:2;justify-self:end;padding-left:0}
+}
+/* 冲突弹窗：标题 + 文件 chip + 两行说明 + 底部「重新加载(危险) / 保留(主)」 */
+.overlay.ext-overlay{z-index:300}
+.ext-modal{width:min(480px,94vw)}
+.ext-modal .mh-main{flex:1;min-width:0}
+.ext-modal .modal-h .mi2.warn{color:var(--warn)}
+.ext-modal .modal-h .md2{display:flex;align-items:center;gap:6px;margin-top:3px;font-size:11.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ext-modal .modal-h .md2 .ico{width:13px;height:13px;color:var(--text-3)}
+.dn-box{padding:0 12px;border:1px solid var(--line);border-radius:var(--r-2);background:var(--bg-edit)}
+.dn-row{display:grid;grid-template-columns:88px minmax(0,1fr);gap:10px;align-items:baseline;padding:10px 0}
+.dn-row+.dn-row{border-top:1px solid var(--line)}
+.dn-k{font-size:11.5px;font-weight:600;color:var(--text-2)}
+.dn-v{font-size:11.5px;line-height:1.6;color:var(--text-3)}
+.modal-f.two{display:grid;grid-template-columns:1fr 1fr}
+.modal-f.two>.btn{min-width:0;width:100%;justify-content:center}
+.btn.danger{border-color:color-mix(in srgb,var(--warn) 38%,var(--line))}
+.btn.danger .ico{color:var(--warn)}
+.btn.danger:hover{background:color-mix(in srgb,var(--warn) 9%,var(--bg-raise));border-color:color-mix(in srgb,var(--warn) 55%,var(--line))}
 
 /* ── 统一通知 toast（需求方规范 2026-11-16：所有提示不得出现在窗口底沿）──
  * 此前 .toast-zone 没有任何定位样式 → 按 DOM 顺序堆在窗口底部。现钉窗口顶部居中悬浮。 */
-.toast-zone{position:fixed;top:calc(var(--h-title) + 10px);left:50%;transform:translateX(-50%);
+.toast-zone{position:fixed;top:calc(var(--h-title) + 10px + var(--ext-toast-offset, 0px));left:50%;transform:translateX(-50%);
   z-index:210;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none}
 .toast{max-width:70vw;padding:7px 16px;border-radius:8px;background:var(--bg-raise);
   border:1px solid var(--line-hi);box-shadow:var(--shadow-pop);color:var(--text-2);

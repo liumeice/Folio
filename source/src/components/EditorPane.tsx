@@ -5,8 +5,10 @@
  *  jumpToLine(lineFloat) —— scrollIntoView 贴整行 + 下一帧 coordsAtPos 精确对齐视口顶。 */
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { basicSetup } from "codemirror";
+import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { indentLess, insertTab } from "@codemirror/commands";
+import { indentLess, indentMore, insertTab } from "@codemirror/commands";
+import { indentBlockLines, renumberOrderedBlock, splitListLine } from "../lib/listNumbers";
 import { editLabel, historyDepths, undoOnce, redoOnce } from "../lib/editorHistory";
 import { emptyJournal, historySnippet, reduceJournal, txTexts, type JournalState, type JournalStep } from "../lib/editorJournal";
 import { md } from "../lib/mdEditor";
@@ -330,6 +332,61 @@ export default function EditorPane() {
   function focusEditor() { view?.focus(); }
   function hasSelection() { return !!view && !view.state.selection.main.empty; }
 
+  /** Tab / Shift-Tab（2026-11-27 编辑窗口优化）：
+   *  - 有选区时缩进整行（含 Alt 矩形/多选区），并把列表块内的有序标记整体重排，
+   *    使 Tab 进父项后的首个子项从 1 开始（阅读区显示 2.1.）；
+   *  - 无选区维持 CM 原行为（光标处插 \t / Shift-Tab 反缩进）。 */
+  function tabListIndent(outdent: boolean): boolean {
+    const v = view;
+    if (!v) return false;
+    const sel = v.state.selection;
+    // 单光标无选区：保持 CM 原行为（光标处插 \t / 反缩进）；
+    // 多光标（含 Alt 拉出的零宽竖线）即使都为空，也按行缩进处理。
+    if (sel.ranges.length === 1 && sel.ranges[0].empty) return outdent ? indentLess(v) : insertTab(v);
+    const doc = v.state.doc;
+    const touchedDoc = new Set<number>();
+    for (const r of sel.ranges) {
+      const a = doc.lineAt(r.from).number;
+      let b = doc.lineAt(r.to).number;
+      // 选区结束正好落在行首：该行不算被选中（与 paragraph 选区口径一致）
+      if (r.to > r.from && doc.lineAt(r.to).from === r.to) b = Math.max(a, b - 1);
+      for (let n = a; n <= b; n++) touchedDoc.add(n);
+    }
+    if (!touchedDoc.size) return false;
+    const first = Math.min(...touchedDoc);
+    const last = Math.max(...touchedDoc);
+    const isList = (n: number) => splitListLine(doc.line(n).text) !== null;
+    let start = first, end = last;
+    while (start > 1) {
+      const prev = doc.line(start - 1);
+      if (prev.text.trim() !== "" && !splitListLine(prev.text)) break;
+      start--;
+    }
+    while (end < doc.lines) {
+      const next = doc.line(end + 1);
+      if (next.text.trim() !== "" && !splitListLine(next.text)) break;
+      end++;
+    }
+    let hasList = false;
+    for (let n = start; n <= end; n++) if (isList(n)) { hasList = true; break; }
+    // 选区跨出了列表块 / 块内没有列表：退回 CodeMirror 的行缩进
+    if (!hasList || [...touchedDoc].some((n) => n < start || n > end)) {
+      return outdent ? indentLess(v) : indentMore(v);
+    }
+    const lines: string[] = [];
+    for (let n = start; n <= end; n++) lines.push(doc.line(n).text);
+    const touched = new Set([...touchedDoc].map((n) => n - start));
+    const indented = indentBlockLines(lines, touched, "\t", outdent);
+    const text = renumberOrderedBlock(indented, touched).join("\n");
+    v.dispatch({
+      changes: { from: doc.line(start).from, to: doc.line(end).to, insert: text },
+      userEvent: "input.indent",
+      annotations: editLabel.of(t(outdent ? "editorpane.history.outdent" : "editorpane.history.indent")),
+      scrollIntoView: true,
+    });
+    return true;
+  }
+
   /** 右键 mousedown 先记选区：CM/浏览器可能在 contextmenu 前就把选区收成光标 */
   let savedSel: { from: number; to: number } | null = null;
   function onMouseDown(e: MouseEvent) {
@@ -363,11 +420,8 @@ export default function EditorPane() {
     // 新编辑会话：历史随编辑器清空，下拉列表也从空开始
     setJournal(emptyJournal());
     setOpenHist(null);
-    view = new EditorView({
-      doc: s.draftSrc(),
-      parent: host,
-      extensions: [
-        basicSetup,
+    const extensions = [
+      basicSetup,
         md(),   // GFM 解析器配置见 lib/mdEditor.ts（默认 CommonMark 会丢删除线/任务/表格着色）
         // 着色必须接在 basicSetup 之后：它自带的 defaultHighlightStyle 是 fallback，
         // 我们定义过的 tag 才不会被那套通用浅色配色覆盖（原型对齐见 mdstyle.ts）
@@ -380,7 +434,9 @@ export default function EditorPane() {
         // （basicSetup 自带 toggleTabFocusMode）。
         indentUnit.of("\t"),
         keymap.of([
-          { key: "Tab", run: insertTab, shift: indentLess },
+          // Alt+drag 矩形选择 / 多选区输入删除由 basicSetup 的 rectangularSelection +
+          // allowMultipleSelections 提供；Tab 对选区走 tabListIndent（整行缩进 + 有序列表重排）。
+          { key: "Tab", run: () => tabListIndent(false), shift: () => tabListIndent(true) },
           // 撤销/重做方案 v1.0：补 Windows 默认未绑定的 Ctrl+Shift+Z 重做别名
           //（basicSetup 已含 Mod-z / Mod-y，不重复绑定）
           { key: "Mod-Shift-z", run: () => runRedo(), preventDefault: true },
@@ -409,8 +465,8 @@ export default function EditorPane() {
           }
           if (u.viewportChanged || u.selectionSet) syncOutline();
         }),
-      ],
-    });
+    ];
+    view = new EditorView({ doc: s.draftSrc(), parent: host, extensions });
     // 撤销/重做（方案 v1.0）：经桥暴露，历史深度由 updateListener 同步；成功后把焦点还给编辑器
     function runUndo() {
       const v = view;
@@ -426,6 +482,27 @@ export default function EditorPane() {
       if (ok) v.focus();
       return ok;
     }
+    /* 外部刷新：整篇换内容时重建 EditorState——撤销历史与 Word 式步骤日志都指向旧正文，
+     * 必须一起清空；光标按旧行号夹取恢复。focus=false 供阅读预览态使用（不抢焦点）。 */
+    function cursorLine(): number {
+      const v = view;
+      if (!v) return 1;
+      return v.state.doc.lineAt(v.state.selection.main.head).number;
+    }
+    function reloadText(text: string, line: number, focus = true) {
+      const v = view;
+      if (!v) return;
+      const hadFocus = v.hasFocus;
+      v.setState(EditorState.create({ doc: text, extensions }));
+      setJournal(emptyJournal());
+      setOpenHist(null);
+      ui.setEditorHistoryDepth(0, 0);
+      const target = Math.max(1, Math.min(line, v.state.doc.lines));
+      const pos = v.state.doc.line(target).from;
+      v.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "nearest" }) });
+      if (focus || hadFocus) v.focus();
+      syncOutline();
+    }
     ui.registerEditorBridge({
       jumpToLine,
       topLine,
@@ -436,6 +513,8 @@ export default function EditorPane() {
       focusEditor,
       runUndo,
       runRedo,
+      cursorLine,
+      reloadText,
     });
     // 挂桥时写入初始深度（正常为 0/0——新编辑器历史为空）
     {

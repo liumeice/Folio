@@ -949,6 +949,41 @@ export function isTauriRuntime(): boolean {
   return isTauri;
 }
 
+/* 外部修改监听（2026-11-27 方案）：Rust 侧 notify 盯当前活动文档，事件带磁盘 stamp。
+ * 浏览器 mock 下没有磁盘概念，watch/监听都是 no-op。 */
+export interface FileChangedEvent {
+  path: string;
+  exists: boolean;
+  mtime: number;
+  size: number;
+}
+
+export async function watchDocument(path: string | null): Promise<void> {
+  if (!isTauri) return;
+  try {
+    await invoke("watch_document", { path });
+  } catch {
+    /* 监听失败静默降级：手动「重新加载文档」仍可用 */
+  }
+}
+
+export function onFileChanged(cb: (e: FileChangedEvent) => void): () => void {
+  if (!isTauri) return () => undefined;
+  let disposed = false;
+  let un: (() => void) | null = null;
+  import("@tauri-apps/api/event").then(({ listen }) => {
+    if (disposed) return;
+    void listen<FileChangedEvent>("folio-file-changed", (ev) => cb(ev.payload)).then((f) => {
+      if (disposed) f();
+      else un = f;
+    });
+  });
+  return () => {
+    disposed = true;
+    un?.();
+  };
+}
+
 /** Tauri 拖放给的是磁盘路径：判定类型决定走打开还是扫描（FR-1.2） */
 export async function pathKind(path: string): Promise<"file" | "dir" | "missing"> {
   if (!isTauri) return "file";
@@ -979,6 +1014,8 @@ export const api = {
   openDoc: apiOpenDoc,
   openBySlug: apiOpenBySlug,
   saveDoc: apiSaveDoc,
+  watchDocument,
+  onFileChanged,
   renameDoc: apiRenameDoc,
   renameDir: apiRenameDir,
   formatMarkdown: apiFormatMarkdown,
