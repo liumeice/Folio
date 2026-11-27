@@ -153,6 +153,50 @@ async function runFormat(s: Store) {
   s.toast(r.warnings.length ? `${msg}（${warnJoin(r.warnings)}）` : msg, 3200);
 }
 
+/** 编辑栏「格式化」按钮（2026-11-27 编辑窗口优化）：
+ *  无选区 = 整篇（走既有 formatDocument，编辑态不退出）；有选区 = 只格式化选中文本，
+ *  结果以一次事务替换选区，Ctrl+Z 一步撤销。格式化期间的并发守卫与整篇一致。 */
+export async function formatSelectionOrDocument(s: Store) {
+  const b = ui.getEditorBridge();
+  if (!b) { s.toast(t("format.editorNotReady")); return; }
+  const sel = b.getSelection();
+  if (!sel) { await formatDocument(s); return; }
+  if (formatBusy) { s.toast(t("format.busy")); return; }
+  formatBusy = true;
+  try {
+    await runFormatSelection(s, sel);
+  } finally {
+    formatBusy = false;
+  }
+}
+
+async function runFormatSelection(s: Store, sel: { from: number; to: number; text: string }) {
+  const cur = s.current();
+  if (!cur) { s.toast(t("format.noDoc")); return; }
+  const docId = cur.meta.id;
+  const b0 = ui.getEditorBridge();
+  if (!b0) { s.toast(t("format.editorNotReady")); return; }
+  const full = b0.docText();
+  let r: FormatResult;
+  try {
+    r = await api.formatMarkdown(sel.text, FORMAT_OPTIONS);
+  } catch (e) {
+    s.toast(t("format.failed") + ui.fmtErr(e));
+    return;
+  }
+  if (s.current()?.meta.id !== docId) return;            // 切换文档：结果作废
+  if (s.mode() !== "edit") { s.toast(t("format.leftEdit")); return; }
+  const b = ui.getEditorBridge();
+  if (!b || b.docText() !== full) { s.toast(t("format.changedDuring")); return; }
+  if (!r.changed) {
+    s.toast(r.warnings.length ? warnJoin(r.warnings) : t("format.alreadyClean"), r.warnings.length ? 3200 : undefined);
+    return;
+  }
+  b.replaceRange(sel.from, sel.to, r.text);
+  const msg = tp("format.changed", r.changedLines, { count: formatNumber(r.changedLines) });
+  s.toast(r.warnings.length ? `${msg}（${warnJoin(r.warnings)}）` : msg, 3200);
+}
+
 const leaf = (p: string) => p.split(/[\\/]/).pop() ?? p;
 const sameDir = (a: string, b: string) =>
   a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();

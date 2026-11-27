@@ -380,6 +380,8 @@ svg{display:block}
 .editor-bar .hint b{color:var(--text-2);font-weight:550}
 /* Word 式撤销/重做：按钮 + 下拉箭头 + 操作列表（原型 editor-history.html 口径） */
 .hgroup{display:flex;align-items:center;gap:2px;flex:none}
+/* 撤销/重做组与缩进按钮之间的细分隔 */
+.editor-bar .hsep{width:1px;height:15px;background:var(--line);align-self:center;flex:none}
 .hwrap{position:relative;display:flex;align-items:center}
 .hbtn,.harrow{height:24px;border:1px solid transparent;border-radius:5px;color:var(--text-2);
   display:flex;align-items:center;justify-content:center;padding:0;background:none;cursor:pointer}

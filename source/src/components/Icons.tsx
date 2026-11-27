@@ -92,6 +92,9 @@ export default function Icons() {
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
       {/* 外部修改刷新（2026-11-27）：重新加载 / 从磁盘重读 */}
       <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 1 1-2.5-6"/><path d="M20.5 3.5v6h-6"/></symbol>
+      {/* 编辑栏缩进/取消缩进（2026-11-27）：左侧箭头 + 右侧行 */}
+      <symbol id="i-indent" viewBox="0 0 24 24"><path d="M3 8l4 4-4 4"/><path d="M21 6h-10"/><path d="M21 12h-10"/><path d="M21 18h-10"/></symbol>
+      <symbol id="i-outdent" viewBox="0 0 24 24"><path d="M7 8l-4 4 4 4"/><path d="M21 6h-10"/><path d="M21 12h-10"/><path d="M21 18h-10"/></symbol>
       {/* 关于对话框「去 GitHub 点 Star」（2026-11-27）：线性五角星，与 ui-iconset 同族 */}
       <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 4.2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 9.9l5.4-.8z"/></symbol>
       <symbol id="i-trash" viewBox="0 0 24 24"><g transform="translate(12 12) scale(0.83500) translate(-12.000 -12.000)" stroke-width="2.0359"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></g></symbol>

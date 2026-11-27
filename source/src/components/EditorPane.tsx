@@ -16,6 +16,7 @@ import { indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { mdHighlight } from "../lib/mdstyle";
 import { mdStructural } from "../lib/mdStructural";
 import { useStore } from "../lib/store";
+import { formatSelectionOrDocument } from "../lib/actions";
 import * as ui from "../lib/ui";
 import { t, tp } from "../lib/i18n";
 import { SYNC_EPSILON } from "../lib/nav";
@@ -336,13 +337,13 @@ export default function EditorPane() {
    *  - 有选区时缩进整行（含 Alt 矩形/多选区），并把列表块内的有序标记整体重排，
    *    使 Tab 进父项后的首个子项从 1 开始（阅读区显示 2.1.）；
    *  - 无选区维持 CM 原行为（光标处插 \t / Shift-Tab 反缩进）。 */
-  function tabListIndent(outdent: boolean): boolean {
+  function tabListIndent(outdent: boolean, forceLine = false): boolean {
     const v = view;
     if (!v) return false;
     const sel = v.state.selection;
     // 单光标无选区：保持 CM 原行为（光标处插 \t / 反缩进）；
-    // 多光标（含 Alt 拉出的零宽竖线）即使都为空，也按行缩进处理。
-    if (sel.ranges.length === 1 && sel.ranges[0].empty) return outdent ? indentLess(v) : insertTab(v);
+    // 编辑栏「缩进/取消缩进」按钮 forceLine=true：即使无选区也按当前行处理。
+    if (!forceLine && sel.ranges.length === 1 && sel.ranges[0].empty) return outdent ? indentLess(v) : insertTab(v);
     const doc = v.state.doc;
     const touchedDoc = new Set<number>();
     for (const r of sel.ranges) {
@@ -489,6 +490,35 @@ export default function EditorPane() {
       if (!v) return 1;
       return v.state.doc.lineAt(v.state.selection.main.head).number;
     }
+    /** 编辑栏「缩进 / 取消缩进」按钮：无选区时也按当前行缩进 */
+    function indentLines(outdent: boolean) {
+      tabListIndent(outdent, true);
+    }
+    /** 主选区文本（格式化按钮用；空选区 = 整篇） */
+    function getSelection(): { from: number; to: number; text: string } | null {
+      const v = view;
+      if (!v) return null;
+      // 矩形/多光标时主选区可能为空：取第一个非空范围，避免误判成"无选区"去格式化全文
+      const r = v.state.selection.ranges.find((x) => !x.empty);
+      if (!r) return null;
+      return { from: r.from, to: r.to, text: v.state.sliceDoc(r.from, r.to) };
+    }
+    /** 局部格式化：替换指定区间，一次事务入历史 */
+    function replaceRange(from: number, to: number, text: string) {
+      const v = view;
+      if (!v) return;
+      const len = v.state.doc.length;
+      const a = Math.max(0, Math.min(from, len));
+      const b = Math.max(a, Math.min(to, len));
+      v.dispatch({
+        changes: { from: a, to: b, insert: text },
+        selection: { anchor: a + text.length },
+        userEvent: "insert.command",
+        annotations: editLabel.of(t("app.menu.document.format")),
+        scrollIntoView: true,
+      });
+      v.focus();
+    }
     function reloadText(text: string, line: number, focus = true) {
       const v = view;
       if (!v) return;
@@ -515,6 +545,9 @@ export default function EditorPane() {
       runRedo,
       cursorLine,
       reloadText,
+      indentLines,
+      getSelection,
+      replaceRange,
     });
     // 挂桥时写入初始深度（正常为 0/0——新编辑器历史为空）
     {
@@ -613,6 +646,23 @@ export default function EditorPane() {
             </Show>
           </div>
         </div>
+        <span class="hsep" />
+        {/* 缩进 / 取消缩进：对选中行统一增减一级；有序列表随缩进重排层级序号 */}
+        <button type="button" class="hbtn" title={t("editorpane.indent")} aria-label={t("editorpane.indent")}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => ui.getEditorBridge()?.indentLines(false)}>
+          <svg class="ico"><use href="#i-indent" /></svg>
+        </button>
+        <button type="button" class="hbtn" title={t("editorpane.outdent")} aria-label={t("editorpane.outdent")}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => ui.getEditorBridge()?.indentLines(true)}>
+          <svg class="ico"><use href="#i-outdent" /></svg>
+        </button>
+        <button type="button" class="hbtn" title={t("editorpane.format")} aria-label={t("editorpane.format")}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => void formatSelectionOrDocument(s)}>
+          <svg class="ico"><use href="#i-format" /></svg>
+        </button>
         <span class="sp" />
         <Show when={s.dirty()}>
           <span class="hint" style={{ color: "var(--amber)" }}>{t("editorpane.dirty")}</span>

@@ -405,6 +405,12 @@ export interface EditorBridge {
   cursorLine(): number;
   /** 外部刷新：整篇换内容并清空撤销历史；focus=false 用于阅读预览态 */
   reloadText(text: string, line: number, focus?: boolean): void;
+  /** 编辑栏缩进按钮：有选区按选区行；无选区按当前行。有序列表随缩进重排序号。 */
+  indentLines(outdent: boolean): void;
+  /** 当前主选区（空选区返回 null）：格式化按钮据此决定整篇还是局部 */
+  getSelection(): { from: number; to: number; text: string } | null;
+  /** 局部格式化：替换指定区间（一次事务；Ctrl+Z 可撤销） */
+  replaceRange(from: number, to: number, text: string): void;
 }
 let viewBridge: ViewBridge | null = null;
 let editorBridge: EditorBridge | null = null;
